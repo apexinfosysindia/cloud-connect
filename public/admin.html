@@ -13,8 +13,8 @@
         <header class="page-header">
             <div class="admin-intro">
                 <span class="eyebrow">Operations Console</span>
-                <h1 class="section-title">Approve trials, audit billing and manage account access.</h1>
-                <p class="section-copy">The admin console gives your team one place to approve 12-month trials, inspect subscription state and move users between pending, active, suspended and expired without touching the database manually.</p>
+                <h1 class="section-title">Customer access operations and service control.</h1>
+                <p class="section-copy">Review account state, inspect billing records and apply the next operational action for each customer from a single service console.</p>
             </div>
             <div class="toolbar">
                 <button id="logoutBtn" class="button button-muted button-small hidden">Log Out</button>
@@ -49,7 +49,7 @@
                     <div id="countPending" class="metric-value">0</div>
                 </article>
                 <article class="metric-card">
-                    <span class="metric-label">Trial</span>
+                    <span class="metric-label">Approved</span>
                     <div id="countTrial" class="metric-value">0</div>
                 </article>
                 <article class="metric-card">
@@ -66,7 +66,7 @@
                 <div class="table-header">
                     <div>
                         <h2 class="table-header__title">Customer Accounts</h2>
-                        <p class="table-header__copy">Approve a 365-day trial, promote paid users to active, or force a customer back into billing review.</p>
+                        <p class="table-header__copy">Only the actions relevant to the current account state are shown for each customer.</p>
                     </div>
                     <button id="refreshBtn" class="button button-muted button-small">Refresh</button>
                 </div>
@@ -133,6 +133,13 @@ async function api(path, options = {}) {
 }
 
 function statusBadge(status) {
+    const labels = {
+        payment_pending: 'payment pending',
+        trial: 'approved',
+        active: 'active',
+        suspended: 'suspended',
+        expired: 'expired'
+    };
     const badgeClass = {
         payment_pending: 'badge badge-pending',
         trial: 'badge badge-trial',
@@ -140,7 +147,7 @@ function statusBadge(status) {
         suspended: 'badge badge-suspended',
         expired: 'badge badge-suspended'
     };
-    return `<span class="${badgeClass[status] || 'badge'}">${status.replace('_', ' ')}</span>`;
+    return `<span class="${badgeClass[status] || 'badge'}">${labels[status] || status.replace('_', ' ')}</span>`;
 }
 
 function formatDate(value) {
@@ -157,6 +164,48 @@ function updateCounts(users) {
 
 function buildActionButton(user, label, status, extra = {}) {
     return `<button data-user-id="${user.id}" data-status="${status}" data-trial-days="${extra.trialDays || ''}" class="button button-muted button-small admin-action">${label}</button>`;
+}
+
+function getActionButtons(user) {
+    if (user.status === 'payment_pending') {
+        return [
+            buildActionButton(user, 'Approve Trial', 'trial', { trialDays: 365 }),
+            buildActionButton(user, 'Activate Access', 'active'),
+            buildActionButton(user, 'Suspend Access', 'suspended')
+        ];
+    }
+
+    if (user.status === 'trial') {
+        return [
+            buildActionButton(user, 'Activate Access', 'active'),
+            buildActionButton(user, 'Suspend Access', 'suspended'),
+            buildActionButton(user, 'Mark Expired', 'expired')
+        ];
+    }
+
+    if (user.status === 'active') {
+        return [
+            buildActionButton(user, 'Suspend Access', 'suspended'),
+            buildActionButton(user, 'Mark Expired', 'expired')
+        ];
+    }
+
+    if (user.status === 'suspended') {
+        return [
+            buildActionButton(user, 'Activate Access', 'active'),
+            buildActionButton(user, 'Require Payment', 'payment_pending'),
+            buildActionButton(user, 'Mark Expired', 'expired')
+        ];
+    }
+
+    if (user.status === 'expired') {
+        return [
+            buildActionButton(user, 'Activate Access', 'active'),
+            buildActionButton(user, 'Require Payment', 'payment_pending')
+        ];
+    }
+
+    return [];
 }
 
 function renderUsers(users) {
@@ -179,7 +228,7 @@ function renderUsers(users) {
             <td>
                 <div class="stack stack-tight">
                     ${statusBadge(user.status)}
-                    <span class="table-copy">Trial ends: ${formatDate(user.trial_ends_at)}</span>
+                    <span class="table-copy">Access until: ${formatDate(user.trial_ends_at)}</span>
                     <span class="table-copy">Activated: ${formatDate(user.activated_at)}</span>
                 </div>
             </td>
@@ -195,11 +244,7 @@ function renderUsers(users) {
             </td>
             <td>
                 <div class="table-actions">
-                    ${buildActionButton(user, 'Approve 365d Trial', 'trial', { trialDays: 365 })}
-                    ${buildActionButton(user, 'Set Active', 'active')}
-                    ${buildActionButton(user, 'Suspend', 'suspended')}
-                    ${buildActionButton(user, 'Expire', 'expired')}
-                    ${buildActionButton(user, 'Set Pending', 'payment_pending')}
+                    ${getActionButtons(user).join('')}
                 </div>
             </td>
         </tr>
