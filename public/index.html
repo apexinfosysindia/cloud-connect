@@ -12,33 +12,33 @@
 <div class="page-shell portal-shell">
     <section class="brand-panel">
         <div class="brand-stack">
-            <span class="eyebrow">Cloud Connect Control Plane</span>
+            <span class="eyebrow">Managed Remote Access</span>
 
             <div class="brand-mark">
                 <div class="brand-mark__orb"></div>
                 <div class="brand-mark__text">
                     <span class="brand-mark__name">ApexOS Cloud Connect</span>
-                    <span class="brand-mark__sub">Provisioning, billing and remote access in one flow</span>
+                    <span class="brand-mark__sub">Account setup, billing and secure access in one service</span>
                 </div>
             </div>
 
             <div>
-                <h1 class="headline">Ship remote access like a product, not a tunnel.</h1>
-                <p class="lede">Cloud Connect handles customer signup, subscription billing, trial approvals, domain provisioning and secure access tokens without any manual edge setup per user.</p>
+                <h1 class="headline">Secure remote access for ApexOS, managed as a service.</h1>
+                <p class="lede">Cloud Connect brings account onboarding, billing, approvals and remote access into one customer experience so each deployment can be activated without manual coordination.</p>
             </div>
 
             <div class="signal-grid">
                 <div class="signal-card">
-                    <span class="signal-card__label">Access Model</span>
+                    <span class="signal-card__label">Service Model</span>
                     <span class="signal-card__value">Paid First</span>
                 </div>
                 <div class="signal-card">
-                    <span class="signal-card__label">Trials</span>
-                    <span class="signal-card__value">Admin Approved</span>
+                    <span class="signal-card__label">Activation</span>
+                    <span class="signal-card__value">Account Based</span>
                 </div>
                 <div class="signal-card">
-                    <span class="signal-card__label">Routing</span>
-                    <span class="signal-card__value">Caddy + FRP</span>
+                    <span class="signal-card__label">Availability</span>
+                    <span class="signal-card__value">Always Addressable</span>
                 </div>
             </div>
 
@@ -46,22 +46,22 @@
                 <article class="feature-card">
                     <div class="feature-icon">01</div>
                     <div>
-                        <h2 class="feature-title">Reserved domain immediately</h2>
-                        <p class="feature-text">Users can claim a branded subdomain up front, then complete payment or wait for manual trial approval without losing the name.</p>
+                        <h2 class="feature-title">Reserved customer address</h2>
+                        <p class="feature-text">Each account can reserve its branded address before activation so the endpoint is ready when service approval is complete.</p>
                     </div>
                 </article>
                 <article class="feature-card">
                     <div class="feature-icon">02</div>
                     <div>
-                        <h2 class="feature-title">Billing before tunnel activation</h2>
-                        <p class="feature-text">Access tokens stay hidden until the account is paid or explicitly moved into trial by your admin team.</p>
+                        <h2 class="feature-title">Access only after approval</h2>
+                        <p class="feature-text">Remote access remains unavailable until billing is complete or the account is explicitly approved for service.</p>
                     </div>
                 </article>
                 <article class="feature-card">
                     <div class="feature-icon">03</div>
                     <div>
-                        <h2 class="feature-title">Production-safe operations</h2>
-                        <p class="feature-text">Customer portal, admin controls, Caddy domain checks and FRP token verification all run off the same control plane.</p>
+                        <h2 class="feature-title">One managed workflow</h2>
+                        <p class="feature-text">Signup, payment, approval and account activation all move through one controlled workflow instead of manual back-and-forth.</p>
                     </div>
                 </article>
             </div>
@@ -71,10 +71,10 @@
     <main class="surface auth-surface">
         <div class="panel-header">
             <div>
-                <h2 class="panel-heading">Customer Portal</h2>
+                <h2 class="panel-heading">Access Portal</h2>
                 <p id="headerSubtitle" class="panel-subtitle">Log in to manage your remote access and billing.</p>
             </div>
-            <span class="panel-chip">Secure Portal</span>
+            <span class="panel-chip">Managed Service</span>
         </div>
 
         <div id="alertBox" class="alert"></div>
@@ -113,7 +113,6 @@
                     <span class="segment-suffix">.cloud.apexinfosys.in</span>
                 </div>
                 <p class="field-hint">Use 3-20 lowercase letters, numbers or hyphens.</p>
-                <p class="field-note is-warning">Paid access starts after successful Razorpay billing. Free 12-month trials are granted later from the admin dashboard.</p>
             </div>
 
             <button type="submit" id="signupBtn" class="button button-accent button-full">Create Account and Pay</button>
@@ -236,8 +235,8 @@ function getStatusMessage(userData) {
     }
     if (userData.status === 'trial') {
         return userData.trial_ends_at
-            ? `Admin-approved free trial is active until ${new Date(userData.trial_ends_at).toLocaleDateString()}.`
-            : 'Admin-approved free trial is active.';
+            ? `Access is active for this account until ${new Date(userData.trial_ends_at).toLocaleDateString()}.`
+            : 'Access is active for this account.';
     }
     if (userData.status === 'active') {
         return 'Paid subscription is active. Remote access is enabled.';
@@ -256,27 +255,31 @@ function getStatusTone(status) {
         return {
             card: 'status-card is-pending',
             badge: 'badge badge-pending',
-            title: 'Billing required'
+            title: 'Activation pending',
+            label: 'pending'
         };
     }
     if (status === 'trial') {
         return {
             card: 'status-card is-live',
-            badge: 'badge badge-trial',
-            title: 'Trial is active'
+            badge: 'badge badge-active',
+            title: 'Remote access is live',
+            label: 'active'
         };
     }
     if (status === 'active') {
         return {
             card: 'status-card is-live',
             badge: 'badge badge-active',
-            title: 'Remote access is live'
+            title: 'Remote access is live',
+            label: 'active'
         };
     }
     return {
         card: 'status-card is-attention',
         badge: 'badge badge-suspended',
-        title: 'Attention required'
+        title: 'Attention required',
+        label: status === 'expired' ? 'expired' : 'suspended'
     };
 }
 
@@ -299,7 +302,7 @@ function renderDashboard(userData) {
 
     statusCard.className = tone.card;
     statusBadge.className = tone.badge;
-    statusBadge.textContent = userData.status.replace('_', ' ');
+    statusBadge.textContent = tone.label;
     statusTitle.textContent = tone.title;
     document.getElementById('dashStatusDetail').textContent = getStatusMessage(userData);
     document.getElementById('dashToken').textContent = userData.access_token || 'Hidden until access is enabled';
