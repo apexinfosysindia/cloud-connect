@@ -8,6 +8,10 @@ const path = require('path');
 
 const db = require('./db');
 
+const CUSTOMER_PORTAL_HOST = process.env.CUSTOMER_PORTAL_HOST || 'oasis.apexinfosys.in';
+const ADMIN_PORTAL_HOST = process.env.ADMIN_PORTAL_HOST || 'vista.apexinfosys.in';
+const CLOUD_BASE_DOMAIN = process.env.CLOUD_BASE_DOMAIN || 'cloud.apexinfosys.in';
+
 const app = express();
 app.use(express.json({
     verify: (req, res, buf) => {
@@ -17,7 +21,49 @@ app.use(express.json({
     }
 }));
 app.use(cors());
-app.use(express.static(path.join(__dirname, 'public')));
+
+app.get(['/login', '/login.html', '/signup', '/signup.html'], (req, res, next) => {
+    if (req.hostname === CLOUD_BASE_DOMAIN) {
+        const targetPath = req.path.startsWith('/signup') ? '/signup.html' : '/login.html';
+        return res.redirect(`https://${CUSTOMER_PORTAL_HOST}${targetPath}`);
+    }
+
+    return next();
+});
+
+app.get(['/admin', '/admin.html'], (req, res, next) => {
+    if (req.hostname === CLOUD_BASE_DOMAIN) {
+        return res.redirect(`https://${ADMIN_PORTAL_HOST}/`);
+    }
+
+    return next();
+});
+
+app.get('/', (req, res) => {
+    if (req.hostname === ADMIN_PORTAL_HOST) {
+        return res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+    }
+
+    if (req.hostname === CUSTOMER_PORTAL_HOST) {
+        return res.sendFile(path.join(__dirname, 'public', 'login.html'));
+    }
+
+    return res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.get('/index.html', (req, res) => {
+    if (req.hostname === ADMIN_PORTAL_HOST) {
+        return res.redirect('/admin.html');
+    }
+
+    if (req.hostname === CUSTOMER_PORTAL_HOST) {
+        return res.redirect('/login.html');
+    }
+
+    return res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 let razorpayClient = null;
 
@@ -119,7 +165,7 @@ function serializeUser(user) {
         access_token: accessEnabled ? user.access_token : null,
         portal_session_token: createPortalSessionToken(user.email),
         status: user.status,
-        domain: `${user.subdomain}.cloud.apexinfosys.in`,
+        domain: `${user.subdomain}.${CLOUD_BASE_DOMAIN}`,
         trial_ends_at: user.trial_ends_at,
         trial_approved_at: user.trial_approved_at,
         activated_at: user.activated_at,
@@ -132,7 +178,7 @@ function serializeAdminUser(user) {
         id: user.id,
         email: user.email,
         subdomain: user.subdomain,
-        domain: `${user.subdomain}.cloud.apexinfosys.in`,
+        domain: `${user.subdomain}.${CLOUD_BASE_DOMAIN}`,
         status: user.status,
         access_token: isAccessEnabled(user.status) ? user.access_token : null,
         razorpay_customer_id: user.razorpay_customer_id,
@@ -269,6 +315,18 @@ function buildCheckoutPayload(user, subscriptionId) {
 }
 
 async function prepareCheckoutForUser(user) {
+    if (user.status === 'active' || ['active', 'authenticated', 'charged'].includes((user.razorpay_subscription_status || '').toLowerCase())) {
+        const error = new Error('Your account is already active. Additional payment is not required.');
+        error.statusCode = 409;
+        throw error;
+    }
+
+    if (user.status !== 'payment_pending') {
+        const error = new Error('This account does not require a payment checkout.');
+        error.statusCode = 400;
+        throw error;
+    }
+
     const razorpay = getRazorpayClient();
 
     const customer = await getOrCreateCustomer(user);
@@ -525,6 +583,10 @@ app.post('/api/billing/create-checkout', async (req, res) => {
             return res.status(404).json({ error: 'Account not found' });
         }
 
+        if (user.status === 'active' || ['active', 'authenticated', 'charged'].includes((user.razorpay_subscription_status || '').toLowerCase())) {
+            return res.status(409).json({ error: 'Your account is already active. Additional payment is not required.' });
+        }
+
         if (user.status !== 'payment_pending') {
             return res.status(400).json({ error: 'This account does not require a payment checkout.' });
         }
@@ -537,6 +599,9 @@ app.post('/api/billing/create-checkout', async (req, res) => {
         });
     } catch (error) {
         console.error('CHECKOUT CREATION ERROR:', error);
+        if (error.statusCode) {
+            return res.status(error.statusCode).json({ error: error.message });
+        }
         res.status(502).json({
             error: getBillingErrorMessage(error, 'Unable to create Razorpay checkout right now.')
         });
@@ -638,6 +703,7 @@ app.post('/api/admin/login', async (req, res) => {
 
     res.status(200).json({
         message: 'Admin login successful',
+        email,
         token: createAdminToken(email)
     });
 });
@@ -708,7 +774,7 @@ app.get('/api/internal/verify-domain', async (req, res) => {
         return res.status(400).send('Domain missing');
     }
 
-    const baseDomain = '.cloud.apexinfosys.in';
+    const baseDomain = `.${CLOUD_BASE_DOMAIN}`;
     if (!domain.endsWith(baseDomain)) {
         return res.status(403).send('Not our domain');
     }

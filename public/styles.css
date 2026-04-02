@@ -168,6 +168,23 @@ code {
     flex-wrap: wrap;
 }
 
+.identity-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
+    padding: 0 12px;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    background: var(--surface-tint);
+    color: var(--text-muted);
+    font-size: 0.86rem;
+    font-weight: 600;
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .portal-main,
 .admin-main {
     display: flex;
@@ -532,6 +549,10 @@ code {
     grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.detail-grid {
+    grid-template-columns: 1fr;
+}
+
 .dashboard-grid {
     grid-template-columns: 1fr;
 }
@@ -800,7 +821,6 @@ code {
 
 @media (max-width: 1100px) {
     .summary-strip,
-    .detail-grid,
     .stats-grid,
     .user-card__sections,
     .feature-grid {
@@ -810,7 +830,6 @@ code {
 
 @media (max-width: 820px) {
     .summary-strip,
-    .detail-grid,
     .stats-grid,
     .user-card__sections,
     .feature-grid {

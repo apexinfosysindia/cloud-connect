@@ -8,6 +8,10 @@
     const alertBox = document.getElementById('alertBox');
     const accountShell = document.getElementById('account-shell');
     const logoutBtn = document.getElementById('logoutBtn');
+    const headerLogoutBtn = document.getElementById('headerLogoutBtn');
+    const headerUserEmail = document.getElementById('headerUserEmail');
+    const guestNavActions = document.getElementById('guestNavActions');
+    const signedInNavActions = document.getElementById('signedInNavActions');
     const payNowBtn = document.getElementById('payNowBtn');
 
     function scrollToAccountShell() {
@@ -29,10 +33,38 @@
         button.disabled = false;
     }
 
+    function setHeaderState(userData) {
+        const isSignedIn = Boolean(userData);
+
+        if (guestNavActions) {
+            guestNavActions.classList.toggle('hidden', isSignedIn);
+        }
+
+        if (signedInNavActions) {
+            signedInNavActions.classList.toggle('hidden', !isSignedIn);
+        }
+
+        if (headerUserEmail) {
+            headerUserEmail.textContent = isSignedIn ? userData.email : '';
+        }
+    }
+
+    function clearSessionAndShowAuth() {
+        localStorage.removeItem('apex_user');
+        setHeaderState(null);
+
+        if (pageMode === 'signup') {
+            showSignupView();
+        } else {
+            showLoginView();
+        }
+    }
+
     function showLoginView() {
         if (signupForm) signupForm.classList.add('hidden');
         if (loginForm) loginForm.classList.remove('hidden');
         if (dashboard) dashboard.classList.add('hidden');
+        setHeaderState(null);
         accountTitle.textContent = 'Sign in to your Cloud account';
         headerSubtitle.textContent = 'Log in to manage your remote access, billing and cloud address.';
         hideAlert();
@@ -43,6 +75,7 @@
         if (loginForm) loginForm.classList.add('hidden');
         if (signupForm) signupForm.classList.remove('hidden');
         if (dashboard) dashboard.classList.add('hidden');
+        setHeaderState(null);
         accountTitle.textContent = 'Create your Cloud account';
         headerSubtitle.textContent = 'Reserve your cloud address and complete billing to enable remote access.';
         hideAlert();
@@ -101,6 +134,7 @@
         if (loginForm) loginForm.classList.add('hidden');
         if (signupForm) signupForm.classList.add('hidden');
         dashboard.classList.remove('hidden');
+        setHeaderState(userData);
         accountTitle.textContent = `Cloud account for ${userData.email}`;
         headerSubtitle.textContent = 'Manage billing, access status and your cloud address from one place.';
 
@@ -213,14 +247,11 @@
     }
 
     if (logoutBtn) {
-        logoutBtn.addEventListener('click', () => {
-            localStorage.removeItem('apex_user');
-            if (pageMode === 'signup') {
-                showSignupView();
-            } else {
-                showLoginView();
-            }
-        });
+        logoutBtn.addEventListener('click', clearSessionAndShowAuth);
+    }
+
+    if (headerLogoutBtn) {
+        headerLogoutBtn.addEventListener('click', clearSessionAndShowAuth);
     }
 
     if (payNowBtn) {
