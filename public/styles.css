@@ -175,6 +175,11 @@ code {
     gap: 20px;
 }
 
+.auth-main {
+    display: flex;
+    justify-content: center;
+}
+
 .hero-card,
 .section-card {
     padding: 26px;
@@ -246,6 +251,13 @@ code {
     max-width: 70ch;
     margin: 16px 0 0;
     font-size: 1rem;
+}
+
+.hero-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 22px;
+    flex-wrap: wrap;
 }
 
 .section-text {
@@ -336,6 +348,10 @@ code {
     display: flex;
     flex-direction: column;
     gap: 18px;
+}
+
+.auth-card {
+    width: min(720px, 100%);
 }
 
 .account-shell__header {
@@ -606,8 +622,17 @@ code {
     color: var(--danger);
 }
 
-.token-value,
-.token-block {
+.status-reveal {
+    border: 0;
+    background: transparent;
+    padding: 0;
+}
+
+.status-reveal .status-badge {
+    cursor: pointer;
+}
+
+.token-value {
     display: block;
     width: 100%;
     padding: 14px;
@@ -714,7 +739,7 @@ code {
 }
 
 .user-card__sections {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     margin-bottom: 16px;
 }
 
@@ -736,6 +761,41 @@ code {
     border: 1px dashed var(--line-strong);
     border-radius: var(--radius-lg);
     background: var(--surface-subtle);
+}
+
+.modal {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.42);
+}
+
+.modal__panel {
+    position: relative;
+    z-index: 1;
+    width: min(560px, 100%);
+    padding: 24px;
+    border-radius: var(--radius-xl);
+    border: 1px solid var(--line);
+    background: var(--surface);
+    box-shadow: 0 24px 64px rgba(15, 23, 42, 0.18);
+}
+
+.modal__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 18px;
 }
 
 @media (max-width: 1100px) {
@@ -786,7 +846,8 @@ code {
     .masthead-actions,
     .section-header,
     .status-meta,
-    .user-card__top {
+    .user-card__top,
+    .modal__header {
         flex-direction: column;
         align-items: flex-start;
     }
@@ -807,6 +868,10 @@ code {
     .button,
     .button-small {
         width: 100%;
+    }
+
+    .hero-actions {
+        flex-direction: column;
     }
 
     .action-row {

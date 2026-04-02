@@ -52,6 +52,16 @@ function dbAll(query, params = []) {
     });
 }
 
+async function createUniqueAccessToken() {
+    while (true) {
+        const candidate = generateToken();
+        const existing = await dbGet(`SELECT id FROM users WHERE access_token = ?`, [candidate]);
+        if (!existing) {
+            return candidate;
+        }
+    }
+}
+
 function isAccessEnabled(status) {
     return status === 'active' || status === 'trial';
 }
@@ -124,7 +134,7 @@ function serializeAdminUser(user) {
         subdomain: user.subdomain,
         domain: `${user.subdomain}.cloud.apexinfosys.in`,
         status: user.status,
-        access_token: user.access_token,
+        access_token: isAccessEnabled(user.status) ? user.access_token : null,
         razorpay_customer_id: user.razorpay_customer_id,
         razorpay_subscription_id: user.razorpay_subscription_id,
         razorpay_payment_id: user.razorpay_payment_id,
@@ -337,18 +347,20 @@ async function activateUserAccount(subscriptionId, paymentId, subscriptionStatus
     }
 
     const activatedAt = user.activated_at || new Date().toISOString();
+    const accessToken = user.access_token || await createUniqueAccessToken();
 
     await dbRun(
         `
             UPDATE users
             SET status = 'active',
+                access_token = ?,
                 razorpay_payment_id = COALESCE(?, razorpay_payment_id),
                 razorpay_subscription_status = ?,
                 activated_at = ?,
                 trial_ends_at = NULL
             WHERE id = ?
         `,
-        [paymentId || null, subscriptionStatus, activatedAt, user.id]
+        [accessToken, paymentId || null, subscriptionStatus, activatedAt, user.id]
     );
 
     return dbGet(`SELECT * FROM users WHERE id = ?`, [user.id]);
@@ -365,33 +377,39 @@ async function updateUserStatus(userId, status, options = {}) {
     let trialEndsAt = user.trial_ends_at;
     let trialApprovedAt = user.trial_approved_at;
     let activatedAt = user.activated_at;
+    let accessToken = user.access_token;
 
     if (status === 'trial') {
         const trialDays = Number.isFinite(options.trialDays) ? options.trialDays : 365;
         trialApprovedAt = nowIso;
         trialEndsAt = new Date(now.getTime() + (trialDays * 24 * 60 * 60 * 1000)).toISOString();
         activatedAt = activatedAt || nowIso;
+        accessToken = accessToken || await createUniqueAccessToken();
     } else if (status === 'active') {
         trialEndsAt = null;
         activatedAt = activatedAt || nowIso;
+        accessToken = accessToken || await createUniqueAccessToken();
     } else if (status === 'payment_pending') {
         trialEndsAt = null;
         trialApprovedAt = null;
         activatedAt = null;
+        accessToken = null;
     } else if (status === 'expired' || status === 'suspended') {
         trialEndsAt = null;
+        accessToken = null;
     }
 
     await dbRun(
         `
             UPDATE users
             SET status = ?,
+                access_token = ?,
                 trial_ends_at = ?,
                 trial_approved_at = ?,
                 activated_at = ?
             WHERE id = ?
         `,
-        [status, trialEndsAt, trialApprovedAt, activatedAt, userId]
+        [status, accessToken, trialEndsAt, trialApprovedAt, activatedAt, userId]
     );
 
     return dbGet(`SELECT * FROM users WHERE id = ?`, [userId]);
@@ -418,14 +436,13 @@ app.post('/api/auth/signup', async (req, res) => {
         }
 
         const hashedPassword = await bcrypt.hash(password, 10);
-        const accessToken = generateToken();
 
         const insertResult = await dbRun(
             `
-                INSERT INTO users (email, password, subdomain, access_token, status)
-                VALUES (?, ?, ?, ?, 'payment_pending')
+                INSERT INTO users (email, password, subdomain, status)
+                VALUES (?, ?, ?, 'payment_pending')
             `,
-            [email, hashedPassword, subdomain, accessToken]
+            [email, hashedPassword, subdomain]
         );
 
         let user = await dbGet(`SELECT * FROM users WHERE id = ?`, [insertResult.lastID]);
@@ -587,15 +604,11 @@ app.post('/api/razorpay/webhook', async (req, res) => {
         if (['subscription.authenticated', 'subscription.activated', 'subscription.charged', 'payment.captured', 'invoice.paid'].includes(eventName)) {
             await activateUserAccount(info.subscriptionId, info.paymentId, info.subscriptionStatus || 'active');
         } else if (['subscription.cancelled', 'subscription.halted', 'subscription.paused'].includes(eventName)) {
-            await dbRun(
-                `UPDATE users SET status = 'suspended', razorpay_subscription_status = ? WHERE id = ?`,
-                [info.subscriptionStatus || eventName, user.id]
-            );
+            await updateUserStatus(user.id, 'suspended');
+            await dbRun(`UPDATE users SET razorpay_subscription_status = ? WHERE id = ?`, [info.subscriptionStatus || eventName, user.id]);
         } else if (['subscription.completed', 'invoice.expired'].includes(eventName)) {
-            await dbRun(
-                `UPDATE users SET status = 'expired', razorpay_subscription_status = ? WHERE id = ?`,
-                [info.subscriptionStatus || eventName, user.id]
-            );
+            await updateUserStatus(user.id, 'expired');
+            await dbRun(`UPDATE users SET razorpay_subscription_status = ? WHERE id = ?`, [info.subscriptionStatus || eventName, user.id]);
         } else if (info.subscriptionStatus) {
             await dbRun(
                 `UPDATE users SET razorpay_subscription_status = ? WHERE id = ?`,

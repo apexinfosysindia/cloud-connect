@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create Account | ApexOS Cloud Connect</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+    <link rel="icon" href="/favicon.ico">
+</head>
+<body class="portal-page auth-page" data-auth-mode="signup">
+<div class="page-shell page-shell--portal">
+    <header class="masthead">
+        <div class="brand-suite">
+            <img src="/group-logo.png" alt="Apex Infosys" class="brand-suite__group">
+            <span class="brand-suite__divider"></span>
+            <div class="brand-suite__product">
+                <img src="/logo.png" alt="ApexOS Cloud Connect" class="brand-suite__product-logo">
+                <div>
+                    <div class="brand-suite__title">ApexOS Cloud Connect</div>
+                    <div class="brand-suite__subtitle">Secure remote access service</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="masthead-actions">
+            <a href="/index.html" class="button button-secondary">Overview</a>
+            <a href="/login.html" class="button button-primary">Sign In</a>
+        </div>
+    </header>
+
+    <main class="auth-main">
+        <section id="account-shell" class="section-card auth-card">
+            <div class="account-shell__header">
+                <div>
+                    <span class="eyebrow">Cloud Account</span>
+                    <h1 id="accountTitle" class="section-title">Create your Cloud account</h1>
+                    <p id="headerSubtitle" class="section-text">Reserve your cloud address and complete billing to enable remote access.</p>
+                </div>
+            </div>
+
+            <div id="alertBox" class="alert"></div>
+
+            <form id="signupForm" class="stack">
+                <div class="field">
+                    <label class="field-label" for="signupEmail">Email Address</label>
+                    <input class="input" type="email" id="signupEmail" autocomplete="email" required>
+                </div>
+
+                <div class="field">
+                    <label class="field-label" for="signupPassword">Create Password</label>
+                    <input class="input" type="password" id="signupPassword" autocomplete="new-password" minlength="6" required>
+                </div>
+
+                <div class="field">
+                    <label class="field-label" for="signupSubdomain">Desired Cloud Address</label>
+                    <div class="segment">
+                        <input class="segment-input" type="text" id="signupSubdomain" placeholder="my-home" required>
+                        <span class="segment-suffix">.cloud.apexinfosys.in</span>
+                    </div>
+                    <p class="field-hint">Use 3-20 lowercase letters, numbers or hyphens.</p>
+                </div>
+
+                <button type="submit" id="signupBtn" class="button button-primary button-full">Create Account and Pay</button>
+
+                <p class="link-row">Already have an account? <a href="/login.html" class="link-inline">Sign in</a></p>
+            </form>
+
+            <section id="dashboard" class="dashboard-grid hidden">
+                <article id="statusCard" class="status-card">
+                    <div class="status-meta">
+                        <div>
+                            <span class="status-label">Account Status</span>
+                            <div id="dashStatusTitle" class="status-title">Cloud account</div>
+                        </div>
+                        <span id="dashStatus" class="status-badge">pending</span>
+                    </div>
+                    <p id="dashStatusDetail" class="status-text"></p>
+                </article>
+
+                <div class="detail-grid">
+                    <article id="billingCard" class="detail-card hidden">
+                        <span class="detail-label">Next Step</span>
+                        <p class="detail-copy">Your cloud address is reserved, but billing must be completed before remote access is enabled.</p>
+                        <button id="payNowBtn" class="button button-warning button-full">Complete Payment</button>
+                    </article>
+
+                    <article id="tokenCard" class="detail-card hidden">
+                        <span class="detail-label">Access Token</span>
+                        <code id="dashToken" class="token-value"></code>
+                        <p class="detail-copy">Paste this into the <strong>Access Token</strong> field in your ApexOS add-on.</p>
+                    </article>
+
+                    <article id="urlCard" class="detail-card">
+                        <span id="dashUrlLabel" class="detail-label">Cloud Address</span>
+                        <a id="dashUrl" href="#" class="domain-link domain-link--disabled"></a>
+                        <p class="detail-copy">This address becomes available as soon as the account is enabled.</p>
+                    </article>
+                </div>
+
+                <button id="logoutBtn" class="button button-secondary button-full">Log Out</button>
+            </section>
+        </section>
+    </main>
+</div>
+
+<script src="/account.js"></script>
+</body>
+</html>
