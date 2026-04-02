@@ -14,7 +14,7 @@ jobs:
     environment: production
     steps:
       - name: Checkout selected ref
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.event.inputs.ref }}
       - name: Capture commit
@@ -22,7 +22,7 @@ jobs:
         run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Check backend syntax
         run: |
-          node --check cloud-connect/server.js
+          node --check server.js
       - name: Setup SSH
         run: |
           install -m 700 -d ~/.ssh
@@ -37,16 +37,15 @@ jobs:
         run: |
           rsync -az --delete \
             --exclude ".git/" \
-            --exclude "cloud-connect/.env" \
-            --exclude "cloud-connect/database.sqlite" \
-            --exclude "cloud-connect/node_modules/" \
+            --exclude ".env" \
+            --exclude "database.sqlite" \
+            --exclude "node_modules/" \
             ./ "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/"
       - name: Deploy on VPS
         run: |
           ssh -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" 'bash -s' <<'EOF'
           set -euo pipefail
-          BASE_DIR="${{ secrets.VPS_APP_DIR }}"
-          APP_DIR="${{ secrets.VPS_APP_DIR }}/cloud-connect"
+          APP_DIR="${{ secrets.VPS_APP_DIR }}"
           DEPLOY_COMMIT="${{ steps.meta.outputs.commit }}"
           cd "$APP_DIR"
           npm ci --omit=dev
