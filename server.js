@@ -273,7 +273,7 @@ async function prepareCheckoutForUser(user) {
         const subscription = await razorpay.subscriptions.create({
             plan_id: process.env.RAZORPAY_PLAN_ID,
             customer_id: customer.id,
-            total_count: 120,
+            total_count: 100,
             customer_notify: 1,
             notes: {
                 email: user.email,
