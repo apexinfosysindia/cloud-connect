@@ -299,6 +299,20 @@ function openCheckout(checkout, button, fallbackText) {
         }
     });
 
+    razorpay.on('payment.failed', (response) => {
+        const error = response?.error || {};
+        const detailParts = [
+            error.description,
+            error.reason,
+            error.source,
+            error.step
+        ].filter(Boolean);
+
+        restoreButton(button, fallbackText);
+        showAlert(detailParts.length > 0 ? detailParts.join(' | ') : 'Razorpay reported a payment failure.');
+        console.error('Razorpay payment failed:', response);
+    });
+
     razorpay.open();
 }
 
