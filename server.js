@@ -234,10 +234,6 @@ function requireAdmin(req, res, next) {
 }
 
 async function getOrCreateCustomer(user) {
-    if (user.razorpay_customer_id) {
-        return { id: user.razorpay_customer_id };
-    }
-
     const razorpay = getRazorpayClient();
     const customers = await razorpay.customers.all({ email: user.email });
     if (customers.items && customers.items.length > 0) {
@@ -266,24 +262,22 @@ async function prepareCheckoutForUser(user) {
     const razorpay = getRazorpayClient();
 
     const customer = await getOrCreateCustomer(user);
-    let subscriptionId = user.razorpay_subscription_id;
-    let subscriptionStatus = user.razorpay_subscription_status;
+    // Always create a fresh checkout subscription for payment-pending users.
+    // This avoids reusing stale live-mode IDs after switching to test mode,
+    // or vice versa, which Razorpay reports as "The id provided does not exist".
+    const subscription = await razorpay.subscriptions.create({
+        plan_id: process.env.RAZORPAY_PLAN_ID,
+        customer_id: customer.id,
+        total_count: 100,
+        customer_notify: 1,
+        notes: {
+            email: user.email,
+            subdomain: user.subdomain
+        }
+    });
 
-    if (!subscriptionId || subscriptionStatus !== 'created') {
-        const subscription = await razorpay.subscriptions.create({
-            plan_id: process.env.RAZORPAY_PLAN_ID,
-            customer_id: customer.id,
-            total_count: 100,
-            customer_notify: 1,
-            notes: {
-                email: user.email,
-                subdomain: user.subdomain
-            }
-        });
-
-        subscriptionId = subscription.id;
-        subscriptionStatus = subscription.status || 'created';
-    }
+    const subscriptionId = subscription.id;
+    const subscriptionStatus = subscription.status || 'created';
 
     await dbRun(
         `
