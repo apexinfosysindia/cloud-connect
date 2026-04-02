@@ -38,9 +38,8 @@
         <section id="account-shell" class="section-card auth-card">
             <div class="account-shell__header">
                 <div>
-                    <span class="eyebrow">Cloud Account</span>
                     <h1 id="accountTitle" class="section-title">Create your Cloud account</h1>
-                    <p id="headerSubtitle" class="section-text">Reserve your cloud address and complete billing to enable remote access.</p>
+                    <p id="headerSubtitle" class="section-text">Create your account, reserve your cloud address and complete billing.</p>
                 </div>
             </div>
 
@@ -58,15 +57,15 @@
                 </div>
 
                 <div class="field">
-                    <label class="field-label" for="signupSubdomain">Desired Cloud Address</label>
+                    <label class="field-label" for="signupSubdomain">Desired Cloud Address (Optional)</label>
                     <div class="segment">
-                        <input class="segment-input" type="text" id="signupSubdomain" placeholder="my-home" required>
+                        <input class="segment-input" type="text" id="signupSubdomain" placeholder="my-home">
                         <span class="segment-suffix">.cloud.apexinfosys.in</span>
                     </div>
-                    <p class="field-hint">Use 3-20 lowercase letters, numbers or hyphens.</p>
+                    <p class="field-hint">Use 3-20 lowercase letters, numbers or hyphens. You can also set this later from your dashboard.</p>
                 </div>
 
-                <button type="submit" id="signupBtn" class="button button-primary button-full">Create Account and Pay</button>
+                <button type="submit" id="signupBtn" class="button button-primary button-full">Create Account</button>
 
                 <p class="link-row">Already have an account? <a href="/login.html" class="link-inline">Sign in</a></p>
             </form>
@@ -84,6 +83,16 @@
                 </article>
 
                 <div class="detail-grid">
+                    <article id="subdomainCard" class="detail-card subdomain-card hidden">
+                        <span class="detail-label">Desired Cloud Address</span>
+                        <p class="detail-copy">Set your cloud address before continuing with activation or billing.</p>
+                        <div class="segment">
+                            <input class="segment-input" type="text" id="dashSubdomain" placeholder="my-home">
+                            <span class="segment-suffix">.cloud.apexinfosys.in</span>
+                        </div>
+                        <button id="saveSubdomainBtn" class="button button-primary button-full">Save Cloud Address</button>
+                    </article>
+
                     <article id="billingCard" class="detail-card hidden">
                         <span class="detail-label">Next Step</span>
                         <p class="detail-copy">Your cloud address is reserved, but billing must be completed before remote access is enabled.</p>
@@ -99,7 +108,7 @@
                     <article id="urlCard" class="detail-card">
                         <span id="dashUrlLabel" class="detail-label">Cloud Address</span>
                         <a id="dashUrl" href="#" class="domain-link domain-link--disabled"></a>
-                        <p class="detail-copy">This address becomes available as soon as the account is enabled.</p>
+                        <p id="dashUrlHelp" class="detail-copy">This address becomes available as soon as the account is enabled.</p>
                     </article>
                 </div>
 

@@ -13,6 +13,14 @@
     const guestNavActions = document.getElementById('guestNavActions');
     const signedInNavActions = document.getElementById('signedInNavActions');
     const payNowBtn = document.getElementById('payNowBtn');
+    const subdomainCard = document.getElementById('subdomainCard');
+    const dashSubdomain = document.getElementById('dashSubdomain');
+    const saveSubdomainBtn = document.getElementById('saveSubdomainBtn');
+    const dashUrlHelp = document.getElementById('dashUrlHelp');
+    const portalBrandTitle = 'ApexOS Cloud Connect Oasis';
+    const loginTitle = `Sign In | ${portalBrandTitle}`;
+    const signupTitle = `Create Account | ${portalBrandTitle}`;
+    const dashboardTitle = `Account | ${portalBrandTitle}`;
 
     function scrollToAccountShell() {
         accountShell.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -31,6 +39,20 @@
         if (!button) return;
         button.textContent = fallbackText;
         button.disabled = false;
+    }
+
+    function setPageTitle(title) {
+        document.title = title;
+    }
+
+    function normalizeSignedInUrl() {
+        if (window.location.pathname !== '/') {
+            window.history.replaceState({}, '', '/');
+        }
+    }
+
+    function hasSubdomain(userData) {
+        return Boolean(userData && typeof userData.subdomain === 'string' && userData.subdomain.trim());
     }
 
     function setHeaderState(userData) {
@@ -65,8 +87,9 @@
         if (loginForm) loginForm.classList.remove('hidden');
         if (dashboard) dashboard.classList.add('hidden');
         setHeaderState(null);
+        setPageTitle(loginTitle);
         accountTitle.textContent = 'Sign in to your Cloud account';
-        headerSubtitle.textContent = 'Log in to manage your remote access, billing and cloud address.';
+        headerSubtitle.textContent = 'Manage access, billing and your cloud address from one place.';
         hideAlert();
         scrollToAccountShell();
     }
@@ -76,8 +99,9 @@
         if (signupForm) signupForm.classList.remove('hidden');
         if (dashboard) dashboard.classList.add('hidden');
         setHeaderState(null);
+        setPageTitle(signupTitle);
         accountTitle.textContent = 'Create your Cloud account';
-        headerSubtitle.textContent = 'Reserve your cloud address and complete billing to enable remote access.';
+        headerSubtitle.textContent = 'Create your account, reserve your cloud address and complete billing.';
         hideAlert();
         scrollToAccountShell();
     }
@@ -135,10 +159,13 @@
         if (signupForm) signupForm.classList.add('hidden');
         dashboard.classList.remove('hidden');
         setHeaderState(userData);
+        setPageTitle(dashboardTitle);
+        normalizeSignedInUrl();
         accountTitle.textContent = `Cloud account for ${userData.email}`;
-        headerSubtitle.textContent = 'Manage billing, access status and your cloud address from one place.';
+        headerSubtitle.textContent = 'Manage access status, billing and cloud address from one place.';
 
         const accessEnabled = ['active', 'trial'].includes(userData.status);
+        const subdomainConfigured = hasSubdomain(userData);
         const tone = getStatusTone(userData.status);
 
         const statusCard = document.getElementById('statusCard');
@@ -151,24 +178,46 @@
 
         const billingCard = document.getElementById('billingCard');
         const tokenCard = document.getElementById('tokenCard');
-        billingCard.classList.toggle('hidden', userData.status !== 'payment_pending');
+        subdomainCard.classList.toggle('hidden', subdomainConfigured);
+        billingCard.classList.toggle('hidden', userData.status !== 'payment_pending' || !subdomainConfigured);
         tokenCard.classList.toggle('hidden', !accessEnabled);
+
+        if (dashSubdomain) {
+            dashSubdomain.value = subdomainConfigured ? userData.subdomain : '';
+        }
 
         document.getElementById('dashToken').textContent = userData.access_token || 'Issued when service is enabled';
 
         const dashUrl = document.getElementById('dashUrl');
         const dashUrlLabel = document.getElementById('dashUrlLabel');
-        dashUrl.textContent = `https://${userData.domain}`;
-        if (accessEnabled) {
-            dashUrlLabel.textContent = 'Live Cloud Address';
-            dashUrl.href = `https://${userData.domain}`;
-            dashUrl.target = '_blank';
-            dashUrl.className = 'domain-link domain-link--live';
-        } else {
-            dashUrlLabel.textContent = 'Reserved Cloud Address';
+        if (!subdomainConfigured) {
+            dashUrlLabel.textContent = 'Cloud Address';
+            dashUrl.textContent = 'Not set';
             dashUrl.href = '#';
             dashUrl.removeAttribute('target');
             dashUrl.className = 'domain-link domain-link--disabled';
+            if (dashUrlHelp) {
+                dashUrlHelp.textContent = 'Set your desired cloud address to continue account activation.';
+            }
+        } else {
+            dashUrl.textContent = `https://${userData.domain}`;
+            if (accessEnabled) {
+                dashUrlLabel.textContent = 'Live Cloud Address';
+                dashUrl.href = `https://${userData.domain}`;
+                dashUrl.target = '_blank';
+                dashUrl.className = 'domain-link domain-link--live';
+                if (dashUrlHelp) {
+                    dashUrlHelp.textContent = 'Your cloud address is active and ready to use.';
+                }
+            } else {
+                dashUrlLabel.textContent = 'Reserved Cloud Address';
+                dashUrl.href = '#';
+                dashUrl.removeAttribute('target');
+                dashUrl.className = 'domain-link domain-link--disabled';
+                if (dashUrlHelp) {
+                    dashUrlHelp.textContent = 'This address becomes available as soon as the account is enabled.';
+                }
+            }
         }
 
         scrollToAccountShell();
@@ -262,6 +311,12 @@
                 return;
             }
 
+            if (!hasSubdomain(storedUser)) {
+                renderDashboard(storedUser);
+                showAlert('Set your desired cloud address before continuing payment.');
+                return;
+            }
+
             const originalText = payNowBtn.textContent;
             payNowBtn.textContent = 'Preparing Checkout...';
             payNowBtn.disabled = true;
@@ -282,6 +337,49 @@
             } catch (err) {
                 showAlert(err.message);
                 restoreButton(payNowBtn, originalText);
+            }
+        });
+    }
+
+    if (saveSubdomainBtn) {
+        saveSubdomainBtn.addEventListener('click', async () => {
+            const storedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
+            if (!storedUser) {
+                showAlert('Please log in again to continue.');
+                return;
+            }
+
+            const nextSubdomain = (dashSubdomain?.value || '').trim().toLowerCase();
+            if (!/^[a-z0-9\-]{3,20}$/.test(nextSubdomain)) {
+                showAlert('Subdomain can only contain lowercase letters, numbers, and hyphens (3-20 chars).');
+                return;
+            }
+
+            const originalText = saveSubdomainBtn.textContent;
+            saveSubdomainBtn.textContent = 'Saving...';
+            saveSubdomainBtn.disabled = true;
+            hideAlert();
+
+            try {
+                const res = await fetch('/api/account/subdomain', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        portal_session_token: storedUser.portal_session_token,
+                        subdomain: nextSubdomain
+                    })
+                });
+
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error);
+
+                localStorage.setItem('apex_user', JSON.stringify(data.data));
+                renderDashboard(data.data);
+                showAlert('Cloud address saved.', false);
+            } catch (err) {
+                showAlert(err.message);
+            } finally {
+                restoreButton(saveSubdomainBtn, originalText);
             }
         });
     }
@@ -309,7 +407,9 @@
 
                 localStorage.setItem('apex_user', JSON.stringify(data.data));
                 renderDashboard(data.data);
-                if (data.data.status === 'payment_pending') {
+                if (!hasSubdomain(data.data)) {
+                    showAlert('Set your desired cloud address to continue setup.', false);
+                } else if (data.data.status === 'payment_pending') {
                     showAlert('Account found. Complete payment from your account to activate remote access.');
                 }
             } catch (err) {
@@ -325,13 +425,14 @@
         signupForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = document.getElementById('signupBtn');
-            const defaultText = 'Create Account and Pay';
+            const defaultText = 'Create Account';
             btn.textContent = 'Creating Account...';
             btn.disabled = true;
             hideAlert();
 
-            const subdomain = document.getElementById('signupSubdomain').value;
-            if (!/^[a-z0-9\-]{3,20}$/.test(subdomain)) {
+            const subdomainInput = document.getElementById('signupSubdomain');
+            const subdomain = subdomainInput ? subdomainInput.value.trim().toLowerCase() : '';
+            if (subdomain && !/^[a-z0-9\-]{3,20}$/.test(subdomain)) {
                 showAlert('Subdomain can only contain lowercase letters, numbers, and hyphens (3-20 chars).');
                 restoreButton(btn, defaultText);
                 return;
@@ -344,7 +445,7 @@
                     body: JSON.stringify({
                         email: document.getElementById('signupEmail').value,
                         password: document.getElementById('signupPassword').value,
-                        subdomain
+                        ...(subdomain ? { subdomain } : {})
                     })
                 });
 
@@ -354,9 +455,12 @@
                 localStorage.setItem('apex_user', JSON.stringify(data.data));
                 renderDashboard(data.data);
                 showAlert(data.message, false);
-                openCheckout(data.checkout, btn, defaultText);
+                if (data.checkout) {
+                    openCheckout(data.checkout, btn, defaultText);
+                }
             } catch (err) {
                 showAlert(err.message);
+            } finally {
                 restoreButton(btn, defaultText);
             }
         });

@@ -23,8 +23,17 @@ app.use(express.json({
 app.use(cors());
 
 app.get(['/login', '/login.html', '/signup', '/signup.html'], (req, res, next) => {
-    if (req.hostname === CLOUD_BASE_DOMAIN) {
-        const targetPath = req.path.startsWith('/signup') ? '/signup.html' : '/login.html';
+    const isSignupPath = req.path.startsWith('/signup');
+    const targetPath = isSignupPath ? '/signup.html' : '/login.html';
+
+    if (req.hostname === CUSTOMER_PORTAL_HOST) {
+        if (req.path === '/login' || req.path === '/signup') {
+            return res.redirect(targetPath);
+        }
+        return next();
+    }
+
+    if (req.hostname === ADMIN_PORTAL_HOST || req.hostname === CLOUD_BASE_DOMAIN) {
         return res.redirect(`https://${CUSTOMER_PORTAL_HOST}${targetPath}`);
     }
 
@@ -32,11 +41,23 @@ app.get(['/login', '/login.html', '/signup', '/signup.html'], (req, res, next) =
 });
 
 app.get(['/admin', '/admin.html'], (req, res, next) => {
-    if (req.hostname === CLOUD_BASE_DOMAIN) {
+    if (req.hostname === ADMIN_PORTAL_HOST) {
+        return res.redirect('/');
+    }
+
+    if (req.hostname === CUSTOMER_PORTAL_HOST || req.hostname === CLOUD_BASE_DOMAIN) {
         return res.redirect(`https://${ADMIN_PORTAL_HOST}/`);
     }
 
     return next();
+});
+
+app.get('/index.html', (req, res) => {
+    if (req.hostname === ADMIN_PORTAL_HOST || req.hostname === CUSTOMER_PORTAL_HOST) {
+        return res.redirect('/');
+    }
+
+    return res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.get('/', (req, res) => {
@@ -46,18 +67,6 @@ app.get('/', (req, res) => {
 
     if (req.hostname === CUSTOMER_PORTAL_HOST) {
         return res.sendFile(path.join(__dirname, 'public', 'login.html'));
-    }
-
-    return res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-app.get('/index.html', (req, res) => {
-    if (req.hostname === ADMIN_PORTAL_HOST) {
-        return res.redirect('/admin.html');
-    }
-
-    if (req.hostname === CUSTOMER_PORTAL_HOST) {
-        return res.redirect('/login.html');
     }
 
     return res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -159,13 +168,14 @@ function verifyPortalSessionToken(token) {
 
 function serializeUser(user) {
     const accessEnabled = isAccessEnabled(user.status);
+    const hasSubdomain = Boolean(user.subdomain);
     return {
         email: user.email,
         subdomain: user.subdomain,
         access_token: accessEnabled ? user.access_token : null,
         portal_session_token: createPortalSessionToken(user.email),
         status: user.status,
-        domain: `${user.subdomain}.${CLOUD_BASE_DOMAIN}`,
+        domain: hasSubdomain ? `${user.subdomain}.${CLOUD_BASE_DOMAIN}` : null,
         trial_ends_at: user.trial_ends_at,
         trial_approved_at: user.trial_approved_at,
         activated_at: user.activated_at,
@@ -174,11 +184,12 @@ function serializeUser(user) {
 }
 
 function serializeAdminUser(user) {
+    const hasSubdomain = Boolean(user.subdomain);
     return {
         id: user.id,
         email: user.email,
         subdomain: user.subdomain,
-        domain: `${user.subdomain}.${CLOUD_BASE_DOMAIN}`,
+        domain: hasSubdomain ? `${user.subdomain}.${CLOUD_BASE_DOMAIN}` : null,
         status: user.status,
         access_token: isAccessEnabled(user.status) ? user.access_token : null,
         razorpay_customer_id: user.razorpay_customer_id,
@@ -309,7 +320,7 @@ function buildCheckoutPayload(user, subscriptionId) {
             email: user.email
         },
         notes: {
-            subdomain: user.subdomain
+            subdomain: user.subdomain || ''
         }
     };
 }
@@ -323,6 +334,12 @@ async function prepareCheckoutForUser(user) {
 
     if (user.status !== 'payment_pending') {
         const error = new Error('This account does not require a payment checkout.');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    if (!user.subdomain) {
+        const error = new Error('Set your cloud address before creating a payment checkout.');
         error.statusCode = 400;
         throw error;
     }
@@ -475,21 +492,27 @@ async function updateUserStatus(userId, status, options = {}) {
 
 app.post('/api/auth/signup', async (req, res) => {
     const { email, password, subdomain } = req.body;
+    const normalizedSubdomain = String(subdomain || '').trim().toLowerCase() || null;
 
-    if (!email || !password || !subdomain) {
-        return res.status(400).json({ error: 'Email, password, and subdomain are required' });
+    if (!email || !password) {
+        return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    if (!/^[a-z0-9\-]{3,20}$/.test(subdomain)) {
+    if (normalizedSubdomain && !/^[a-z0-9\-]{3,20}$/.test(normalizedSubdomain)) {
         return res.status(400).json({ error: 'Subdomain must be 3-20 lowercase letters, numbers, or hyphens.' });
     }
 
     try {
-        const existingUser = await dbGet(`SELECT * FROM users WHERE email = ? OR subdomain = ?`, [email, subdomain]);
+        const existingUser = normalizedSubdomain
+            ? await dbGet(`SELECT * FROM users WHERE email = ? OR subdomain = ?`, [email, normalizedSubdomain])
+            : await dbGet(`SELECT * FROM users WHERE email = ?`, [email]);
+
         if (existingUser) {
-            const message = existingUser.status === 'payment_pending'
-                ? 'Account already exists. Log in to complete payment.'
-                : 'Email or subdomain already exists';
+            const message = existingUser.email === email
+                ? (existingUser.status === 'payment_pending'
+                    ? 'Account already exists. Log in to continue setup.'
+                    : 'Email already exists')
+                : 'Cloud address is already in use';
             return res.status(409).json({ error: message });
         }
 
@@ -500,23 +523,27 @@ app.post('/api/auth/signup', async (req, res) => {
                 INSERT INTO users (email, password, subdomain, status)
                 VALUES (?, ?, ?, 'payment_pending')
             `,
-            [email, hashedPassword, subdomain]
+            [email, hashedPassword, normalizedSubdomain]
         );
 
         let user = await dbGet(`SELECT * FROM users WHERE id = ?`, [insertResult.lastID]);
         let checkout = null;
-        let message = 'Account created. Complete payment to activate remote access.';
+        let message = user.subdomain
+            ? 'Account created. Complete payment to activate remote access.'
+            : 'Account created. Set your desired cloud address to continue activation.';
 
-        try {
-            const checkoutState = await prepareCheckoutForUser(user);
-            user = checkoutState.user;
-            checkout = checkoutState.checkout;
-        } catch (billingError) {
-            console.error('RAZORPAY CHECKOUT SETUP ERROR:', billingError);
-            message = getBillingErrorMessage(
-                billingError,
-                'Account created, but billing setup is temporarily unavailable. Log in later to complete payment.'
-            );
+        if (user.subdomain) {
+            try {
+                const checkoutState = await prepareCheckoutForUser(user);
+                user = checkoutState.user;
+                checkout = checkoutState.checkout;
+            } catch (billingError) {
+                console.error('RAZORPAY CHECKOUT SETUP ERROR:', billingError);
+                message = getBillingErrorMessage(
+                    billingError,
+                    'Account created, but billing setup is temporarily unavailable. Log in later to complete payment.'
+                );
+            }
         }
 
         res.status(201).json({
@@ -558,6 +585,54 @@ app.post('/api/auth/login', async (req, res) => {
     }
 });
 
+app.post('/api/account/subdomain', async (req, res) => {
+    const { portal_session_token, subdomain } = req.body;
+
+    if (!portal_session_token) {
+        return res.status(400).json({ error: 'Portal session token is required' });
+    }
+
+    const normalizedSubdomain = String(subdomain || '').trim().toLowerCase();
+    if (!/^[a-z0-9\-]{3,20}$/.test(normalizedSubdomain)) {
+        return res.status(400).json({ error: 'Subdomain must be 3-20 lowercase letters, numbers, or hyphens.' });
+    }
+
+    try {
+        const session = verifyPortalSessionToken(portal_session_token);
+        if (!session) {
+            return res.status(401).json({ error: 'Invalid portal session. Please log in again.' });
+        }
+
+        const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [session.email]);
+        if (!user) {
+            return res.status(404).json({ error: 'Account not found' });
+        }
+
+        if (user.subdomain === normalizedSubdomain) {
+            return res.status(200).json({
+                message: 'Cloud address saved',
+                data: serializeUser(user)
+            });
+        }
+
+        const existing = await dbGet(`SELECT id FROM users WHERE subdomain = ? AND id != ?`, [normalizedSubdomain, user.id]);
+        if (existing) {
+            return res.status(409).json({ error: 'This cloud address is already in use.' });
+        }
+
+        await dbRun(`UPDATE users SET subdomain = ? WHERE id = ?`, [normalizedSubdomain, user.id]);
+        const updatedUser = await dbGet(`SELECT * FROM users WHERE id = ?`, [user.id]);
+
+        return res.status(200).json({
+            message: 'Cloud address saved',
+            data: serializeUser(updatedUser)
+        });
+    } catch (error) {
+        console.error('SUBDOMAIN UPDATE ERROR:', error);
+        return res.status(500).json({ error: 'Unable to save cloud address right now.' });
+    }
+});
+
 app.post('/api/billing/create-checkout', async (req, res) => {
     const { access_token, portal_session_token } = req.body;
 
@@ -581,6 +656,10 @@ app.post('/api/billing/create-checkout', async (req, res) => {
 
         if (!user) {
             return res.status(404).json({ error: 'Account not found' });
+        }
+
+        if (!user.subdomain) {
+            return res.status(400).json({ error: 'Set your cloud address before creating a payment checkout.' });
         }
 
         if (user.status === 'active' || ['active', 'authenticated', 'charged'].includes((user.razorpay_subscription_status || '').toLowerCase())) {
