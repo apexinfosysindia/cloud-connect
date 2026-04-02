@@ -80,12 +80,36 @@ code {
 }
 
 .portal-shell {
-    display: grid;
-    grid-template-columns: minmax(320px, 0.96fr) minmax(420px, 1.04fr);
-    gap: 22px;
+    display: block;
 }
 
-.brand-panel,
+.portal-surface {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.portal-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--line);
+}
+
+.portal-overview {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.portal-overview__copy {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
 .surface,
 .metric-card,
 .login-card,
@@ -93,13 +117,6 @@ code {
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--radius-xl);
-}
-
-.brand-panel {
-    background: linear-gradient(180deg, var(--panel) 0%, #16233a 100%);
-    color: #f8fafc;
-    padding: 34px;
-    box-shadow: var(--shadow-lg);
 }
 
 .surface {
@@ -153,38 +170,35 @@ code {
     background: #60a5fa;
 }
 
+.eyebrow--light {
+    background: var(--brand-soft);
+    border-color: #bfdbfe;
+    color: var(--brand-strong);
+}
+
 .brand-mark {
     display: flex;
     align-items: center;
     gap: 14px;
 }
 
-.brand-mark__orb {
-    width: 48px;
-    height: 48px;
-    border-radius: 14px;
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.04));
-    position: relative;
+.brand-mark--light {
+    align-items: center;
 }
 
-.brand-mark__orb::before,
-.brand-mark__orb::after {
-    content: "";
-    position: absolute;
-    left: 11px;
-    right: 11px;
-    height: 2px;
-    border-radius: 999px;
-    background: rgba(191, 219, 254, 0.86);
+.brand-mark__logo {
+    width: 64px;
+    height: 64px;
+    object-fit: contain;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.08);
+    padding: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
-.brand-mark__orb::before {
-    top: 16px;
-}
-
-.brand-mark__orb::after {
-    top: 27px;
+.brand-mark__logo--light {
+    background: var(--surface-alt);
+    border-color: var(--line);
 }
 
 .brand-mark__text {
@@ -204,6 +218,14 @@ code {
     color: rgba(241, 245, 249, 0.72);
 }
 
+.brand-mark__name--dark {
+    color: var(--text);
+}
+
+.brand-mark__sub--dark {
+    color: var(--text-soft);
+}
+
 .headline {
     margin: 0;
     max-width: 16ch;
@@ -220,10 +242,23 @@ code {
     font-size: 0.98rem;
 }
 
+.headline--dark {
+    max-width: 18ch;
+    color: var(--text);
+}
+
+.lede--dark {
+    color: var(--text-muted);
+}
+
 .signal-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 12px;
+}
+
+.signal-grid--light {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .signal-card,
@@ -245,11 +280,21 @@ code {
     border-radius: var(--radius-lg);
 }
 
+.signal-card--light,
+.feature-card--light {
+    background: var(--surface-alt);
+    border-color: var(--line);
+}
+
 .signal-card__label {
     color: rgba(226, 232, 240, 0.66);
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
+}
+
+.signal-card__label--light {
+    color: var(--text-soft);
 }
 
 .signal-card__value {
@@ -260,9 +305,17 @@ code {
     letter-spacing: -0.03em;
 }
 
+.signal-card__value--light {
+    color: var(--text);
+}
+
 .feature-list {
     display: grid;
     gap: 12px;
+}
+
+.feature-list--light {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .feature-card {
@@ -288,10 +341,19 @@ code {
     font-weight: 800;
 }
 
+.feature-icon--light {
+    background: var(--brand-soft);
+    color: var(--brand-strong);
+}
+
 .feature-title {
     margin: 0 0 6px;
     font-size: 0.98rem;
     font-weight: 700;
+}
+
+.feature-title--dark {
+    color: var(--text);
 }
 
 .feature-text {
@@ -299,6 +361,10 @@ code {
     color: rgba(226, 232, 240, 0.72);
     line-height: 1.58;
     font-size: 0.9rem;
+}
+
+.feature-text--dark {
+    color: var(--text-muted);
 }
 
 .panel-header,
@@ -361,6 +427,11 @@ code {
     height: 8px;
     border-radius: 50%;
     background: currentColor;
+}
+
+.panel-header--portal {
+    padding-top: 4px;
+    border-top: 1px solid var(--line);
 }
 
 .alert {
@@ -711,6 +782,42 @@ code {
     max-width: 760px;
 }
 
+.brand-bar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 16px;
+}
+
+.brand-bar__logo {
+    height: 44px;
+    width: auto;
+    object-fit: contain;
+}
+
+.brand-bar__divider {
+    width: 1px;
+    align-self: stretch;
+    background: var(--line-strong);
+}
+
+.brand-bar__text {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.brand-bar__title {
+    font-size: 0.96rem;
+    font-weight: 700;
+    color: var(--text);
+}
+
+.brand-bar__sub {
+    font-size: 0.82rem;
+    color: var(--text-soft);
+}
+
 .toolbar {
     display: flex;
     align-items: center;
@@ -816,13 +923,13 @@ code {
 }
 
 @media (max-width: 1080px) {
-    .portal-shell {
-        grid-template-columns: 1fr;
-    }
-
     .signal-grid,
     .metric-grid,
     .dashboard-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .feature-list--light {
         grid-template-columns: 1fr;
     }
 }
@@ -837,7 +944,6 @@ code {
         width: min(100%, calc(100% - 18px));
     }
 
-    .brand-panel,
     .surface,
     .status-card,
     .billing-card,
@@ -852,7 +958,8 @@ code {
     .panel-header,
     .page-header,
     .table-header,
-    .status-meta {
+    .status-meta,
+    .portal-topbar {
         flex-direction: column;
         align-items: flex-start;
     }
@@ -860,6 +967,10 @@ code {
     .headline {
         max-width: none;
         font-size: 2rem;
+    }
+
+    .brand-bar {
+        align-items: flex-start;
     }
 
     .button,

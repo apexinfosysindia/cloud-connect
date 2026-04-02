@@ -6,75 +6,74 @@
     <title>ApexOS Cloud Connect</title>
     <link rel="stylesheet" href="/styles.css">
     <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
-    <link rel="icon" href="data:,">
+    <link rel="icon" href="/favicon.ico">
 </head>
 <body class="portal-page">
 <div class="page-shell portal-shell">
-    <section class="brand-panel">
-        <div class="brand-stack">
-            <span class="eyebrow">Managed Remote Access</span>
-
-            <div class="brand-mark">
-                <div class="brand-mark__orb"></div>
+    <main class="surface portal-surface">
+        <div class="portal-topbar">
+            <div class="brand-mark brand-mark--light">
+                <img src="/logo.png" alt="ApexOS Cloud Connect" class="brand-mark__logo brand-mark__logo--light">
                 <div class="brand-mark__text">
-                    <span class="brand-mark__name">ApexOS Cloud Connect</span>
-                    <span class="brand-mark__sub">Account setup, billing and secure access in one service</span>
+                    <span class="brand-mark__name brand-mark__name--dark">ApexOS Cloud Connect</span>
+                    <span class="brand-mark__sub brand-mark__sub--dark">Managed remote access service</span>
                 </div>
             </div>
-
-            <div>
-                <h1 class="headline">Secure remote access for ApexOS, managed as a service.</h1>
-                <p class="lede">Cloud Connect brings account onboarding, billing, approvals and remote access into one customer experience so each deployment can be activated without manual coordination.</p>
-            </div>
-
-            <div class="signal-grid">
-                <div class="signal-card">
-                    <span class="signal-card__label">Service Model</span>
-                    <span class="signal-card__value">Paid First</span>
-                </div>
-                <div class="signal-card">
-                    <span class="signal-card__label">Activation</span>
-                    <span class="signal-card__value">Account Based</span>
-                </div>
-                <div class="signal-card">
-                    <span class="signal-card__label">Availability</span>
-                    <span class="signal-card__value">Always Addressable</span>
-                </div>
-            </div>
-
-            <div class="feature-list">
-                <article class="feature-card">
-                    <div class="feature-icon">01</div>
-                    <div>
-                        <h2 class="feature-title">Reserved customer address</h2>
-                        <p class="feature-text">Each account can reserve its branded address before activation so the endpoint is ready when service approval is complete.</p>
-                    </div>
-                </article>
-                <article class="feature-card">
-                    <div class="feature-icon">02</div>
-                    <div>
-                        <h2 class="feature-title">Access only after approval</h2>
-                        <p class="feature-text">Remote access remains unavailable until billing is complete or the account is explicitly approved for service.</p>
-                    </div>
-                </article>
-                <article class="feature-card">
-                    <div class="feature-icon">03</div>
-                    <div>
-                        <h2 class="feature-title">One managed workflow</h2>
-                        <p class="feature-text">Signup, payment, approval and account activation all move through one controlled workflow instead of manual back-and-forth.</p>
-                    </div>
-                </article>
-            </div>
+            <span class="panel-chip">Managed Service</span>
         </div>
-    </section>
 
-    <main class="surface auth-surface">
-        <div class="panel-header">
+        <section class="portal-overview">
+            <div class="portal-overview__copy">
+                <span class="eyebrow eyebrow--light">Managed Remote Access</span>
+                <h1 class="headline headline--dark">Secure remote access for ApexOS, managed as a service.</h1>
+                <p class="lede lede--dark">Cloud Connect brings account onboarding, billing, approvals and remote access into one customer experience so each deployment can be activated without manual coordination.</p>
+            </div>
+
+            <div class="signal-grid signal-grid--light">
+                <div class="signal-card signal-card--light">
+                    <span class="signal-card__label signal-card__label--light">Service Model</span>
+                    <span class="signal-card__value signal-card__value--light">Paid First</span>
+                </div>
+                <div class="signal-card signal-card--light">
+                    <span class="signal-card__label signal-card__label--light">Activation</span>
+                    <span class="signal-card__value signal-card__value--light">Account Based</span>
+                </div>
+                <div class="signal-card signal-card--light">
+                    <span class="signal-card__label signal-card__label--light">Availability</span>
+                    <span class="signal-card__value signal-card__value--light">Always Addressable</span>
+                </div>
+            </div>
+
+            <div class="feature-list feature-list--light">
+                <article class="feature-card feature-card--light">
+                    <div class="feature-icon feature-icon--light">01</div>
+                    <div>
+                        <h2 class="feature-title feature-title--dark">Reserved customer address</h2>
+                        <p class="feature-text feature-text--dark">Each account can reserve its branded address before activation so the endpoint is ready when service approval is complete.</p>
+                    </div>
+                </article>
+                <article class="feature-card feature-card--light">
+                    <div class="feature-icon feature-icon--light">02</div>
+                    <div>
+                        <h2 class="feature-title feature-title--dark">Access only after approval</h2>
+                        <p class="feature-text feature-text--dark">Remote access remains unavailable until billing is complete or the account is explicitly approved for service.</p>
+                    </div>
+                </article>
+                <article class="feature-card feature-card--light">
+                    <div class="feature-icon feature-icon--light">03</div>
+                    <div>
+                        <h2 class="feature-title feature-title--dark">One managed workflow</h2>
+                        <p class="feature-text feature-text--dark">Signup, payment, approval and account activation all move through one controlled workflow instead of manual back-and-forth.</p>
+                    </div>
+                </article>
+            </div>
+        </section>
+
+        <div class="panel-header panel-header--portal">
             <div>
                 <h2 class="panel-heading">Access Portal</h2>
                 <p id="headerSubtitle" class="panel-subtitle">Log in to manage your remote access and billing.</p>
             </div>
-            <span class="panel-chip">Managed Service</span>
         </div>
 
         <div id="alertBox" class="alert"></div>
