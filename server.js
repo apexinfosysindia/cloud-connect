@@ -155,6 +155,14 @@ function getRazorpayClient() {
     return razorpayClient;
 }
 
+function getBillingErrorMessage(error, fallbackMessage) {
+    return error?.error?.description ||
+        error?.description ||
+        error?.message ||
+        error?.response?.data?.error?.description ||
+        fallbackMessage;
+}
+
 function ensureAdminConfigured() {
     if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) {
         throw new Error('Admin credentials are not configured. Please set ADMIN_EMAIL and ADMIN_PASSWORD.');
@@ -436,7 +444,10 @@ app.post('/api/auth/signup', async (req, res) => {
             checkout = checkoutState.checkout;
         } catch (billingError) {
             console.error('RAZORPAY CHECKOUT SETUP ERROR:', billingError);
-            message = 'Account created, but billing setup is temporarily unavailable. Log in later to complete payment.';
+            message = getBillingErrorMessage(
+                billingError,
+                'Account created, but billing setup is temporarily unavailable. Log in later to complete payment.'
+            );
         }
 
         res.status(201).json({
@@ -515,7 +526,9 @@ app.post('/api/billing/create-checkout', async (req, res) => {
         });
     } catch (error) {
         console.error('CHECKOUT CREATION ERROR:', error);
-        res.status(502).json({ error: error.message || 'Unable to create Razorpay checkout right now.' });
+        res.status(502).json({
+            error: getBillingErrorMessage(error, 'Unable to create Razorpay checkout right now.')
+        });
     }
 });
 
@@ -553,7 +566,7 @@ app.post('/api/billing/verify', async (req, res) => {
         });
     } catch (error) {
         console.error('PAYMENT VERIFICATION ERROR:', error);
-        res.status(500).json({ error: 'Unable to verify payment' });
+        res.status(500).json({ error: getBillingErrorMessage(error, 'Unable to verify payment') });
     }
 });
 
@@ -599,7 +612,7 @@ app.post('/api/razorpay/webhook', async (req, res) => {
         res.status(200).json({ received: true });
     } catch (error) {
         console.error('RAZORPAY WEBHOOK ERROR:', error);
-        res.status(500).json({ error: error.message || 'Webhook processing failed' });
+        res.status(500).json({ error: getBillingErrorMessage(error, 'Webhook processing failed') });
     }
 });
 
