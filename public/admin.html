@@ -8,32 +8,37 @@
     <link rel="icon" href="/favicon.ico">
 </head>
 <body class="admin-page">
-<div class="page-shell admin-shell">
-    <div class="admin-layout">
-        <header class="page-header">
-            <div class="admin-intro">
-                <div class="brand-bar">
-                    <img src="/group-logo.png" alt="Apex Infosys" class="brand-bar__logo">
-                    <span class="brand-bar__divider"></span>
-                    <div class="brand-bar__text">
-                        <span class="brand-bar__title">Cloud Connect Admin</span>
-                        <span class="brand-bar__sub">Customer access operations</span>
-                    </div>
+<div class="page-shell page-shell--admin">
+    <header class="masthead masthead--admin">
+        <div class="brand-suite">
+            <img src="/group-logo.png" alt="Apex Infosys" class="brand-suite__group">
+            <span class="brand-suite__divider"></span>
+            <div class="brand-suite__product brand-suite__product--compact">
+                <img src="/logo.png" alt="Cloud Connect" class="brand-suite__product-logo brand-suite__product-logo--compact">
+                <div>
+                    <div class="brand-suite__title">Cloud Connect Admin</div>
+                    <div class="brand-suite__subtitle">Customer account management</div>
                 </div>
-                <span class="eyebrow">Operations Console</span>
-                <h1 class="section-title">Customer access operations and service control.</h1>
-                <p class="section-copy">Review account state, inspect billing records and apply the next operational action for each customer from a single service console.</p>
             </div>
-            <div class="toolbar">
-                <button id="logoutBtn" class="button button-muted button-small hidden">Log Out</button>
-            </div>
-        </header>
+        </div>
+
+        <div class="masthead-actions">
+            <button id="logoutBtn" class="button button-secondary hidden">Log Out</button>
+        </div>
+    </header>
+
+    <main class="admin-main">
+        <section class="section-card admin-intro-card">
+            <span class="eyebrow eyebrow--light">Service Console</span>
+            <h1 class="section-title">Customer accounts, billing state and service activation.</h1>
+            <p class="section-text">Review each customer account, inspect subscription records and apply only the actions that make sense for the current service state.</p>
+        </section>
 
         <div id="alertBox" class="alert"></div>
 
-        <section id="loginPanel" class="login-card">
-            <h2 class="login-card__title">Admin Login</h2>
-            <p class="login-card__copy">Use your configured admin credentials to access user controls, payment state and manual trial approvals.</p>
+        <section id="loginPanel" class="section-card admin-login-card">
+            <h2 class="section-title section-title--small">Admin login</h2>
+            <p class="section-text">Use your admin credentials to access account controls.</p>
 
             <form id="loginForm" class="stack">
                 <div class="field">
@@ -50,52 +55,39 @@
             </form>
         </section>
 
-        <section id="dashboard" class="hidden stack">
-            <div class="metric-grid">
-                <article class="metric-card">
-                    <span class="metric-label">Pending Payment</span>
-                    <div id="countPending" class="metric-value">0</div>
+        <section id="dashboard" class="admin-dashboard hidden">
+            <div class="stats-grid">
+                <article class="stat-card">
+                    <span class="stat-label">Pending Payment</span>
+                    <span id="countPending" class="stat-value">0</span>
                 </article>
-                <article class="metric-card">
-                    <span class="metric-label">Approved</span>
-                    <div id="countTrial" class="metric-value">0</div>
+                <article class="stat-card">
+                    <span class="stat-label">Approved</span>
+                    <span id="countTrial" class="stat-value">0</span>
                 </article>
-                <article class="metric-card">
-                    <span class="metric-label">Active</span>
-                    <div id="countActive" class="metric-value">0</div>
+                <article class="stat-card">
+                    <span class="stat-label">Active</span>
+                    <span id="countActive" class="stat-value">0</span>
                 </article>
-                <article class="metric-card">
-                    <span class="metric-label">Suspended / Expired</span>
-                    <div id="countDisabled" class="metric-value">0</div>
+                <article class="stat-card">
+                    <span class="stat-label">Suspended / Expired</span>
+                    <span id="countDisabled" class="stat-value">0</span>
                 </article>
             </div>
 
-            <section class="table-shell">
-                <div class="table-header">
+            <section class="section-card user-section">
+                <div class="section-header">
                     <div>
-                        <h2 class="table-header__title">Customer Accounts</h2>
-                        <p class="table-header__copy">Only the actions relevant to the current account state are shown for each customer.</p>
+                        <h2 class="section-title section-title--small">Customer accounts</h2>
+                        <p class="section-text">Action buttons change based on the account state so the next decision is always obvious.</p>
                     </div>
-                    <button id="refreshBtn" class="button button-muted button-small">Refresh</button>
+                    <button id="refreshBtn" class="button button-secondary">Refresh</button>
                 </div>
 
-                <div class="table-scroll">
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>User</th>
-                                <th>Status</th>
-                                <th>Billing</th>
-                                <th>Token</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="usersTableBody"></tbody>
-                    </table>
-                </div>
+                <div id="usersTableBody" class="user-list"></div>
             </section>
         </section>
-    </div>
+    </main>
 </div>
 
 <script>
@@ -148,14 +140,14 @@ function statusBadge(status) {
         suspended: 'suspended',
         expired: 'expired'
     };
-    const badgeClass = {
-        payment_pending: 'badge badge-pending',
-        trial: 'badge badge-trial',
-        active: 'badge badge-active',
-        suspended: 'badge badge-suspended',
-        expired: 'badge badge-suspended'
+    const classes = {
+        payment_pending: 'status-badge status-badge--pending',
+        trial: 'status-badge status-badge--trial',
+        active: 'status-badge status-badge--active',
+        suspended: 'status-badge status-badge--attention',
+        expired: 'status-badge status-badge--attention'
     };
-    return `<span class="${badgeClass[status] || 'badge'}">${labels[status] || status.replace('_', ' ')}</span>`;
+    return `<span class="${classes[status] || 'status-badge'}">${labels[status] || status.replace('_', ' ')}</span>`;
 }
 
 function formatDate(value) {
@@ -171,44 +163,44 @@ function updateCounts(users) {
 }
 
 function buildActionButton(user, label, status, extra = {}) {
-    return `<button data-user-id="${user.id}" data-status="${status}" data-trial-days="${extra.trialDays || ''}" class="button button-muted button-small admin-action">${label}</button>`;
+    return `<button data-user-id="${user.id}" data-status="${status}" data-trial-days="${extra.trialDays || ''}" class="button button-secondary button-small admin-action">${label}</button>`;
 }
 
 function getActionButtons(user) {
     if (user.status === 'payment_pending') {
         return [
             buildActionButton(user, 'Approve Trial', 'trial', { trialDays: 365 }),
-            buildActionButton(user, 'Activate Access', 'active'),
-            buildActionButton(user, 'Suspend Access', 'suspended')
+            buildActionButton(user, 'Activate', 'active'),
+            buildActionButton(user, 'Suspend', 'suspended')
         ];
     }
 
     if (user.status === 'trial') {
         return [
-            buildActionButton(user, 'Activate Access', 'active'),
-            buildActionButton(user, 'Suspend Access', 'suspended'),
-            buildActionButton(user, 'Mark Expired', 'expired')
+            buildActionButton(user, 'Activate', 'active'),
+            buildActionButton(user, 'Suspend', 'suspended'),
+            buildActionButton(user, 'Expire', 'expired')
         ];
     }
 
     if (user.status === 'active') {
         return [
-            buildActionButton(user, 'Suspend Access', 'suspended'),
-            buildActionButton(user, 'Mark Expired', 'expired')
+            buildActionButton(user, 'Suspend', 'suspended'),
+            buildActionButton(user, 'Expire', 'expired')
         ];
     }
 
     if (user.status === 'suspended') {
         return [
-            buildActionButton(user, 'Activate Access', 'active'),
+            buildActionButton(user, 'Activate', 'active'),
             buildActionButton(user, 'Require Payment', 'payment_pending'),
-            buildActionButton(user, 'Mark Expired', 'expired')
+            buildActionButton(user, 'Expire', 'expired')
         ];
     }
 
     if (user.status === 'expired') {
         return [
-            buildActionButton(user, 'Activate Access', 'active'),
+            buildActionButton(user, 'Activate', 'active'),
             buildActionButton(user, 'Require Payment', 'payment_pending')
         ];
     }
@@ -220,42 +212,45 @@ function renderUsers(users) {
     updateCounts(users);
 
     if (!users.length) {
-        usersTableBody.innerHTML = `<tr><td colspan="5" class="empty-state">No users found.</td></tr>`;
+        usersTableBody.innerHTML = `<div class="user-empty">No customer accounts found.</div>`;
         return;
     }
 
     usersTableBody.innerHTML = users.map((user) => `
-        <tr>
-            <td>
-                <div class="table-user">
-                    <span class="table-user__name">${user.email}</span>
-                    <span class="table-user__meta">${user.domain}</span>
-                    <span class="table-user__meta">Created: ${formatDate(user.created_at)}</span>
+        <article class="user-card">
+            <div class="user-card__top">
+                <div class="user-card__identity">
+                    <div class="user-card__name">${user.email}</div>
+                    <div class="user-card__meta">${user.domain}</div>
+                    <div class="user-card__meta">Created ${formatDate(user.created_at)}</div>
                 </div>
-            </td>
-            <td>
-                <div class="stack stack-tight">
-                    ${statusBadge(user.status)}
-                    <span class="table-copy">Access until: ${formatDate(user.trial_ends_at)}</span>
-                    <span class="table-copy">Activated: ${formatDate(user.activated_at)}</span>
-                </div>
-            </td>
-            <td>
-                <div class="stack stack-compact">
-                    <span class="table-copy">Subscription: ${user.razorpay_subscription_status || '—'}</span>
-                    <span class="table-copy">Sub ID: ${user.razorpay_subscription_id || '—'}</span>
-                    <span class="table-copy">Payment ID: ${user.razorpay_payment_id || '—'}</span>
-                </div>
-            </td>
-            <td>
-                <code class="table-code">${user.access_token}</code>
-            </td>
-            <td>
-                <div class="table-actions">
-                    ${getActionButtons(user).join('')}
-                </div>
-            </td>
-        </tr>
+                ${statusBadge(user.status)}
+            </div>
+
+            <div class="user-card__sections">
+                <section class="user-card__section">
+                    <span class="user-card__section-label">Access</span>
+                    <div class="user-card__section-text">Available until: ${formatDate(user.trial_ends_at)}</div>
+                    <div class="user-card__section-text">Activated: ${formatDate(user.activated_at)}</div>
+                </section>
+
+                <section class="user-card__section">
+                    <span class="user-card__section-label">Billing</span>
+                    <div class="user-card__section-text">Subscription: ${user.razorpay_subscription_status || '—'}</div>
+                    <div class="user-card__section-text">Sub ID: ${user.razorpay_subscription_id || '—'}</div>
+                    <div class="user-card__section-text">Payment ID: ${user.razorpay_payment_id || '—'}</div>
+                </section>
+
+                <section class="user-card__section">
+                    <span class="user-card__section-label">Token</span>
+                    <code class="token-block">${user.access_token}</code>
+                </section>
+            </div>
+
+            <div class="action-row">
+                ${getActionButtons(user).join('')}
+            </div>
+        </article>
     `).join('');
 }
 
