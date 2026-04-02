@@ -1,9 +1,13 @@
 # Cloud Connect
 Control plane for ApexOS Cloud Connect: customer signup, billing, admin approvals, and secure remote access orchestration.
 ## Overview
-This repository contains the pieces that power ApexOS remote access:
-- `cloud-portal/`: Node.js + SQLite control plane, portal UI, admin dashboard, Razorpay billing flow, Caddy config, and FRP server config.
-- `apex-cloud-link/`: ApexOS add-on that connects customer instances back to the FRP edge using an access token.
+This repository contains the Cloud Connect control plane:
+- Node.js + SQLite backend
+- customer portal UI
+- admin dashboard
+- Razorpay billing flow
+- Caddy config
+- FRP server config
 ## Current Behavior
 - New users sign up into `payment_pending`.
 - Remote access is enabled only for users in `active` or `trial`.
@@ -19,18 +23,13 @@ Control plane flow:
 ```text
 .
 ├── README.md
-├── cloud-portal/
-│   ├── server.js
-│   ├── db.js
-│   ├── Caddyfile
-│   ├── frps.toml
-│   └── public/
-│       ├── index.html
-│       └── admin.html
-└── apex-cloud-link/
-    ├── config.json
-    ├── Dockerfile
-    └── rootfs/
+├── server.js
+├── db.js
+├── Caddyfile
+├── frps.toml
+└── public/
+    ├── index.html
+    └── admin.html
 ```
 ## Portal Features
 - Customer signup and login
@@ -61,7 +60,7 @@ Required environment variables:
 - `expired`: remote access disabled
 - `suspended`: remote access disabled
 ## Environment Variables
-Set these in `cloud-portal/.env` on the VPS:
+Set these in `.env` on the VPS:
 ```env
 PORT=3000
 RAZORPAY_KEY_ID=
@@ -76,7 +75,6 @@ PORTAL_SESSION_SECRET=
 ## Local Development
 Install dependencies:
 ```bash
-cd cloud-portal
 npm install
 ```
 Start the portal:
@@ -87,18 +85,18 @@ The portal serves:
 - `/`: customer portal
 - `/admin.html`: admin dashboard
 SQLite database file:
-- `cloud-portal/database.sqlite`
+- `database.sqlite`
 ## Live VPS Paths
 The repo keeps source copies of the edge configs, but the live services use:
 - Caddy: `/etc/caddy/Caddyfile`
 - FRPS: `/etc/frp/frps.toml`
 The repo copies are:
-- `cloud-portal/Caddyfile`
-- `cloud-portal/frps.toml`
+- `Caddyfile`
+- `frps.toml`
 ## Deployment Notes
 Typical production restart flow:
 ```bash
-cd /opt/apex-cloud/cloud-portal
+cd /opt/cloud-connect
 npm ci --omit=dev
 pm2 restart server
 sudo caddy validate --config /etc/caddy/Caddyfile
@@ -106,7 +104,7 @@ sudo systemctl reload caddy
 sudo systemctl restart frps
 ```
 ## ApexOS Add-on
-The `apex-cloud-link` add-on:
+The separate `apex-cloud-link` add-on repo:
 - accepts `subdomain` and `access_token`
 - downloads `frpc`
 - connects to `cloud.apexinfosys.in:7000`

@@ -8,7 +8,7 @@
 # 1. The Main Control Portal (Registration UI)
 # ----------------------------------------------------
 # This serves the Node.js frontend/backend we built in Phase 2.
-portal.cloud.apexinfosys.in {
+cloud.apexinfosys.in {
     reverse_proxy 127.0.0.1:3000
 }
 
