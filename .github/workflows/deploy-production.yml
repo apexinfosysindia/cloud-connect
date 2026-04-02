@@ -26,7 +26,18 @@ jobs:
       - name: Setup SSH
         run: |
           install -m 700 -d ~/.ssh
-          printf "%s" "${{ secrets.VPS_SSH_KEY }}" | tr -d '\r' > ~/.ssh/id_ed25519
+          RAW_KEY='${{ secrets.VPS_SSH_KEY }}'
+          if printf "%s" "$RAW_KEY" | grep -q '\\n'; then
+            printf "%b" "$RAW_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          else
+            printf "%s" "$RAW_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          fi
+
+          if ! grep -Eq 'BEGIN (OPENSSH|RSA|EC|DSA) PRIVATE KEY' ~/.ssh/id_ed25519; then
+            echo "VPS_SSH_KEY is not a valid private key. Paste the private key file contents, not the .pub key."
+            exit 1
+          fi
+
           chmod 600 ~/.ssh/id_ed25519
           ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
           ssh-keyscan -p "${{ secrets.VPS_PORT }}" -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
@@ -59,15 +70,33 @@ jobs:
             sudo install -m 644 "$APP_DIR/frps.toml" /etc/frp/frps.toml
             sudo systemctl restart frps
           fi
-          if pm2 describe server >/dev/null 2>&1; then
-            pm2 restart server
+
+          if pm2 describe apex-portal >/dev/null 2>&1; then
+            pm2 restart apex-portal
+          elif pm2 describe server >/dev/null 2>&1; then
+            pm2 delete server
+            pm2 start server.js --name apex-portal
           else
-            pm2 start server.js --name server
-            pm2 save
+            pm2 start server.js --name apex-portal
           fi
+
+          if pm2 describe server >/dev/null 2>&1; then
+            pm2 delete server
+          fi
+
           printf "%s\n" "$DEPLOY_COMMIT" > "$APP_DIR/.deploy-version"
+          pm2 save
           sudo systemctl is-active --quiet caddy
           sudo systemctl is-active --quiet frps
-          pm2 describe server >/dev/null
-          curl -fsS http://127.0.0.1:3000/ >/dev/null
+          pm2 describe apex-portal >/dev/null
+
+          for attempt in $(seq 1 15); do
+            if curl -fsS http://127.0.0.1:3000/ >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+
+          pm2 logs apex-portal --lines 50 --nostream
+          exit 1
           EOF
