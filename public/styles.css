@@ -368,7 +368,7 @@ code {
 }
 
 .auth-card {
-    width: min(720px, 100%);
+    width: min(640px, 100%);
 }
 
 .account-shell__header {
@@ -376,6 +376,143 @@ code {
     align-items: flex-start;
     justify-content: space-between;
     gap: 16px;
+}
+
+.auth-page .account-shell__header {
+    margin-bottom: 10px;
+}
+
+.auth-page .section-card,
+.admin-page .section-card {
+    padding: 22px;
+}
+
+.auth-page .section-title {
+    font-size: clamp(1.55rem, 2.8vw, 2.1rem);
+    line-height: 1.12;
+    letter-spacing: -0.03em;
+}
+
+.admin-page .section-title {
+    font-size: clamp(1.35rem, 2.2vw, 1.85rem);
+    line-height: 1.14;
+    letter-spacing: -0.02em;
+}
+
+.auth-page .section-text,
+.admin-page .section-text {
+    margin-top: 4px;
+    line-height: 1.5;
+    max-width: 64ch;
+}
+
+.auth-page .account-shell {
+    gap: 14px;
+}
+
+.auth-page .dashboard-grid {
+    gap: 12px;
+}
+
+.auth-page .status-card,
+.auth-page .detail-card {
+    padding: 16px;
+}
+
+.admin-page .admin-login-card {
+    width: min(640px, 100%);
+    margin: 0 auto;
+}
+
+.auth-page .status-text,
+.auth-page .detail-copy,
+.auth-page .field-hint,
+.auth-page .link-row,
+.admin-page .section-text,
+.admin-page .user-card__meta,
+.admin-page .user-card__section-text {
+    line-height: 1.5;
+}
+
+.auth-page .status-text,
+.auth-page .detail-copy {
+    margin-top: 10px;
+}
+
+.auth-page .stack {
+    gap: 12px;
+    margin-top: 2px;
+}
+
+.auth-page .field {
+    gap: 6px;
+}
+
+.auth-page .field + .field {
+    margin-top: 2px;
+}
+
+.auth-page .field-hint {
+    margin: 2px 0 0;
+}
+
+.auth-page .link-row {
+    margin-top: 6px;
+}
+
+.subdomain-card .segment {
+    margin-top: 8px;
+}
+
+.subdomain-card .button {
+    margin-top: 10px;
+}
+
+.auth-page .token-value {
+    padding: 12px;
+}
+
+.auth-page .detail-label,
+.auth-page .status-label,
+.auth-page .field-label,
+.admin-page .stat-label,
+.admin-page .user-card__section-label,
+.admin-page .field-label {
+    letter-spacing: 0.06em;
+}
+
+.admin-page .admin-main {
+    gap: 16px;
+}
+
+.admin-page .stats-grid {
+    gap: 12px;
+}
+
+.admin-page .stat-card {
+    padding: 16px;
+}
+
+.admin-page .stat-value {
+    margin-top: 6px;
+    font-size: 1.55rem;
+}
+
+.admin-page .user-list {
+    gap: 12px;
+}
+
+.admin-page .user-card {
+    padding: 16px;
+}
+
+.admin-page .user-card__sections {
+    margin-bottom: 12px;
+    gap: 12px;
+}
+
+.admin-page .action-row {
+    gap: 8px;
 }
 
 .alert {
