@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sign In | ApexOS Cloud Connect</title>
+    <title>Sign In | ApexOS Cloud Connect Oasis</title>
     <link rel="stylesheet" href="/styles.css">
     <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
     <link rel="icon" href="/favicon.ico">
@@ -23,9 +23,14 @@
             </div>
         </div>
 
-        <div class="masthead-actions">
+        <div class="masthead-actions" id="guestNavActions">
             <a href="/index.html" class="button button-secondary">Overview</a>
             <a href="/signup.html" class="button button-primary">Create Account</a>
+        </div>
+
+        <div class="masthead-actions hidden" id="signedInNavActions">
+            <span id="headerUserEmail" class="identity-pill"></span>
+            <button id="headerLogoutBtn" type="button" class="button button-secondary">Log Out</button>
         </div>
     </header>
 

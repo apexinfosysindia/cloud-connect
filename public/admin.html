@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ApexOS Cloud Connect Admin</title>
+    <title>ApexOS Cloud Connect Admin | Vista</title>
     <link rel="stylesheet" href="/styles.css">
     <link rel="icon" href="/favicon.ico">
 </head>
@@ -23,6 +23,7 @@
         </div>
 
         <div class="masthead-actions">
+            <span id="adminIdentity" class="identity-pill hidden"></span>
             <button id="logoutBtn" class="button button-secondary hidden">Log Out</button>
         </div>
     </header>
@@ -109,6 +110,7 @@ const alertBox = document.getElementById('alertBox');
 const loginPanel = document.getElementById('loginPanel');
 const dashboard = document.getElementById('dashboard');
 const logoutBtn = document.getElementById('logoutBtn');
+const adminIdentity = document.getElementById('adminIdentity');
 const usersTableBody = document.getElementById('usersTableBody');
 const tokenModal = document.getElementById('tokenModal');
 const tokenModalClose = document.getElementById('tokenModalClose');
@@ -182,6 +184,34 @@ function formatDate(value) {
     return new Date(value).toLocaleString();
 }
 
+function getAccessSummary(user) {
+    if (user.status === 'active' || user.status === 'trial') {
+        return {
+            state: 'Enabled',
+            detail: user.trial_ends_at ? `Trial ends ${formatDate(user.trial_ends_at)}` : `Enabled since ${formatDate(user.activated_at)}`
+        };
+    }
+
+    if (user.status === 'payment_pending') {
+        return {
+            state: 'Pending activation',
+            detail: 'Waiting for billing completion or admin approval'
+        };
+    }
+
+    if (user.status === 'suspended') {
+        return {
+            state: 'Suspended',
+            detail: 'Access token is disabled until reactivation'
+        };
+    }
+
+    return {
+        state: 'Expired',
+        detail: 'Service period ended and token is disabled'
+    };
+}
+
 function updateCounts(users) {
     document.getElementById('countPending').textContent = users.filter((u) => u.status === 'payment_pending').length;
     document.getElementById('countTrial').textContent = users.filter((u) => u.status === 'trial').length;
@@ -243,7 +273,9 @@ function renderUsers(users) {
         return;
     }
 
-    usersTableBody.innerHTML = users.map((user) => `
+    usersTableBody.innerHTML = users.map((user) => {
+        const accessSummary = getAccessSummary(user);
+        return `
         <article class="user-card">
             <div class="user-card__top">
                 <div class="user-card__identity">
@@ -257,8 +289,8 @@ function renderUsers(users) {
             <div class="user-card__sections">
                 <section class="user-card__section">
                     <span class="user-card__section-label">Access</span>
-                    <div class="user-card__section-text">Available until: ${formatDate(user.trial_ends_at)}</div>
-                    <div class="user-card__section-text">Activated: ${formatDate(user.activated_at)}</div>
+                    <div class="user-card__section-text">State: ${accessSummary.state}</div>
+                    <div class="user-card__section-text">${accessSummary.detail}</div>
                 </section>
 
                 <section class="user-card__section">
@@ -273,7 +305,8 @@ function renderUsers(users) {
                 ${getActionButtons(user).join('')}
             </div>
         </article>
-    `).join('');
+    `;
+    }).join('');
 }
 
 async function loadUsers() {
@@ -298,9 +331,11 @@ async function restoreAdminSession() {
     if (!token) return;
 
     try {
-        await api('/api/admin/me');
+        const me = await api('/api/admin/me');
         loginPanel.classList.add('hidden');
         dashboard.classList.remove('hidden');
+        adminIdentity.textContent = me.email;
+        adminIdentity.classList.remove('hidden');
         logoutBtn.classList.remove('hidden');
         await loadUsers();
     } catch (error) {
@@ -326,6 +361,8 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
         localStorage.setItem(ADMIN_TOKEN_KEY, data.token);
         loginPanel.classList.add('hidden');
         dashboard.classList.remove('hidden');
+        adminIdentity.textContent = data.email;
+        adminIdentity.classList.remove('hidden');
         logoutBtn.classList.remove('hidden');
         await loadUsers();
         showAlert('Admin login successful.', false);
@@ -349,6 +386,8 @@ document.getElementById('refreshBtn').addEventListener('click', async () => {
 logoutBtn.addEventListener('click', () => {
     localStorage.removeItem(ADMIN_TOKEN_KEY);
     dashboard.classList.add('hidden');
+    adminIdentity.classList.add('hidden');
+    adminIdentity.textContent = '';
     logoutBtn.classList.add('hidden');
     loginPanel.classList.remove('hidden');
     hideAlert();
