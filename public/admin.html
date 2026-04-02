@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ApexOS Cloud Admin</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="icon" href="data:,">
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-900">
+<div class="max-w-6xl mx-auto p-6 md:p-10 space-y-6">
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-3xl font-bold">ApexOS Cloud Admin</h1>
+            <p class="text-sm text-slate-500 mt-1">Approve manual 12-month trials and manage account status.</p>
+        </div>
+        <button id="logoutBtn" class="hidden px-4 py-2 text-sm border border-slate-300 rounded-md bg-white hover:bg-slate-50">Log Out</button>
+    </div>
+
+    <div id="alertBox" class="hidden rounded-md border px-4 py-3 text-sm"></div>
+
+    <div id="loginPanel" class="max-w-md bg-white border border-slate-200 rounded-xl shadow-sm p-6">
+        <h2 class="text-lg font-semibold mb-4">Admin Login</h2>
+        <form id="loginForm" class="space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-slate-700">Admin Email</label>
+                <input id="adminEmail" type="email" required class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 focus:border-blue-500 focus:ring-blue-500">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700">Password</label>
+                <input id="adminPassword" type="password" required class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 focus:border-blue-500 focus:ring-blue-500">
+            </div>
+            <button id="loginBtn" type="submit" class="w-full rounded-md bg-blue-600 px-4 py-2.5 text-white text-sm font-medium hover:bg-blue-700">Sign In</button>
+        </form>
+    </div>
+
+    <div id="dashboard" class="hidden space-y-6">
+        <div class="grid md:grid-cols-4 gap-4">
+            <div class="bg-white border border-slate-200 rounded-xl p-4">
+                <p class="text-xs uppercase tracking-wide text-slate-500">Pending Payment</p>
+                <p id="countPending" class="text-2xl font-semibold mt-2">0</p>
+            </div>
+            <div class="bg-white border border-slate-200 rounded-xl p-4">
+                <p class="text-xs uppercase tracking-wide text-slate-500">Trial</p>
+                <p id="countTrial" class="text-2xl font-semibold mt-2">0</p>
+            </div>
+            <div class="bg-white border border-slate-200 rounded-xl p-4">
+                <p class="text-xs uppercase tracking-wide text-slate-500">Active</p>
+                <p id="countActive" class="text-2xl font-semibold mt-2">0</p>
+            </div>
+            <div class="bg-white border border-slate-200 rounded-xl p-4">
+                <p class="text-xs uppercase tracking-wide text-slate-500">Suspended/Expired</p>
+                <p id="countDisabled" class="text-2xl font-semibold mt-2">0</p>
+            </div>
+        </div>
+
+        <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+            <div class="px-4 py-3 border-b border-slate-200 flex items-center justify-between gap-4">
+                <div>
+                    <h2 class="font-semibold">Users</h2>
+                    <p class="text-sm text-slate-500">Manual trial approval and status controls.</p>
+                </div>
+                <button id="refreshBtn" class="px-4 py-2 text-sm border border-slate-300 rounded-md hover:bg-slate-50">Refresh</button>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full text-sm">
+                    <thead class="bg-slate-50 text-slate-600">
+                        <tr>
+                            <th class="text-left px-4 py-3 font-medium">User</th>
+                            <th class="text-left px-4 py-3 font-medium">Status</th>
+                            <th class="text-left px-4 py-3 font-medium">Billing</th>
+                            <th class="text-left px-4 py-3 font-medium">Token</th>
+                            <th class="text-left px-4 py-3 font-medium">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usersTableBody" class="divide-y divide-slate-200"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const alertBox = document.getElementById('alertBox');
+const loginPanel = document.getElementById('loginPanel');
+const dashboard = document.getElementById('dashboard');
+const logoutBtn = document.getElementById('logoutBtn');
+const usersTableBody = document.getElementById('usersTableBody');
+const ADMIN_TOKEN_KEY = 'apex_admin_token';
+
+function showAlert(message, isError = true) {
+    alertBox.textContent = message;
+    alertBox.className = `block rounded-md border px-4 py-3 text-sm ${isError ? 'border-red-200 bg-red-50 text-red-700' : 'border-green-200 bg-green-50 text-green-700'}`;
+}
+
+function hideAlert() {
+    alertBox.classList.add('hidden');
+}
+
+function getAdminToken() {
+    return localStorage.getItem(ADMIN_TOKEN_KEY);
+}
+
+async function api(path, options = {}) {
+    const token = getAdminToken();
+    const headers = {
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(options.headers || {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+    };
+
+    const response = await fetch(path, {
+        ...options,
+        headers,
+        body: options.body ? JSON.stringify(options.body) : undefined
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(data.error || 'Request failed');
+    }
+    return data;
+}
+
+function statusBadge(status) {
+    const styles = {
+        payment_pending: 'bg-amber-100 text-amber-800',
+        trial: 'bg-violet-100 text-violet-800',
+        active: 'bg-green-100 text-green-800',
+        suspended: 'bg-red-100 text-red-800',
+        expired: 'bg-slate-200 text-slate-700'
+    };
+    return `<span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${styles[status] || 'bg-slate-100 text-slate-700'}">${status}</span>`;
+}
+
+function formatDate(value) {
+    if (!value) return '—';
+    return new Date(value).toLocaleString();
+}
+
+function updateCounts(users) {
+    document.getElementById('countPending').textContent = users.filter((u) => u.status === 'payment_pending').length;
+    document.getElementById('countTrial').textContent = users.filter((u) => u.status === 'trial').length;
+    document.getElementById('countActive').textContent = users.filter((u) => u.status === 'active').length;
+    document.getElementById('countDisabled').textContent = users.filter((u) => ['suspended', 'expired'].includes(u.status)).length;
+}
+
+function buildActionButton(user, label, status, extra = {}) {
+    return `<button data-user-id="${user.id}" data-status="${status}" data-trial-days="${extra.trialDays || ''}" class="admin-action rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium hover:bg-slate-50">${label}</button>`;
+}
+
+function renderUsers(users) {
+    updateCounts(users);
+    usersTableBody.innerHTML = users.map((user) => `
+        <tr class="align-top">
+            <td class="px-4 py-4">
+                <div class="font-medium text-slate-900">${user.email}</div>
+                <div class="text-slate-500 mt-1">${user.domain}</div>
+                <div class="text-xs text-slate-400 mt-1">Created: ${formatDate(user.created_at)}</div>
+            </td>
+            <td class="px-4 py-4 space-y-2">
+                <div>${statusBadge(user.status)}</div>
+                <div class="text-xs text-slate-500">Trial ends: ${formatDate(user.trial_ends_at)}</div>
+                <div class="text-xs text-slate-500">Activated: ${formatDate(user.activated_at)}</div>
+            </td>
+            <td class="px-4 py-4 text-xs text-slate-500 space-y-1">
+                <div>Subscription: ${user.razorpay_subscription_status || '—'}</div>
+                <div>Sub ID: ${user.razorpay_subscription_id || '—'}</div>
+                <div>Payment ID: ${user.razorpay_payment_id || '—'}</div>
+            </td>
+            <td class="px-4 py-4">
+                <code class="block max-w-xs break-all text-xs text-slate-600">${user.access_token}</code>
+            </td>
+            <td class="px-4 py-4">
+                <div class="flex flex-wrap gap-2">
+                    ${buildActionButton(user, 'Approve 365d Trial', 'trial', { trialDays: 365 })}
+                    ${buildActionButton(user, 'Set Active', 'active')}
+                    ${buildActionButton(user, 'Suspend', 'suspended')}
+                    ${buildActionButton(user, 'Expire', 'expired')}
+                    ${buildActionButton(user, 'Set Pending', 'payment_pending')}
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
+async function loadUsers() {
+    const data = await api('/api/admin/users');
+    renderUsers(data.users);
+}
+
+async function applyStatus(userId, status, trialDays) {
+    await api(`/api/admin/users/${userId}/status`, {
+        method: 'POST',
+        body: {
+            status,
+            trial_days: trialDays ? Number(trialDays) : undefined
+        }
+    });
+    await loadUsers();
+    showAlert('User updated successfully.', false);
+}
+
+async function restoreAdminSession() {
+    const token = getAdminToken();
+    if (!token) return;
+    try {
+        await api('/api/admin/me');
+        loginPanel.classList.add('hidden');
+        dashboard.classList.remove('hidden');
+        logoutBtn.classList.remove('hidden');
+        await loadUsers();
+    } catch (error) {
+        localStorage.removeItem(ADMIN_TOKEN_KEY);
+    }
+}
+
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('loginBtn');
+    btn.disabled = true;
+    btn.textContent = 'Signing In...';
+    hideAlert();
+
+    try {
+        const data = await api('/api/admin/login', {
+            method: 'POST',
+            body: {
+                email: document.getElementById('adminEmail').value,
+                password: document.getElementById('adminPassword').value
+            }
+        });
+        localStorage.setItem(ADMIN_TOKEN_KEY, data.token);
+        loginPanel.classList.add('hidden');
+        dashboard.classList.remove('hidden');
+        logoutBtn.classList.remove('hidden');
+        await loadUsers();
+        showAlert('Admin login successful.', false);
+    } catch (error) {
+        showAlert(error.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Sign In';
+    }
+});
+
+document.getElementById('refreshBtn').addEventListener('click', async () => {
+    try {
+        await loadUsers();
+        hideAlert();
+    } catch (error) {
+        showAlert(error.message);
+    }
+});
+
+logoutBtn.addEventListener('click', () => {
+    localStorage.removeItem(ADMIN_TOKEN_KEY);
+    dashboard.classList.add('hidden');
+    logoutBtn.classList.add('hidden');
+    loginPanel.classList.remove('hidden');
+    hideAlert();
+});
+
+usersTableBody.addEventListener('click', async (event) => {
+    const button = event.target.closest('.admin-action');
+    if (!button) return;
+
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = 'Updating...';
+
+    try {
+        await applyStatus(button.dataset.userId, button.dataset.status, button.dataset.trialDays);
+    } catch (error) {
+        showAlert(error.message);
+    } finally {
+        button.disabled = false;
+        button.textContent = original;
+    }
+});
+
+restoreAdminSession();
+</script>
+</body>
+</html>
