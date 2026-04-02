@@ -70,6 +70,24 @@ web_modules/
 .env.*
 !.env.example
 
+# Local app data and deployment state
+database.sqlite
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+.deploy-version
+
+# Certificates and private keys
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# OS-specific files
+.DS_Store
+
 # parcel-bundler cache (https://parceljs.org/)
 .cache
 .parcel-cache

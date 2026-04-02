@@ -1,0 +1,27 @@
+# ----------------------------------------------------
+# FRP Server (FRPS) Configuration
+# ----------------------------------------------------
+
+bindPort = 7000
+vhostHTTPPort = 8080
+
+transport.tcpMux = true
+
+# Optional Dashboard
+webServer.port = 7500
+webServer.user = "admin"
+webServer.password = "change_this_secure_password"
+
+# ----------------------------------------------------
+# Authentication & Webhook
+# ----------------------------------------------------
+# Shared FRP auth token for transport-level login.
+# User-level authorization still happens in the webhook using metas.token.
+auth.method = "token"
+auth.token = "apexcloud_transport_v1"
+
+[[httpPlugins]]
+name = "user-auth"
+addr = "127.0.0.1:3000"
+path = "/api/internal/verify-token"
+ops = ["Login"]
