@@ -3,95 +3,157 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ApexOS Cloud Portal</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>ApexOS Cloud Connect</title>
+    <link rel="stylesheet" href="/styles.css">
     <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
     <link rel="icon" href="data:,">
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
-    </style>
 </head>
-<body class="bg-gray-50 flex items-center justify-center min-h-screen">
+<body class="portal-page">
+<div class="page-shell portal-shell">
+    <section class="brand-panel">
+        <div class="brand-stack">
+            <span class="eyebrow">Cloud Connect Control Plane</span>
 
-<div class="max-w-md w-full bg-white rounded-xl shadow-lg p-8 m-4">
-    <div class="text-center mb-8">
-        <h1 class="text-2xl font-bold text-gray-900">ApexOS Cloud</h1>
-        <p id="headerSubtitle" class="text-sm text-gray-500 mt-2">Log in to manage your remote access and billing.</p>
-    </div>
-
-    <div id="alertBox" class="hidden mb-4 p-3 rounded text-sm text-center"></div>
-
-    <form id="loginForm" class="space-y-6">
-        <div>
-            <label class="block text-sm font-medium text-gray-700">Email Address</label>
-            <input type="email" id="loginEmail" required class="mt-1 block w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
-        </div>
-        <div>
-            <label class="block text-sm font-medium text-gray-700">Password</label>
-            <input type="password" id="loginPassword" required class="mt-1 block w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
-        </div>
-        <button type="submit" id="loginBtn" class="w-full py-2.5 px-4 rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-            Sign In
-        </button>
-        <p class="text-center text-sm text-gray-600">
-            Don't have an account? <a href="#" id="showSignupLink" class="text-blue-600 hover:underline">Create one</a>
-        </p>
-    </form>
-
-    <form id="signupForm" class="space-y-5 hidden">
-        <div>
-            <label class="block text-sm font-medium text-gray-700">Email Address</label>
-            <input type="email" id="signupEmail" required class="mt-1 block w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
-        </div>
-        <div>
-            <label class="block text-sm font-medium text-gray-700">Create Password</label>
-            <input type="password" id="signupPassword" required minlength="6" class="mt-1 block w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
-        </div>
-        <div>
-            <label class="block text-sm font-medium text-gray-700">Desired Subdomain</label>
-            <div class="mt-1 flex rounded-md shadow-sm">
-                <input type="text" id="signupSubdomain" required class="flex-1 min-w-0 block w-full px-4 py-2 border border-gray-300 rounded-l-md focus:ring-blue-500 focus:border-blue-500" placeholder="my-home">
-                <span class="inline-flex items-center px-3 rounded-r-md border border-l-0 border-gray-300 bg-gray-50 text-gray-500 text-sm">.cloud.apexinfosys.in</span>
+            <div class="brand-mark">
+                <div class="brand-mark__orb"></div>
+                <div class="brand-mark__text">
+                    <span class="brand-mark__name">ApexOS Cloud Connect</span>
+                    <span class="brand-mark__sub">Provisioning, billing and remote access in one flow</span>
+                </div>
             </div>
-            <p class="text-xs text-gray-500 mt-1">Lowercase letters, numbers, hyphens only.</p>
-            <p class="text-xs text-amber-600 mt-2">Paid access starts after successful Razorpay billing. Free 12-month trials should only be granted later from your admin dashboard.</p>
-        </div>
-        <button type="submit" id="signupBtn" class="w-full py-2.5 px-4 rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
-            Create Account and Pay
-        </button>
-        <p class="text-center text-sm text-gray-600">
-            Already have an account? <a href="#" id="showLoginLink" class="text-blue-600 hover:underline">Log in</a>
-        </p>
-    </form>
 
-    <div id="dashboard" class="hidden space-y-6">
-        <div id="statusCard" class="p-4 rounded-lg border">
-            <p class="text-sm"><strong>Account Status:</strong> <span id="dashStatus" class="uppercase"></span></p>
-            <p id="dashStatusDetail" class="text-sm mt-1"></p>
+            <div>
+                <h1 class="headline">Ship remote access like a product, not a tunnel.</h1>
+                <p class="lede">Cloud Connect handles customer signup, subscription billing, trial approvals, domain provisioning and secure access tokens without any manual edge setup per user.</p>
+            </div>
+
+            <div class="signal-grid">
+                <div class="signal-card">
+                    <span class="signal-card__label">Access Model</span>
+                    <span class="signal-card__value">Paid First</span>
+                </div>
+                <div class="signal-card">
+                    <span class="signal-card__label">Trials</span>
+                    <span class="signal-card__value">Admin Approved</span>
+                </div>
+                <div class="signal-card">
+                    <span class="signal-card__label">Routing</span>
+                    <span class="signal-card__value">Caddy + FRP</span>
+                </div>
+            </div>
+
+            <div class="feature-list">
+                <article class="feature-card">
+                    <div class="feature-icon">01</div>
+                    <div>
+                        <h2 class="feature-title">Reserved domain immediately</h2>
+                        <p class="feature-text">Users can claim a branded subdomain up front, then complete payment or wait for manual trial approval without losing the name.</p>
+                    </div>
+                </article>
+                <article class="feature-card">
+                    <div class="feature-icon">02</div>
+                    <div>
+                        <h2 class="feature-title">Billing before tunnel activation</h2>
+                        <p class="feature-text">Access tokens stay hidden until the account is paid or explicitly moved into trial by your admin team.</p>
+                    </div>
+                </article>
+                <article class="feature-card">
+                    <div class="feature-icon">03</div>
+                    <div>
+                        <h2 class="feature-title">Production-safe operations</h2>
+                        <p class="feature-text">Customer portal, admin controls, Caddy domain checks and FRP token verification all run off the same control plane.</p>
+                    </div>
+                </article>
+            </div>
+        </div>
+    </section>
+
+    <main class="surface auth-surface">
+        <div class="panel-header">
+            <div>
+                <h2 class="panel-heading">Customer Portal</h2>
+                <p id="headerSubtitle" class="panel-subtitle">Log in to manage your remote access and billing.</p>
+            </div>
+            <span class="panel-chip">Secure Portal</span>
         </div>
 
-        <div id="billingCard" class="hidden bg-amber-50 p-4 rounded-lg border border-amber-200 space-y-3">
-            <p class="text-sm text-amber-900">Your subdomain is reserved, but billing must be completed before remote access is enabled.</p>
-            <button id="payNowBtn" class="w-full py-2.5 px-4 rounded-md shadow-sm text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 focus:ring-2 focus:ring-offset-2 focus:ring-amber-500">
-                Complete Payment
-            </button>
-        </div>
+        <div id="alertBox" class="alert"></div>
 
-        <div id="tokenCard" class="hidden bg-gray-50 p-4 rounded-lg border border-gray-200">
-            <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Your Access Token</label>
-            <code id="dashToken" class="block w-full bg-white px-3 py-2 rounded border border-gray-300 text-sm font-mono break-all text-center"></code>
-            <p class="text-xs text-gray-500 mt-2 text-center">Paste this into the <strong>Access Token</strong> field in your ApexOS Add-on.</p>
-        </div>
+        <form id="loginForm" class="stack">
+            <div class="field">
+                <label class="field-label" for="loginEmail">Email Address</label>
+                <input class="input" type="email" id="loginEmail" autocomplete="email" required>
+            </div>
 
-        <div id="urlCard" class="bg-blue-50 p-4 rounded-lg border border-blue-100 text-center">
-            <label id="dashUrlLabel" class="block text-xs font-semibold text-blue-700 uppercase tracking-wider mb-1">Reserved Domain</label>
-            <a id="dashUrl" href="#" class="font-medium text-lg"></a>
-        </div>
+            <div class="field">
+                <label class="field-label" for="loginPassword">Password</label>
+                <input class="input" type="password" id="loginPassword" autocomplete="current-password" required>
+            </div>
 
-        <button id="logoutBtn" class="w-full py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50">
-            Log Out
-        </button>
-    </div>
+            <button type="submit" id="loginBtn" class="button button-primary button-full">Sign In</button>
+
+            <p class="link-row">Don't have an account? <a href="#" id="showSignupLink" class="link-inline">Create one</a></p>
+        </form>
+
+        <form id="signupForm" class="stack hidden">
+            <div class="field">
+                <label class="field-label" for="signupEmail">Email Address</label>
+                <input class="input" type="email" id="signupEmail" autocomplete="email" required>
+            </div>
+
+            <div class="field">
+                <label class="field-label" for="signupPassword">Create Password</label>
+                <input class="input" type="password" id="signupPassword" autocomplete="new-password" minlength="6" required>
+            </div>
+
+            <div class="field">
+                <label class="field-label" for="signupSubdomain">Desired Subdomain</label>
+                <div class="segment">
+                    <input class="segment-input" type="text" id="signupSubdomain" placeholder="my-home" required>
+                    <span class="segment-suffix">.cloud.apexinfosys.in</span>
+                </div>
+                <p class="field-hint">Use 3-20 lowercase letters, numbers or hyphens.</p>
+                <p class="field-note is-warning">Paid access starts after successful Razorpay billing. Free 12-month trials are granted later from the admin dashboard.</p>
+            </div>
+
+            <button type="submit" id="signupBtn" class="button button-accent button-full">Create Account and Pay</button>
+
+            <p class="link-row">Already have an account? <a href="#" id="showLoginLink" class="link-inline">Log in</a></p>
+        </form>
+
+        <section id="dashboard" class="dashboard-grid hidden">
+            <article id="statusCard" class="status-card">
+                <div class="status-meta">
+                    <div>
+                        <span class="status-label">Account Status</span>
+                        <div class="status-value" id="dashStatusTitle">Cloud Connect</div>
+                    </div>
+                    <span id="dashStatus" class="badge">pending</span>
+                </div>
+                <p id="dashStatusDetail" class="status-detail"></p>
+            </article>
+
+            <article id="billingCard" class="billing-card hidden">
+                <span class="card-label">Next Step</span>
+                <p class="card-copy">Your subdomain is reserved, but billing must be completed before remote access is enabled.</p>
+                <button id="payNowBtn" class="button button-warning button-full">Complete Payment</button>
+            </article>
+
+            <article id="tokenCard" class="detail-card hidden">
+                <span class="card-label">Your Access Token</span>
+                <code id="dashToken" class="token-value"></code>
+                <p class="card-copy">Paste this into the <strong>Access Token</strong> field in your ApexOS add-on.</p>
+            </article>
+
+            <article id="urlCard" class="resource-card">
+                <span id="dashUrlLabel" class="card-label">Reserved Domain</span>
+                <a id="dashUrl" href="#" class="resource-link is-disabled"></a>
+                <p class="card-copy">This domain becomes live immediately after payment or manual trial approval.</p>
+            </article>
+
+            <button id="logoutBtn" class="button button-muted button-full">Log Out</button>
+        </section>
+    </main>
 </div>
 
 <script>
@@ -105,7 +167,7 @@ document.getElementById('showSignupLink').addEventListener('click', (e) => {
     e.preventDefault();
     loginForm.classList.add('hidden');
     signupForm.classList.remove('hidden');
-    headerSubtitle.textContent = 'Create an account and complete billing to enable remote access.';
+    headerSubtitle.textContent = 'Create an account, reserve your subdomain and complete billing to enable remote access.';
     hideAlert();
 });
 
@@ -149,18 +211,17 @@ document.getElementById('payNowBtn').addEventListener('click', async () => {
         openCheckout(data.checkout, button, originalText);
     } catch (err) {
         showAlert(err.message);
-        button.textContent = originalText;
-        button.disabled = false;
+        restoreButton(button, originalText);
     }
 });
 
 function showAlert(message, isError = true) {
     alertBox.textContent = message;
-    alertBox.className = `mb-4 p-3 rounded text-sm text-center block ${isError ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-green-50 text-green-600 border border-green-200'}`;
+    alertBox.className = `alert is-visible ${isError ? 'is-error' : 'is-success'}`;
 }
 
 function hideAlert() {
-    alertBox.classList.add('hidden');
+    alertBox.className = 'alert';
 }
 
 function restoreButton(button, fallbackText) {
@@ -190,6 +251,35 @@ function getStatusMessage(userData) {
     return 'Unknown account state.';
 }
 
+function getStatusTone(status) {
+    if (status === 'payment_pending') {
+        return {
+            card: 'status-card is-pending',
+            badge: 'badge badge-pending',
+            title: 'Billing required'
+        };
+    }
+    if (status === 'trial') {
+        return {
+            card: 'status-card is-live',
+            badge: 'badge badge-trial',
+            title: 'Trial is active'
+        };
+    }
+    if (status === 'active') {
+        return {
+            card: 'status-card is-live',
+            badge: 'badge badge-active',
+            title: 'Remote access is live'
+        };
+    }
+    return {
+        card: 'status-card is-attention',
+        badge: 'badge badge-suspended',
+        title: 'Attention required'
+    };
+}
+
 function renderDashboard(userData) {
     loginForm.classList.add('hidden');
     signupForm.classList.add('hidden');
@@ -198,24 +288,21 @@ function renderDashboard(userData) {
 
     const accessEnabled = ['active', 'trial'].includes(userData.status);
     const statusCard = document.getElementById('statusCard');
+    const statusBadge = document.getElementById('dashStatus');
+    const statusTitle = document.getElementById('dashStatusTitle');
     const billingCard = document.getElementById('billingCard');
     const tokenCard = document.getElementById('tokenCard');
     const urlCard = document.getElementById('urlCard');
     const dashUrl = document.getElementById('dashUrl');
     const dashUrlLabel = document.getElementById('dashUrlLabel');
+    const tone = getStatusTone(userData.status);
 
-    document.getElementById('dashStatus').textContent = userData.status;
+    statusCard.className = tone.card;
+    statusBadge.className = tone.badge;
+    statusBadge.textContent = userData.status.replace('_', ' ');
+    statusTitle.textContent = tone.title;
     document.getElementById('dashStatusDetail').textContent = getStatusMessage(userData);
-    document.getElementById('dashToken').textContent = userData.access_token;
-
-    statusCard.className = 'p-4 rounded-lg border';
-    if (userData.status === 'payment_pending') {
-        statusCard.classList.add('bg-amber-50', 'border-amber-200', 'text-amber-900');
-    } else if (accessEnabled) {
-        statusCard.classList.add('bg-green-50', 'border-green-200', 'text-green-800');
-    } else {
-        statusCard.classList.add('bg-red-50', 'border-red-200', 'text-red-800');
-    }
+    document.getElementById('dashToken').textContent = userData.access_token || 'Hidden until access is enabled';
 
     billingCard.classList.toggle('hidden', userData.status !== 'payment_pending');
     tokenCard.classList.toggle('hidden', !accessEnabled);
@@ -225,14 +312,14 @@ function renderDashboard(userData) {
         dashUrlLabel.textContent = 'Your Remote URL';
         dashUrl.href = `https://${userData.domain}`;
         dashUrl.target = '_blank';
-        dashUrl.className = 'text-blue-600 font-medium hover:underline text-lg';
-        urlCard.className = 'bg-blue-50 p-4 rounded-lg border border-blue-100 text-center';
+        dashUrl.className = 'resource-link is-live';
+        urlCard.className = 'resource-card';
     } else {
         dashUrlLabel.textContent = 'Reserved Domain';
         dashUrl.href = '#';
         dashUrl.removeAttribute('target');
-        dashUrl.className = 'text-gray-700 font-medium text-lg pointer-events-none';
-        urlCard.className = 'bg-gray-50 p-4 rounded-lg border border-gray-200 text-center';
+        dashUrl.className = 'resource-link is-disabled';
+        urlCard.className = 'resource-card';
     }
 }
 
@@ -283,7 +370,7 @@ function openCheckout(checkout, button, fallbackText) {
         description: checkout.description,
         prefill: checkout.prefill,
         notes: checkout.notes,
-        theme: { color: '#2563eb' },
+        theme: { color: '#316dff' },
         modal: {
             ondismiss: () => {
                 restoreButton(button, fallbackText);
@@ -365,8 +452,7 @@ signupForm.addEventListener('submit', async (e) => {
     const subdomain = document.getElementById('signupSubdomain').value;
     if (!/^[a-z0-9\-]{3,20}$/.test(subdomain)) {
         showAlert('Subdomain can only contain lowercase letters, numbers, and hyphens (3-20 chars).');
-        btn.textContent = defaultText;
-        btn.disabled = false;
+        restoreButton(btn, defaultText);
         return;
     }
 
@@ -390,8 +476,7 @@ signupForm.addEventListener('submit', async (e) => {
         openCheckout(data.checkout, btn, defaultText);
     } catch (err) {
         showAlert(err.message);
-        btn.textContent = defaultText;
-        btn.disabled = false;
+        restoreButton(btn, defaultText);
     }
 });
 </script>

@@ -3,80 +3,90 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ApexOS Cloud Admin</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>ApexOS Cloud Connect Admin</title>
+    <link rel="stylesheet" href="/styles.css">
     <link rel="icon" href="data:,">
 </head>
-<body class="bg-slate-50 min-h-screen text-slate-900">
-<div class="max-w-6xl mx-auto p-6 md:p-10 space-y-6">
-    <div class="flex items-center justify-between">
-        <div>
-            <h1 class="text-3xl font-bold">ApexOS Cloud Admin</h1>
-            <p class="text-sm text-slate-500 mt-1">Approve manual 12-month trials and manage account status.</p>
-        </div>
-        <button id="logoutBtn" class="hidden px-4 py-2 text-sm border border-slate-300 rounded-md bg-white hover:bg-slate-50">Log Out</button>
-    </div>
+<body class="admin-page">
+<div class="page-shell admin-shell">
+    <div class="admin-layout">
+        <header class="page-header">
+            <div class="admin-intro">
+                <span class="eyebrow">Operations Console</span>
+                <h1 class="section-title">Approve trials, audit billing and manage account access.</h1>
+                <p class="section-copy">The admin console gives your team one place to approve 12-month trials, inspect subscription state and move users between pending, active, suspended and expired without touching the database manually.</p>
+            </div>
+            <div class="toolbar">
+                <button id="logoutBtn" class="button button-muted button-small hidden">Log Out</button>
+            </div>
+        </header>
 
-    <div id="alertBox" class="hidden rounded-md border px-4 py-3 text-sm"></div>
+        <div id="alertBox" class="alert"></div>
 
-    <div id="loginPanel" class="max-w-md bg-white border border-slate-200 rounded-xl shadow-sm p-6">
-        <h2 class="text-lg font-semibold mb-4">Admin Login</h2>
-        <form id="loginForm" class="space-y-4">
-            <div>
-                <label class="block text-sm font-medium text-slate-700">Admin Email</label>
-                <input id="adminEmail" type="email" required class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 focus:border-blue-500 focus:ring-blue-500">
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-slate-700">Password</label>
-                <input id="adminPassword" type="password" required class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 focus:border-blue-500 focus:ring-blue-500">
-            </div>
-            <button id="loginBtn" type="submit" class="w-full rounded-md bg-blue-600 px-4 py-2.5 text-white text-sm font-medium hover:bg-blue-700">Sign In</button>
-        </form>
-    </div>
+        <section id="loginPanel" class="login-card">
+            <h2 class="login-card__title">Admin Login</h2>
+            <p class="login-card__copy">Use your configured admin credentials to access user controls, payment state and manual trial approvals.</p>
 
-    <div id="dashboard" class="hidden space-y-6">
-        <div class="grid md:grid-cols-4 gap-4">
-            <div class="bg-white border border-slate-200 rounded-xl p-4">
-                <p class="text-xs uppercase tracking-wide text-slate-500">Pending Payment</p>
-                <p id="countPending" class="text-2xl font-semibold mt-2">0</p>
-            </div>
-            <div class="bg-white border border-slate-200 rounded-xl p-4">
-                <p class="text-xs uppercase tracking-wide text-slate-500">Trial</p>
-                <p id="countTrial" class="text-2xl font-semibold mt-2">0</p>
-            </div>
-            <div class="bg-white border border-slate-200 rounded-xl p-4">
-                <p class="text-xs uppercase tracking-wide text-slate-500">Active</p>
-                <p id="countActive" class="text-2xl font-semibold mt-2">0</p>
-            </div>
-            <div class="bg-white border border-slate-200 rounded-xl p-4">
-                <p class="text-xs uppercase tracking-wide text-slate-500">Suspended/Expired</p>
-                <p id="countDisabled" class="text-2xl font-semibold mt-2">0</p>
-            </div>
-        </div>
-
-        <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-            <div class="px-4 py-3 border-b border-slate-200 flex items-center justify-between gap-4">
-                <div>
-                    <h2 class="font-semibold">Users</h2>
-                    <p class="text-sm text-slate-500">Manual trial approval and status controls.</p>
+            <form id="loginForm" class="stack">
+                <div class="field">
+                    <label class="field-label" for="adminEmail">Admin Email</label>
+                    <input id="adminEmail" class="input" type="email" autocomplete="username" required>
                 </div>
-                <button id="refreshBtn" class="px-4 py-2 text-sm border border-slate-300 rounded-md hover:bg-slate-50">Refresh</button>
+
+                <div class="field">
+                    <label class="field-label" for="adminPassword">Password</label>
+                    <input id="adminPassword" class="input" type="password" autocomplete="current-password" required>
+                </div>
+
+                <button id="loginBtn" type="submit" class="button button-primary button-full">Sign In</button>
+            </form>
+        </section>
+
+        <section id="dashboard" class="hidden stack">
+            <div class="metric-grid">
+                <article class="metric-card">
+                    <span class="metric-label">Pending Payment</span>
+                    <div id="countPending" class="metric-value">0</div>
+                </article>
+                <article class="metric-card">
+                    <span class="metric-label">Trial</span>
+                    <div id="countTrial" class="metric-value">0</div>
+                </article>
+                <article class="metric-card">
+                    <span class="metric-label">Active</span>
+                    <div id="countActive" class="metric-value">0</div>
+                </article>
+                <article class="metric-card">
+                    <span class="metric-label">Suspended / Expired</span>
+                    <div id="countDisabled" class="metric-value">0</div>
+                </article>
             </div>
-            <div class="overflow-x-auto">
-                <table class="min-w-full text-sm">
-                    <thead class="bg-slate-50 text-slate-600">
-                        <tr>
-                            <th class="text-left px-4 py-3 font-medium">User</th>
-                            <th class="text-left px-4 py-3 font-medium">Status</th>
-                            <th class="text-left px-4 py-3 font-medium">Billing</th>
-                            <th class="text-left px-4 py-3 font-medium">Token</th>
-                            <th class="text-left px-4 py-3 font-medium">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="usersTableBody" class="divide-y divide-slate-200"></tbody>
-                </table>
-            </div>
-        </div>
+
+            <section class="table-shell">
+                <div class="table-header">
+                    <div>
+                        <h2 class="table-header__title">Customer Accounts</h2>
+                        <p class="table-header__copy">Approve a 365-day trial, promote paid users to active, or force a customer back into billing review.</p>
+                    </div>
+                    <button id="refreshBtn" class="button button-muted button-small">Refresh</button>
+                </div>
+
+                <div class="table-scroll">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>User</th>
+                                <th>Status</th>
+                                <th>Billing</th>
+                                <th>Token</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usersTableBody"></tbody>
+                    </table>
+                </div>
+            </section>
+        </section>
     </div>
 </div>
 
@@ -90,11 +100,11 @@ const ADMIN_TOKEN_KEY = 'apex_admin_token';
 
 function showAlert(message, isError = true) {
     alertBox.textContent = message;
-    alertBox.className = `block rounded-md border px-4 py-3 text-sm ${isError ? 'border-red-200 bg-red-50 text-red-700' : 'border-green-200 bg-green-50 text-green-700'}`;
+    alertBox.className = `alert is-visible ${isError ? 'is-error' : 'is-success'}`;
 }
 
 function hideAlert() {
-    alertBox.classList.add('hidden');
+    alertBox.className = 'alert';
 }
 
 function getAdminToken() {
@@ -123,14 +133,14 @@ async function api(path, options = {}) {
 }
 
 function statusBadge(status) {
-    const styles = {
-        payment_pending: 'bg-amber-100 text-amber-800',
-        trial: 'bg-violet-100 text-violet-800',
-        active: 'bg-green-100 text-green-800',
-        suspended: 'bg-red-100 text-red-800',
-        expired: 'bg-slate-200 text-slate-700'
+    const badgeClass = {
+        payment_pending: 'badge badge-pending',
+        trial: 'badge badge-trial',
+        active: 'badge badge-active',
+        suspended: 'badge badge-suspended',
+        expired: 'badge badge-suspended'
     };
-    return `<span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${styles[status] || 'bg-slate-100 text-slate-700'}">${status}</span>`;
+    return `<span class="${badgeClass[status] || 'badge'}">${status.replace('_', ' ')}</span>`;
 }
 
 function formatDate(value) {
@@ -146,33 +156,45 @@ function updateCounts(users) {
 }
 
 function buildActionButton(user, label, status, extra = {}) {
-    return `<button data-user-id="${user.id}" data-status="${status}" data-trial-days="${extra.trialDays || ''}" class="admin-action rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium hover:bg-slate-50">${label}</button>`;
+    return `<button data-user-id="${user.id}" data-status="${status}" data-trial-days="${extra.trialDays || ''}" class="button button-muted button-small admin-action">${label}</button>`;
 }
 
 function renderUsers(users) {
     updateCounts(users);
+
+    if (!users.length) {
+        usersTableBody.innerHTML = `<tr><td colspan="5" class="empty-state">No users found.</td></tr>`;
+        return;
+    }
+
     usersTableBody.innerHTML = users.map((user) => `
-        <tr class="align-top">
-            <td class="px-4 py-4">
-                <div class="font-medium text-slate-900">${user.email}</div>
-                <div class="text-slate-500 mt-1">${user.domain}</div>
-                <div class="text-xs text-slate-400 mt-1">Created: ${formatDate(user.created_at)}</div>
+        <tr>
+            <td>
+                <div class="table-user">
+                    <span class="table-user__name">${user.email}</span>
+                    <span class="table-user__meta">${user.domain}</span>
+                    <span class="table-user__meta">Created: ${formatDate(user.created_at)}</span>
+                </div>
             </td>
-            <td class="px-4 py-4 space-y-2">
-                <div>${statusBadge(user.status)}</div>
-                <div class="text-xs text-slate-500">Trial ends: ${formatDate(user.trial_ends_at)}</div>
-                <div class="text-xs text-slate-500">Activated: ${formatDate(user.activated_at)}</div>
+            <td>
+                <div class="stack stack-tight">
+                    ${statusBadge(user.status)}
+                    <span class="table-copy">Trial ends: ${formatDate(user.trial_ends_at)}</span>
+                    <span class="table-copy">Activated: ${formatDate(user.activated_at)}</span>
+                </div>
             </td>
-            <td class="px-4 py-4 text-xs text-slate-500 space-y-1">
-                <div>Subscription: ${user.razorpay_subscription_status || '—'}</div>
-                <div>Sub ID: ${user.razorpay_subscription_id || '—'}</div>
-                <div>Payment ID: ${user.razorpay_payment_id || '—'}</div>
+            <td>
+                <div class="stack stack-compact">
+                    <span class="table-copy">Subscription: ${user.razorpay_subscription_status || '—'}</span>
+                    <span class="table-copy">Sub ID: ${user.razorpay_subscription_id || '—'}</span>
+                    <span class="table-copy">Payment ID: ${user.razorpay_payment_id || '—'}</span>
+                </div>
             </td>
-            <td class="px-4 py-4">
-                <code class="block max-w-xs break-all text-xs text-slate-600">${user.access_token}</code>
+            <td>
+                <code class="table-code">${user.access_token}</code>
             </td>
-            <td class="px-4 py-4">
-                <div class="flex flex-wrap gap-2">
+            <td>
+                <div class="table-actions">
                     ${buildActionButton(user, 'Approve 365d Trial', 'trial', { trialDays: 365 })}
                     ${buildActionButton(user, 'Set Active', 'active')}
                     ${buildActionButton(user, 'Suspend', 'suspended')}
@@ -204,6 +226,7 @@ async function applyStatus(userId, status, trialDays) {
 async function restoreAdminSession() {
     const token = getAdminToken();
     if (!token) return;
+
     try {
         await api('/api/admin/me');
         loginPanel.classList.add('hidden');
