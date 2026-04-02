@@ -1,0 +1,73 @@
+name: Deploy Production
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag, or commit to deploy"
+        required: true
+        default: "main"
+permissions:
+  contents: read
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout selected ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+      - name: Capture commit
+        id: meta
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Check backend syntax
+        run: |
+          node --check cloud-connect/server.js
+      - name: Setup SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          printf "%s" "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p "${{ secrets.VPS_PORT }}" -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+      - name: Ensure VPS app directory exists
+        run: |
+          ssh -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            "mkdir -p '${{ secrets.VPS_APP_DIR }}'"
+      - name: Sync repo to VPS
+        run: |
+          rsync -az --delete \
+            --exclude ".git/" \
+            --exclude "cloud-connect/.env" \
+            --exclude "cloud-connect/database.sqlite" \
+            --exclude "cloud-connect/node_modules/" \
+            ./ "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/"
+      - name: Deploy on VPS
+        run: |
+          ssh -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" 'bash -s' <<'EOF'
+          set -euo pipefail
+          BASE_DIR="${{ secrets.VPS_APP_DIR }}"
+          APP_DIR="${{ secrets.VPS_APP_DIR }}/cloud-connect"
+          DEPLOY_COMMIT="${{ steps.meta.outputs.commit }}"
+          cd "$APP_DIR"
+          npm ci --omit=dev
+          if ! cmp -s "$APP_DIR/Caddyfile" /etc/caddy/Caddyfile; then
+            sudo install -m 644 "$APP_DIR/Caddyfile" /etc/caddy/Caddyfile
+            sudo caddy validate --config /etc/caddy/Caddyfile
+            sudo systemctl reload caddy
+          fi
+          if ! cmp -s "$APP_DIR/frps.toml" /etc/frp/frps.toml; then
+            sudo install -m 644 "$APP_DIR/frps.toml" /etc/frp/frps.toml
+            sudo systemctl restart frps
+          fi
+          if pm2 describe server >/dev/null 2>&1; then
+            pm2 restart server
+          else
+            pm2 start server.js --name server
+            pm2 save
+          fi
+          printf "%s\n" "$DEPLOY_COMMIT" > "$APP_DIR/.deploy-version"
+          sudo systemctl is-active --quiet caddy
+          sudo systemctl is-active --quiet frps
+          pm2 describe server >/dev/null
+          curl -fsS http://127.0.0.1:3000/ >/dev/null
+          EOF
