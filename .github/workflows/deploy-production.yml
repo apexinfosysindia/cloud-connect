@@ -45,6 +45,25 @@ jobs:
         run: |
           ssh -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
             "mkdir -p '${{ secrets.VPS_APP_DIR }}'"
+      - name: Upload production env file
+        run: |
+          RAW_ENV='${{ secrets.PORTAL_ENV_FILE }}'
+
+          if [ -z "$RAW_ENV" ]; then
+            echo "PORTAL_ENV_FILE secret is missing"
+            exit 1
+          fi
+
+          ENV_FILE="$RUNNER_TEMP/cloud-connect.env"
+          if printf "%s" "$RAW_ENV" | grep -q '\\n'; then
+            printf "%b" "$RAW_ENV" | tr -d '\r' > "$ENV_FILE"
+          else
+            printf "%s" "$RAW_ENV" | tr -d '\r' > "$ENV_FILE"
+          fi
+
+          scp -P "${{ secrets.VPS_PORT }}" "$ENV_FILE" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/.env"
+          ssh -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            "chmod 600 '${{ secrets.VPS_APP_DIR }}/.env'"
       - name: Sync repo to VPS
         run: |
           rsync -az --delete \

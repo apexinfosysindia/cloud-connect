@@ -19,10 +19,7 @@ app.use(express.json({
 app.use(cors());
 app.use(express.static(path.join(__dirname, 'public')));
 
-const razorpay = new Razorpay({
-    key_id: process.env.RAZORPAY_KEY_ID,
-    key_secret: process.env.RAZORPAY_KEY_SECRET
-});
+let razorpayClient = null;
 
 function generateToken() {
     return 'apx_' + crypto.randomBytes(16).toString('hex');
@@ -145,6 +142,19 @@ function ensureBillingConfigured() {
     }
 }
 
+function getRazorpayClient() {
+    ensureBillingConfigured();
+
+    if (!razorpayClient) {
+        razorpayClient = new Razorpay({
+            key_id: process.env.RAZORPAY_KEY_ID,
+            key_secret: process.env.RAZORPAY_KEY_SECRET
+        });
+    }
+
+    return razorpayClient;
+}
+
 function ensureAdminConfigured() {
     if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) {
         throw new Error('Admin credentials are not configured. Please set ADMIN_EMAIL and ADMIN_PASSWORD.');
@@ -220,6 +230,7 @@ async function getOrCreateCustomer(user) {
         return { id: user.razorpay_customer_id };
     }
 
+    const razorpay = getRazorpayClient();
     const customers = await razorpay.customers.all({ email: user.email });
     if (customers.items && customers.items.length > 0) {
         return customers.items[0];
@@ -244,7 +255,7 @@ function buildCheckoutPayload(user, subscriptionId) {
 }
 
 async function prepareCheckoutForUser(user) {
-    ensureBillingConfigured();
+    const razorpay = getRazorpayClient();
 
     const customer = await getOrCreateCustomer(user);
     let subscriptionId = user.razorpay_subscription_id;
