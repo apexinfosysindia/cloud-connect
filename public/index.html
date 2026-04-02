@@ -9,147 +9,178 @@
     <link rel="icon" href="/favicon.ico">
 </head>
 <body class="portal-page">
-<div class="page-shell portal-shell">
-    <main class="surface portal-surface">
-        <div class="portal-topbar">
-            <div class="brand-mark brand-mark--light">
-                <img src="/logo.png" alt="ApexOS Cloud Connect" class="brand-mark__logo brand-mark__logo--light">
-                <div class="brand-mark__text">
-                    <span class="brand-mark__name brand-mark__name--dark">ApexOS Cloud Connect</span>
-                    <span class="brand-mark__sub brand-mark__sub--dark">Managed remote access service</span>
+<div class="page-shell page-shell--portal">
+    <header class="masthead">
+        <div class="brand-suite">
+            <img src="/group-logo.png" alt="Apex Infosys" class="brand-suite__group">
+            <span class="brand-suite__divider"></span>
+            <div class="brand-suite__product">
+                <img src="/logo.png" alt="ApexOS Cloud Connect" class="brand-suite__product-logo">
+                <div>
+                    <div class="brand-suite__title">ApexOS Cloud Connect</div>
+                    <div class="brand-suite__subtitle">Secure remote access service</div>
                 </div>
             </div>
-            <span class="panel-chip">Managed Service</span>
         </div>
 
-        <section class="portal-overview">
-            <div class="portal-overview__copy">
-                <span class="eyebrow eyebrow--light">Managed Remote Access</span>
-                <h1 class="headline headline--dark">Secure remote access for ApexOS, managed as a service.</h1>
-                <p class="lede lede--dark">Cloud Connect brings account onboarding, billing, approvals and remote access into one customer experience so each deployment can be activated without manual coordination.</p>
-            </div>
+        <div class="masthead-actions">
+            <button id="topLoginBtn" class="button button-secondary">Sign In</button>
+            <button id="topSignupBtn" class="button button-primary">Create Account</button>
+        </div>
+    </header>
 
-            <div class="signal-grid signal-grid--light">
-                <div class="signal-card signal-card--light">
-                    <span class="signal-card__label signal-card__label--light">Service Model</span>
-                    <span class="signal-card__value signal-card__value--light">Paid First</span>
-                </div>
-                <div class="signal-card signal-card--light">
-                    <span class="signal-card__label signal-card__label--light">Activation</span>
-                    <span class="signal-card__value signal-card__value--light">Account Based</span>
-                </div>
-                <div class="signal-card signal-card--light">
-                    <span class="signal-card__label signal-card__label--light">Availability</span>
-                    <span class="signal-card__value signal-card__value--light">Always Addressable</span>
-                </div>
-            </div>
+    <main class="portal-main">
+        <section class="hero-card">
+            <span class="eyebrow">Cloud Connectivity for ApexOS</span>
+            <h1 class="hero-title">Take your Apex Connect devices from local to remote.</h1>
+            <p class="hero-text">Cloud Connect brings secure remote access, service activation and account management into one experience so customers can go from local-only access to cloud-connected control without manual handover.</p>
 
-            <div class="feature-list feature-list--light">
-                <article class="feature-card feature-card--light">
-                    <div class="feature-icon feature-icon--light">01</div>
-                    <div>
-                        <h2 class="feature-title feature-title--dark">Reserved customer address</h2>
-                        <p class="feature-text feature-text--dark">Each account can reserve its branded address before activation so the endpoint is ready when service approval is complete.</p>
-                    </div>
+            <div class="summary-strip">
+                <article class="summary-item">
+                    <span class="summary-label">Connectivity</span>
+                    <span class="summary-value">Local to remote access</span>
                 </article>
-                <article class="feature-card feature-card--light">
-                    <div class="feature-icon feature-icon--light">02</div>
-                    <div>
-                        <h2 class="feature-title feature-title--dark">Access only after approval</h2>
-                        <p class="feature-text feature-text--dark">Remote access remains unavailable until billing is complete or the account is explicitly approved for service.</p>
-                    </div>
+                <article class="summary-item">
+                    <span class="summary-label">Billing</span>
+                    <span class="summary-value">Annual cloud subscription</span>
                 </article>
-                <article class="feature-card feature-card--light">
-                    <div class="feature-icon feature-icon--light">03</div>
-                    <div>
-                        <h2 class="feature-title feature-title--dark">One managed workflow</h2>
-                        <p class="feature-text feature-text--dark">Signup, payment, approval and account activation all move through one controlled workflow instead of manual back-and-forth.</p>
-                    </div>
+                <article class="summary-item">
+                    <span class="summary-label">Activation</span>
+                    <span class="summary-value">Account approved service</span>
                 </article>
             </div>
         </section>
 
-        <div class="panel-header panel-header--portal">
-            <div>
-                <h2 class="panel-heading">Access Portal</h2>
-                <p id="headerSubtitle" class="panel-subtitle">Log in to manage your remote access and billing.</p>
-            </div>
-        </div>
-
-        <div id="alertBox" class="alert"></div>
-
-        <form id="loginForm" class="stack">
-            <div class="field">
-                <label class="field-label" for="loginEmail">Email Address</label>
-                <input class="input" type="email" id="loginEmail" autocomplete="email" required>
-            </div>
-
-            <div class="field">
-                <label class="field-label" for="loginPassword">Password</label>
-                <input class="input" type="password" id="loginPassword" autocomplete="current-password" required>
-            </div>
-
-            <button type="submit" id="loginBtn" class="button button-primary button-full">Sign In</button>
-
-            <p class="link-row">Don't have an account? <a href="#" id="showSignupLink" class="link-inline">Create one</a></p>
-        </form>
-
-        <form id="signupForm" class="stack hidden">
-            <div class="field">
-                <label class="field-label" for="signupEmail">Email Address</label>
-                <input class="input" type="email" id="signupEmail" autocomplete="email" required>
-            </div>
-
-            <div class="field">
-                <label class="field-label" for="signupPassword">Create Password</label>
-                <input class="input" type="password" id="signupPassword" autocomplete="new-password" minlength="6" required>
-            </div>
-
-            <div class="field">
-                <label class="field-label" for="signupSubdomain">Desired Subdomain</label>
-                <div class="segment">
-                    <input class="segment-input" type="text" id="signupSubdomain" placeholder="my-home" required>
-                    <span class="segment-suffix">.cloud.apexinfosys.in</span>
+        <section class="section-card">
+            <div class="section-header">
+                <div>
+                    <h2 class="section-title">What you get with Cloud Connect</h2>
+                    <p class="section-text">Cloud Connect is positioned as a customer service, not a tunnel configuration screen. The experience is centered around everyday remote use, service activation and premium cloud features.</p>
                 </div>
-                <p class="field-hint">Use 3-20 lowercase letters, numbers or hyphens.</p>
             </div>
 
-            <button type="submit" id="signupBtn" class="button button-accent button-full">Create Account and Pay</button>
+            <div class="feature-grid">
+                <article class="feature-card">
+                    <h3 class="feature-card__title">Cloud connectivity from anywhere</h3>
+                    <p class="feature-card__text">Move Apex Connect devices and dashboards from local-only access to secure remote availability through your Cloud account.</p>
+                </article>
+                <article class="feature-card">
+                    <h3 class="feature-card__title">Security and privacy</h3>
+                    <p class="feature-card__text">Each account is activated through billing or service approval, with access tied to customer identity and account state rather than exposed credentials.</p>
+                </article>
+                <article class="feature-card">
+                    <h3 class="feature-card__title">Simple annual pricing</h3>
+                    <p class="feature-card__text">Annual pricing is shown during secure checkout before activation. Your cloud address is reserved during signup and service starts once the account is enabled.</p>
+                </article>
+                <article class="feature-card">
+                    <h3 class="feature-card__title">Voice assistant connectivity</h3>
+                    <p class="feature-card__text">Easily connect supported devices and routines to voice assistants through your Cloud account for hands-free control.</p>
+                </article>
+                <article class="feature-card">
+                    <h3 class="feature-card__title">Cloud text-to-speech</h3>
+                    <p class="feature-card__text">The Cloud text-to-speech (TTS) service allows you to have text read aloud with natural sounding voices. This service is automatically enabled when you are signed in to your ApexOS Cloud account.</p>
+                </article>
+                <article class="feature-card">
+                    <h3 class="feature-card__title">Automation webhooks</h3>
+                    <p class="feature-card__text">Use webhooks to notify external systems and trigger automations without exposing your local network directly to the internet.</p>
+                </article>
+                <article class="feature-card">
+                    <h3 class="feature-card__title">Improved camera streaming</h3>
+                    <p class="feature-card__text">Get improved camera streaming with WebRTC for faster live views and a better remote monitoring experience.</p>
+                </article>
+                <article class="feature-card feature-card--accent">
+                    <h3 class="feature-card__title">One cloud account</h3>
+                    <p class="feature-card__text">Account access, billing state, service approval and your reserved cloud address all stay together in a single customer account.</p>
+                </article>
+            </div>
+        </section>
 
-            <p class="link-row">Already have an account? <a href="#" id="showLoginLink" class="link-inline">Log in</a></p>
-        </form>
+        <section id="account-shell" class="section-card account-shell">
+            <div class="account-shell__header">
+                <div>
+                    <span class="eyebrow eyebrow--light">Cloud Account</span>
+                    <h2 id="accountTitle" class="section-title">Sign in or create your Cloud account</h2>
+                    <p id="headerSubtitle" class="section-text">Log in to manage your remote access and billing.</p>
+                </div>
+            </div>
 
-        <section id="dashboard" class="dashboard-grid hidden">
-            <article id="statusCard" class="status-card">
-                <div class="status-meta">
-                    <div>
-                        <span class="status-label">Account Status</span>
-                        <div class="status-value" id="dashStatusTitle">Cloud Connect</div>
+            <div id="alertBox" class="alert"></div>
+
+            <form id="loginForm" class="stack">
+                <div class="field">
+                    <label class="field-label" for="loginEmail">Email Address</label>
+                    <input class="input" type="email" id="loginEmail" autocomplete="email" required>
+                </div>
+
+                <div class="field">
+                    <label class="field-label" for="loginPassword">Password</label>
+                    <input class="input" type="password" id="loginPassword" autocomplete="current-password" required>
+                </div>
+
+                <button type="submit" id="loginBtn" class="button button-primary button-full">Sign In</button>
+
+                <p class="link-row">Don't have an account? <a href="#account-shell" id="showSignupLink" class="link-inline">Create one</a></p>
+            </form>
+
+            <form id="signupForm" class="stack hidden">
+                <div class="field">
+                    <label class="field-label" for="signupEmail">Email Address</label>
+                    <input class="input" type="email" id="signupEmail" autocomplete="email" required>
+                </div>
+
+                <div class="field">
+                    <label class="field-label" for="signupPassword">Create Password</label>
+                    <input class="input" type="password" id="signupPassword" autocomplete="new-password" minlength="6" required>
+                </div>
+
+                <div class="field">
+                    <label class="field-label" for="signupSubdomain">Desired Cloud Address</label>
+                    <div class="segment">
+                        <input class="segment-input" type="text" id="signupSubdomain" placeholder="my-home" required>
+                        <span class="segment-suffix">.cloud.apexinfosys.in</span>
                     </div>
-                    <span id="dashStatus" class="badge">pending</span>
+                    <p class="field-hint">Use 3-20 lowercase letters, numbers or hyphens.</p>
                 </div>
-                <p id="dashStatusDetail" class="status-detail"></p>
-            </article>
 
-            <article id="billingCard" class="billing-card hidden">
-                <span class="card-label">Next Step</span>
-                <p class="card-copy">Your subdomain is reserved, but billing must be completed before remote access is enabled.</p>
-                <button id="payNowBtn" class="button button-warning button-full">Complete Payment</button>
-            </article>
+                <button type="submit" id="signupBtn" class="button button-primary button-full">Create Account and Pay</button>
 
-            <article id="tokenCard" class="detail-card hidden">
-                <span class="card-label">Your Access Token</span>
-                <code id="dashToken" class="token-value"></code>
-                <p class="card-copy">Paste this into the <strong>Access Token</strong> field in your ApexOS add-on.</p>
-            </article>
+                <p class="link-row">Already have an account? <a href="#account-shell" id="showLoginLink" class="link-inline">Sign in</a></p>
+            </form>
 
-            <article id="urlCard" class="resource-card">
-                <span id="dashUrlLabel" class="card-label">Reserved Domain</span>
-                <a id="dashUrl" href="#" class="resource-link is-disabled"></a>
-                <p class="card-copy">This domain becomes live immediately after payment or manual trial approval.</p>
-            </article>
+            <section id="dashboard" class="dashboard-grid hidden">
+                <article id="statusCard" class="status-card">
+                    <div class="status-meta">
+                        <div>
+                            <span class="status-label">Account Status</span>
+                            <div id="dashStatusTitle" class="status-title">Cloud account</div>
+                        </div>
+                        <span id="dashStatus" class="status-badge">pending</span>
+                    </div>
+                    <p id="dashStatusDetail" class="status-text"></p>
+                </article>
 
-            <button id="logoutBtn" class="button button-muted button-full">Log Out</button>
+                <div class="detail-grid">
+                    <article id="billingCard" class="detail-card hidden">
+                        <span class="detail-label">Next Step</span>
+                        <p class="detail-copy">Your cloud address is reserved, but billing must be completed before remote access is enabled.</p>
+                        <button id="payNowBtn" class="button button-warning button-full">Complete Payment</button>
+                    </article>
+
+                    <article id="tokenCard" class="detail-card hidden">
+                        <span class="detail-label">Access Token</span>
+                        <code id="dashToken" class="token-value"></code>
+                        <p class="detail-copy">Paste this into the <strong>Access Token</strong> field in your ApexOS add-on.</p>
+                    </article>
+
+                    <article id="urlCard" class="detail-card">
+                        <span id="dashUrlLabel" class="detail-label">Cloud Address</span>
+                        <a id="dashUrl" href="#" class="domain-link domain-link--disabled"></a>
+                        <p class="detail-copy">This address becomes available as soon as the account is enabled.</p>
+                    </article>
+                </div>
+
+                <button id="logoutBtn" class="button button-secondary button-full">Log Out</button>
+            </section>
         </section>
     </main>
 </div>
@@ -159,27 +190,50 @@ const loginForm = document.getElementById('loginForm');
 const signupForm = document.getElementById('signupForm');
 const dashboard = document.getElementById('dashboard');
 const headerSubtitle = document.getElementById('headerSubtitle');
+const accountTitle = document.getElementById('accountTitle');
 const alertBox = document.getElementById('alertBox');
+const accountShell = document.getElementById('account-shell');
+
+function scrollToAccountShell() {
+    accountShell.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function openSignupView() {
+    loginForm.classList.add('hidden');
+    signupForm.classList.remove('hidden');
+    dashboard.classList.add('hidden');
+    accountTitle.textContent = 'Create your Cloud account';
+    headerSubtitle.textContent = 'Reserve your cloud address and complete billing to enable remote access.';
+    hideAlert();
+    scrollToAccountShell();
+}
+
+function openLoginView() {
+    signupForm.classList.add('hidden');
+    loginForm.classList.remove('hidden');
+    dashboard.classList.add('hidden');
+    accountTitle.textContent = 'Sign in to your Cloud account';
+    headerSubtitle.textContent = 'Log in to manage your remote access and billing.';
+    hideAlert();
+    scrollToAccountShell();
+}
+
+document.getElementById('topSignupBtn').addEventListener('click', openSignupView);
+document.getElementById('topLoginBtn').addEventListener('click', openLoginView);
 
 document.getElementById('showSignupLink').addEventListener('click', (e) => {
     e.preventDefault();
-    loginForm.classList.add('hidden');
-    signupForm.classList.remove('hidden');
-    headerSubtitle.textContent = 'Create an account, reserve your subdomain and complete billing to enable remote access.';
-    hideAlert();
+    openSignupView();
 });
 
 document.getElementById('showLoginLink').addEventListener('click', (e) => {
     e.preventDefault();
-    signupForm.classList.add('hidden');
-    loginForm.classList.remove('hidden');
-    headerSubtitle.textContent = 'Log in to manage your remote access and billing.';
-    hideAlert();
+    openLoginView();
 });
 
 document.getElementById('logoutBtn').addEventListener('click', () => {
     localStorage.removeItem('apex_user');
-    showLogin();
+    openLoginView();
 });
 
 document.getElementById('payNowBtn').addEventListener('click', async () => {
@@ -230,7 +284,7 @@ function restoreButton(button, fallbackText) {
 
 function getStatusMessage(userData) {
     if (userData.status === 'payment_pending') {
-        return 'Billing is pending. Remote access will stay disabled until payment is completed.';
+        return 'Billing is pending. Remote access remains unavailable until the account is enabled.';
     }
     if (userData.status === 'trial') {
         return userData.trial_ends_at
@@ -238,13 +292,13 @@ function getStatusMessage(userData) {
             : 'Access is active for this account.';
     }
     if (userData.status === 'active') {
-        return 'Paid subscription is active. Remote access is enabled.';
+        return 'Remote access is active and this account is ready to use.';
     }
     if (userData.status === 'expired') {
-        return 'Subscription expired. Renew billing to restore remote access.';
+        return 'Service has expired. Renew billing to restore remote access.';
     }
     if (userData.status === 'suspended') {
-        return 'Subscription is suspended. Contact support or update billing.';
+        return 'Service is suspended. Contact support or update billing to restore access.';
     }
     return 'Unknown account state.';
 }
@@ -252,33 +306,27 @@ function getStatusMessage(userData) {
 function getStatusTone(status) {
     if (status === 'payment_pending') {
         return {
-            card: 'status-card is-pending',
-            badge: 'badge badge-pending',
-            title: 'Activation pending',
-            label: 'pending'
+            card: 'status-card status-card--pending',
+            badge: 'status-badge status-badge--pending',
+            label: 'pending',
+            title: 'Activation pending'
         };
     }
-    if (status === 'trial') {
+
+    if (status === 'trial' || status === 'active') {
         return {
-            card: 'status-card is-live',
-            badge: 'badge badge-active',
-            title: 'Remote access is live',
-            label: 'active'
+            card: 'status-card status-card--active',
+            badge: 'status-badge status-badge--active',
+            label: 'active',
+            title: 'Remote access is live'
         };
     }
-    if (status === 'active') {
-        return {
-            card: 'status-card is-live',
-            badge: 'badge badge-active',
-            title: 'Remote access is live',
-            label: 'active'
-        };
-    }
+
     return {
-        card: 'status-card is-attention',
-        badge: 'badge badge-suspended',
-        title: 'Attention required',
-        label: status === 'expired' ? 'expired' : 'suspended'
+        card: 'status-card status-card--attention',
+        badge: 'status-badge status-badge--attention',
+        label: status === 'expired' ? 'expired' : 'suspended',
+        title: 'Attention required'
     };
 }
 
@@ -286,15 +334,14 @@ function renderDashboard(userData) {
     loginForm.classList.add('hidden');
     signupForm.classList.add('hidden');
     dashboard.classList.remove('hidden');
-    headerSubtitle.textContent = `Welcome back, ${userData.email}`;
+    accountTitle.textContent = `Cloud account for ${userData.email}`;
+    headerSubtitle.textContent = 'Manage billing, access status and your cloud address from one place.';
 
     const accessEnabled = ['active', 'trial'].includes(userData.status);
     const statusCard = document.getElementById('statusCard');
     const statusBadge = document.getElementById('dashStatus');
-    const statusTitle = document.getElementById('dashStatusTitle');
     const billingCard = document.getElementById('billingCard');
     const tokenCard = document.getElementById('tokenCard');
-    const urlCard = document.getElementById('urlCard');
     const dashUrl = document.getElementById('dashUrl');
     const dashUrlLabel = document.getElementById('dashUrlLabel');
     const tone = getStatusTone(userData.status);
@@ -302,35 +349,27 @@ function renderDashboard(userData) {
     statusCard.className = tone.card;
     statusBadge.className = tone.badge;
     statusBadge.textContent = tone.label;
-    statusTitle.textContent = tone.title;
+    document.getElementById('dashStatusTitle').textContent = tone.title;
     document.getElementById('dashStatusDetail').textContent = getStatusMessage(userData);
-    document.getElementById('dashToken').textContent = userData.access_token || 'Hidden until access is enabled';
+    document.getElementById('dashToken').textContent = userData.access_token || 'Hidden until service is enabled';
 
     billingCard.classList.toggle('hidden', userData.status !== 'payment_pending');
     tokenCard.classList.toggle('hidden', !accessEnabled);
 
     dashUrl.textContent = `https://${userData.domain}`;
     if (accessEnabled) {
-        dashUrlLabel.textContent = 'Your Remote URL';
+        dashUrlLabel.textContent = 'Live Cloud Address';
         dashUrl.href = `https://${userData.domain}`;
         dashUrl.target = '_blank';
-        dashUrl.className = 'resource-link is-live';
-        urlCard.className = 'resource-card';
+        dashUrl.className = 'domain-link domain-link--live';
     } else {
-        dashUrlLabel.textContent = 'Reserved Domain';
+        dashUrlLabel.textContent = 'Reserved Cloud Address';
         dashUrl.href = '#';
         dashUrl.removeAttribute('target');
-        dashUrl.className = 'resource-link is-disabled';
-        urlCard.className = 'resource-card';
+        dashUrl.className = 'domain-link domain-link--disabled';
     }
-}
 
-function showLogin() {
-    dashboard.classList.add('hidden');
-    signupForm.classList.add('hidden');
-    loginForm.classList.remove('hidden');
-    headerSubtitle.textContent = 'Log in to manage your remote access and billing.';
-    hideAlert();
+    scrollToAccountShell();
 }
 
 async function verifyPayment(response, button, fallbackText) {
@@ -372,11 +411,11 @@ function openCheckout(checkout, button, fallbackText) {
         description: checkout.description,
         prefill: checkout.prefill,
         notes: checkout.notes,
-        theme: { color: '#316dff' },
+        theme: { color: '#1d4ed8' },
         modal: {
             ondismiss: () => {
                 restoreButton(button, fallbackText);
-                showAlert('Payment was not completed. You can resume it anytime from your dashboard.');
+                showAlert('Payment was not completed. You can resume it anytime from your account.');
             }
         },
         handler: async (response) => {
@@ -408,6 +447,8 @@ function openCheckout(checkout, button, fallbackText) {
 const storedUser = localStorage.getItem('apex_user');
 if (storedUser) {
     renderDashboard(JSON.parse(storedUser));
+} else {
+    openLoginView();
 }
 
 loginForm.addEventListener('submit', async (e) => {
@@ -433,7 +474,7 @@ loginForm.addEventListener('submit', async (e) => {
         localStorage.setItem('apex_user', JSON.stringify(data.data));
         renderDashboard(data.data);
         if (data.data.status === 'payment_pending') {
-            showAlert('Account found. Complete payment from your dashboard to activate remote access.');
+            showAlert('Account found. Complete payment from your account to activate remote access.');
         }
     } catch (err) {
         showAlert(err.message);
