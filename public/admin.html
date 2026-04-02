@@ -79,7 +79,7 @@
                 <div class="section-header">
                     <div>
                         <h2 class="section-title section-title--small">Customer accounts</h2>
-                        <p class="section-text">Action buttons change based on the account state so the next decision is always obvious.</p>
+                        <p class="section-text">Review the current state and apply the next service action as needed.</p>
                     </div>
                     <button id="refreshBtn" class="button button-secondary">Refresh</button>
                 </div>
@@ -90,12 +90,30 @@
     </main>
 </div>
 
+<div id="tokenModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="tokenModalTitle">
+    <div class="modal__backdrop" data-close-modal="true"></div>
+    <div class="modal__panel">
+        <div class="modal__header">
+            <div>
+                <h2 id="tokenModalTitle" class="section-title section-title--small">Access Token</h2>
+                <p id="tokenModalSubtitle" class="section-text">Issued only for enabled accounts.</p>
+            </div>
+            <button id="tokenModalClose" class="button button-secondary button-small">Close</button>
+        </div>
+        <code id="tokenModalValue" class="token-value"></code>
+    </div>
+</div>
+
 <script>
 const alertBox = document.getElementById('alertBox');
 const loginPanel = document.getElementById('loginPanel');
 const dashboard = document.getElementById('dashboard');
 const logoutBtn = document.getElementById('logoutBtn');
 const usersTableBody = document.getElementById('usersTableBody');
+const tokenModal = document.getElementById('tokenModal');
+const tokenModalClose = document.getElementById('tokenModalClose');
+const tokenModalValue = document.getElementById('tokenModalValue');
+const tokenModalSubtitle = document.getElementById('tokenModalSubtitle');
 const ADMIN_TOKEN_KEY = 'apex_admin_token';
 
 function showAlert(message, isError = true) {
@@ -148,6 +166,15 @@ function statusBadge(status) {
         expired: 'status-badge status-badge--attention'
     };
     return `<span class="${classes[status] || 'status-badge'}">${labels[status] || status.replace('_', ' ')}</span>`;
+}
+
+function statusPill(user) {
+    const badge = statusBadge(user.status);
+    if (!user.access_token) {
+        return badge;
+    }
+
+    return `<button type="button" class="status-reveal" data-user-email="${user.email}" data-access-token="${user.access_token}">${badge}</button>`;
 }
 
 function formatDate(value) {
@@ -224,7 +251,7 @@ function renderUsers(users) {
                     <div class="user-card__meta">${user.domain}</div>
                     <div class="user-card__meta">Created ${formatDate(user.created_at)}</div>
                 </div>
-                ${statusBadge(user.status)}
+                ${statusPill(user)}
             </div>
 
             <div class="user-card__sections">
@@ -239,11 +266,6 @@ function renderUsers(users) {
                     <div class="user-card__section-text">Subscription: ${user.razorpay_subscription_status || '—'}</div>
                     <div class="user-card__section-text">Sub ID: ${user.razorpay_subscription_id || '—'}</div>
                     <div class="user-card__section-text">Payment ID: ${user.razorpay_payment_id || '—'}</div>
-                </section>
-
-                <section class="user-card__section">
-                    <span class="user-card__section-label">Token</span>
-                    <code class="token-block">${user.access_token}</code>
                 </section>
             </div>
 
@@ -332,7 +354,30 @@ logoutBtn.addEventListener('click', () => {
     hideAlert();
 });
 
+function closeTokenModal() {
+    tokenModal.classList.add('hidden');
+}
+
+function openTokenModal(email, token) {
+    tokenModalSubtitle.textContent = `Active access token for ${email}`;
+    tokenModalValue.textContent = token;
+    tokenModal.classList.remove('hidden');
+}
+
+tokenModalClose.addEventListener('click', closeTokenModal);
+tokenModal.addEventListener('click', (event) => {
+    if (event.target.dataset.closeModal === 'true') {
+        closeTokenModal();
+    }
+});
+
 usersTableBody.addEventListener('click', async (event) => {
+    const reveal = event.target.closest('.status-reveal');
+    if (reveal) {
+        openTokenModal(reveal.dataset.userEmail, reveal.dataset.accessToken);
+        return;
+    }
+
     const button = event.target.closest('.admin-action');
     if (!button) return;
 

@@ -9,7 +9,7 @@ const USERS_TABLE_SCHEMA = `
         email TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
         subdomain TEXT UNIQUE NOT NULL,
-        access_token TEXT UNIQUE NOT NULL,
+        access_token TEXT UNIQUE,
         status TEXT NOT NULL CHECK(status IN ('payment_pending', 'active', 'trial', 'expired', 'suspended')),
         razorpay_customer_id TEXT,
         razorpay_subscription_id TEXT,
@@ -29,7 +29,7 @@ const USERS_TABLE_REBUILD = `
         email TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
         subdomain TEXT UNIQUE NOT NULL,
-        access_token TEXT UNIQUE NOT NULL,
+        access_token TEXT UNIQUE,
         status TEXT NOT NULL CHECK(status IN ('payment_pending', 'active', 'trial', 'expired', 'suspended')),
         razorpay_customer_id TEXT,
         razorpay_subscription_id TEXT,
@@ -105,7 +105,7 @@ function initDb() {
                 'razorpay_subscription_status',
                 'trial_approved_at',
                 'activated_at'
-            ].some((fragment) => !currentSql.includes(fragment));
+            ].some((fragment) => !currentSql.includes(fragment)) || currentSql.includes('access_token TEXT UNIQUE NOT NULL');
 
             if (!needsRebuild) {
                 console.log('Users table ready.');

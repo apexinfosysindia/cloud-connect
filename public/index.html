@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ApexOS Cloud Connect</title>
     <link rel="stylesheet" href="/styles.css">
-    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
     <link rel="icon" href="/favicon.ico">
 </head>
 <body class="portal-page">
@@ -24,8 +23,8 @@
         </div>
 
         <div class="masthead-actions">
-            <button id="topLoginBtn" class="button button-secondary">Sign In</button>
-            <button id="topSignupBtn" class="button button-primary">Create Account</button>
+            <a href="/login.html" class="button button-secondary">Sign In</a>
+            <a href="/signup.html" class="button button-primary">Create Account</a>
         </div>
     </header>
 
@@ -33,7 +32,12 @@
         <section class="hero-card">
             <span class="eyebrow">Cloud Connectivity for ApexOS</span>
             <h1 class="hero-title">Take your Apex Connect devices from local to remote.</h1>
-            <p class="hero-text">Cloud Connect brings secure remote access, service activation and account management into one experience so customers can go from local-only access to cloud-connected control without manual handover.</p>
+            <p class="hero-text">Cloud Connect extends ApexOS beyond the local network so customers can securely access devices, services and automations from anywhere through one Cloud account.</p>
+
+            <div class="hero-actions">
+                <a href="/signup.html" class="button button-primary">Get Started</a>
+                <a href="/login.html" class="button button-secondary">Open Account</a>
+            </div>
 
             <div class="summary-strip">
                 <article class="summary-item">
@@ -46,7 +50,7 @@
                 </article>
                 <article class="summary-item">
                     <span class="summary-label">Activation</span>
-                    <span class="summary-value">Account approved service</span>
+                    <span class="summary-value">Account-based service enablement</span>
                 </article>
             </div>
         </section>
@@ -54,8 +58,8 @@
         <section class="section-card">
             <div class="section-header">
                 <div>
-                    <h2 class="section-title">What you get with Cloud Connect</h2>
-                    <p class="section-text">Cloud Connect is positioned as a customer service, not a tunnel configuration screen. The experience is centered around everyday remote use, service activation and premium cloud features.</p>
+                    <h2 class="section-title">What Cloud Connect includes</h2>
+                    <p class="section-text">Cloud Connect is positioned as a customer service for secure remote access and premium cloud capabilities.</p>
                 </div>
             </div>
 
@@ -66,11 +70,11 @@
                 </article>
                 <article class="feature-card">
                     <h3 class="feature-card__title">Security and privacy</h3>
-                    <p class="feature-card__text">Each account is activated through billing or service approval, with access tied to customer identity and account state rather than exposed credentials.</p>
+                    <p class="feature-card__text">Each account is activated through billing or service approval, with remote access tied to customer identity and account state.</p>
                 </article>
-                <article class="feature-card">
+                <article class="feature-card feature-card--accent">
                     <h3 class="feature-card__title">Simple annual pricing</h3>
-                    <p class="feature-card__text">Annual pricing is shown during secure checkout before activation. Your cloud address is reserved during signup and service starts once the account is enabled.</p>
+                    <p class="feature-card__text">Annual pricing is shown during secure checkout. Your cloud address is reserved during signup and service starts once the account is enabled.</p>
                 </article>
                 <article class="feature-card">
                     <h3 class="feature-card__title">Voice assistant connectivity</h3>
@@ -82,446 +86,19 @@
                 </article>
                 <article class="feature-card">
                     <h3 class="feature-card__title">Automation webhooks</h3>
-                    <p class="feature-card__text">Use webhooks to notify external systems and trigger automations without exposing your local network directly to the internet.</p>
+                    <p class="feature-card__text">Use webhooks to trigger automations and notify external systems without exposing your local network directly to the internet.</p>
                 </article>
                 <article class="feature-card">
                     <h3 class="feature-card__title">Improved camera streaming</h3>
                     <p class="feature-card__text">Get improved camera streaming with WebRTC for faster live views and a better remote monitoring experience.</p>
                 </article>
-                <article class="feature-card feature-card--accent">
+                <article class="feature-card">
                     <h3 class="feature-card__title">One cloud account</h3>
-                    <p class="feature-card__text">Account access, billing state, service approval and your reserved cloud address all stay together in a single customer account.</p>
+                    <p class="feature-card__text">Account access, billing state, service approval and your reserved cloud address stay together in one customer account.</p>
                 </article>
             </div>
-        </section>
-
-        <section id="account-shell" class="section-card account-shell">
-            <div class="account-shell__header">
-                <div>
-                    <span class="eyebrow eyebrow--light">Cloud Account</span>
-                    <h2 id="accountTitle" class="section-title">Sign in or create your Cloud account</h2>
-                    <p id="headerSubtitle" class="section-text">Log in to manage your remote access and billing.</p>
-                </div>
-            </div>
-
-            <div id="alertBox" class="alert"></div>
-
-            <form id="loginForm" class="stack">
-                <div class="field">
-                    <label class="field-label" for="loginEmail">Email Address</label>
-                    <input class="input" type="email" id="loginEmail" autocomplete="email" required>
-                </div>
-
-                <div class="field">
-                    <label class="field-label" for="loginPassword">Password</label>
-                    <input class="input" type="password" id="loginPassword" autocomplete="current-password" required>
-                </div>
-
-                <button type="submit" id="loginBtn" class="button button-primary button-full">Sign In</button>
-
-                <p class="link-row">Don't have an account? <a href="#account-shell" id="showSignupLink" class="link-inline">Create one</a></p>
-            </form>
-
-            <form id="signupForm" class="stack hidden">
-                <div class="field">
-                    <label class="field-label" for="signupEmail">Email Address</label>
-                    <input class="input" type="email" id="signupEmail" autocomplete="email" required>
-                </div>
-
-                <div class="field">
-                    <label class="field-label" for="signupPassword">Create Password</label>
-                    <input class="input" type="password" id="signupPassword" autocomplete="new-password" minlength="6" required>
-                </div>
-
-                <div class="field">
-                    <label class="field-label" for="signupSubdomain">Desired Cloud Address</label>
-                    <div class="segment">
-                        <input class="segment-input" type="text" id="signupSubdomain" placeholder="my-home" required>
-                        <span class="segment-suffix">.cloud.apexinfosys.in</span>
-                    </div>
-                    <p class="field-hint">Use 3-20 lowercase letters, numbers or hyphens.</p>
-                </div>
-
-                <button type="submit" id="signupBtn" class="button button-primary button-full">Create Account and Pay</button>
-
-                <p class="link-row">Already have an account? <a href="#account-shell" id="showLoginLink" class="link-inline">Sign in</a></p>
-            </form>
-
-            <section id="dashboard" class="dashboard-grid hidden">
-                <article id="statusCard" class="status-card">
-                    <div class="status-meta">
-                        <div>
-                            <span class="status-label">Account Status</span>
-                            <div id="dashStatusTitle" class="status-title">Cloud account</div>
-                        </div>
-                        <span id="dashStatus" class="status-badge">pending</span>
-                    </div>
-                    <p id="dashStatusDetail" class="status-text"></p>
-                </article>
-
-                <div class="detail-grid">
-                    <article id="billingCard" class="detail-card hidden">
-                        <span class="detail-label">Next Step</span>
-                        <p class="detail-copy">Your cloud address is reserved, but billing must be completed before remote access is enabled.</p>
-                        <button id="payNowBtn" class="button button-warning button-full">Complete Payment</button>
-                    </article>
-
-                    <article id="tokenCard" class="detail-card hidden">
-                        <span class="detail-label">Access Token</span>
-                        <code id="dashToken" class="token-value"></code>
-                        <p class="detail-copy">Paste this into the <strong>Access Token</strong> field in your ApexOS add-on.</p>
-                    </article>
-
-                    <article id="urlCard" class="detail-card">
-                        <span id="dashUrlLabel" class="detail-label">Cloud Address</span>
-                        <a id="dashUrl" href="#" class="domain-link domain-link--disabled"></a>
-                        <p class="detail-copy">This address becomes available as soon as the account is enabled.</p>
-                    </article>
-                </div>
-
-                <button id="logoutBtn" class="button button-secondary button-full">Log Out</button>
-            </section>
         </section>
     </main>
 </div>
-
-<script>
-const loginForm = document.getElementById('loginForm');
-const signupForm = document.getElementById('signupForm');
-const dashboard = document.getElementById('dashboard');
-const headerSubtitle = document.getElementById('headerSubtitle');
-const accountTitle = document.getElementById('accountTitle');
-const alertBox = document.getElementById('alertBox');
-const accountShell = document.getElementById('account-shell');
-
-function scrollToAccountShell() {
-    accountShell.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-
-function openSignupView() {
-    loginForm.classList.add('hidden');
-    signupForm.classList.remove('hidden');
-    dashboard.classList.add('hidden');
-    accountTitle.textContent = 'Create your Cloud account';
-    headerSubtitle.textContent = 'Reserve your cloud address and complete billing to enable remote access.';
-    hideAlert();
-    scrollToAccountShell();
-}
-
-function openLoginView() {
-    signupForm.classList.add('hidden');
-    loginForm.classList.remove('hidden');
-    dashboard.classList.add('hidden');
-    accountTitle.textContent = 'Sign in to your Cloud account';
-    headerSubtitle.textContent = 'Log in to manage your remote access and billing.';
-    hideAlert();
-    scrollToAccountShell();
-}
-
-document.getElementById('topSignupBtn').addEventListener('click', openSignupView);
-document.getElementById('topLoginBtn').addEventListener('click', openLoginView);
-
-document.getElementById('showSignupLink').addEventListener('click', (e) => {
-    e.preventDefault();
-    openSignupView();
-});
-
-document.getElementById('showLoginLink').addEventListener('click', (e) => {
-    e.preventDefault();
-    openLoginView();
-});
-
-document.getElementById('logoutBtn').addEventListener('click', () => {
-    localStorage.removeItem('apex_user');
-    openLoginView();
-});
-
-document.getElementById('payNowBtn').addEventListener('click', async () => {
-    const storedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
-    if (!storedUser) {
-        showAlert('Please log in again to continue payment.');
-        return;
-    }
-
-    const button = document.getElementById('payNowBtn');
-    const originalText = button.textContent;
-    button.textContent = 'Preparing Checkout...';
-    button.disabled = true;
-    hideAlert();
-
-    try {
-        const res = await fetch('/api/billing/create-checkout', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ portal_session_token: storedUser.portal_session_token })
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error);
-
-        localStorage.setItem('apex_user', JSON.stringify(data.data));
-        renderDashboard(data.data);
-        openCheckout(data.checkout, button, originalText);
-    } catch (err) {
-        showAlert(err.message);
-        restoreButton(button, originalText);
-    }
-});
-
-function showAlert(message, isError = true) {
-    alertBox.textContent = message;
-    alertBox.className = `alert is-visible ${isError ? 'is-error' : 'is-success'}`;
-}
-
-function hideAlert() {
-    alertBox.className = 'alert';
-}
-
-function restoreButton(button, fallbackText) {
-    if (!button) return;
-    button.textContent = fallbackText;
-    button.disabled = false;
-}
-
-function getStatusMessage(userData) {
-    if (userData.status === 'payment_pending') {
-        return 'Billing is pending. Remote access remains unavailable until the account is enabled.';
-    }
-    if (userData.status === 'trial') {
-        return userData.trial_ends_at
-            ? `Access is active for this account until ${new Date(userData.trial_ends_at).toLocaleDateString()}.`
-            : 'Access is active for this account.';
-    }
-    if (userData.status === 'active') {
-        return 'Remote access is active and this account is ready to use.';
-    }
-    if (userData.status === 'expired') {
-        return 'Service has expired. Renew billing to restore remote access.';
-    }
-    if (userData.status === 'suspended') {
-        return 'Service is suspended. Contact support or update billing to restore access.';
-    }
-    return 'Unknown account state.';
-}
-
-function getStatusTone(status) {
-    if (status === 'payment_pending') {
-        return {
-            card: 'status-card status-card--pending',
-            badge: 'status-badge status-badge--pending',
-            label: 'pending',
-            title: 'Activation pending'
-        };
-    }
-
-    if (status === 'trial' || status === 'active') {
-        return {
-            card: 'status-card status-card--active',
-            badge: 'status-badge status-badge--active',
-            label: 'active',
-            title: 'Remote access is live'
-        };
-    }
-
-    return {
-        card: 'status-card status-card--attention',
-        badge: 'status-badge status-badge--attention',
-        label: status === 'expired' ? 'expired' : 'suspended',
-        title: 'Attention required'
-    };
-}
-
-function renderDashboard(userData) {
-    loginForm.classList.add('hidden');
-    signupForm.classList.add('hidden');
-    dashboard.classList.remove('hidden');
-    accountTitle.textContent = `Cloud account for ${userData.email}`;
-    headerSubtitle.textContent = 'Manage billing, access status and your cloud address from one place.';
-
-    const accessEnabled = ['active', 'trial'].includes(userData.status);
-    const statusCard = document.getElementById('statusCard');
-    const statusBadge = document.getElementById('dashStatus');
-    const billingCard = document.getElementById('billingCard');
-    const tokenCard = document.getElementById('tokenCard');
-    const dashUrl = document.getElementById('dashUrl');
-    const dashUrlLabel = document.getElementById('dashUrlLabel');
-    const tone = getStatusTone(userData.status);
-
-    statusCard.className = tone.card;
-    statusBadge.className = tone.badge;
-    statusBadge.textContent = tone.label;
-    document.getElementById('dashStatusTitle').textContent = tone.title;
-    document.getElementById('dashStatusDetail').textContent = getStatusMessage(userData);
-    document.getElementById('dashToken').textContent = userData.access_token || 'Hidden until service is enabled';
-
-    billingCard.classList.toggle('hidden', userData.status !== 'payment_pending');
-    tokenCard.classList.toggle('hidden', !accessEnabled);
-
-    dashUrl.textContent = `https://${userData.domain}`;
-    if (accessEnabled) {
-        dashUrlLabel.textContent = 'Live Cloud Address';
-        dashUrl.href = `https://${userData.domain}`;
-        dashUrl.target = '_blank';
-        dashUrl.className = 'domain-link domain-link--live';
-    } else {
-        dashUrlLabel.textContent = 'Reserved Cloud Address';
-        dashUrl.href = '#';
-        dashUrl.removeAttribute('target');
-        dashUrl.className = 'domain-link domain-link--disabled';
-    }
-
-    scrollToAccountShell();
-}
-
-async function verifyPayment(response, button, fallbackText) {
-    const res = await fetch('/api/billing/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(response)
-    });
-
-    const data = await res.json();
-    if (!res.ok) {
-        restoreButton(button, fallbackText);
-        throw new Error(data.error);
-    }
-
-    localStorage.setItem('apex_user', JSON.stringify(data.data));
-    renderDashboard(data.data);
-    restoreButton(button, fallbackText);
-    showAlert('Payment successful. Remote access is now active.', false);
-}
-
-function openCheckout(checkout, button, fallbackText) {
-    if (!checkout) {
-        restoreButton(button, fallbackText);
-        showAlert('Billing session was not created. Please try again later.');
-        return;
-    }
-
-    if (!window.Razorpay) {
-        restoreButton(button, fallbackText);
-        showAlert('Razorpay Checkout failed to load. Please refresh and try again.');
-        return;
-    }
-
-    const razorpay = new window.Razorpay({
-        key: checkout.key,
-        subscription_id: checkout.subscription_id,
-        name: checkout.name,
-        description: checkout.description,
-        prefill: checkout.prefill,
-        notes: checkout.notes,
-        theme: { color: '#1d4ed8' },
-        modal: {
-            ondismiss: () => {
-                restoreButton(button, fallbackText);
-                showAlert('Payment was not completed. You can resume it anytime from your account.');
-            }
-        },
-        handler: async (response) => {
-            try {
-                await verifyPayment(response, button, fallbackText);
-            } catch (err) {
-                showAlert(err.message);
-            }
-        }
-    });
-
-    razorpay.on('payment.failed', (response) => {
-        const error = response?.error || {};
-        const detailParts = [
-            error.description,
-            error.reason,
-            error.source,
-            error.step
-        ].filter(Boolean);
-
-        restoreButton(button, fallbackText);
-        showAlert(detailParts.length > 0 ? detailParts.join(' | ') : 'Razorpay reported a payment failure.');
-        console.error('Razorpay payment failed:', response);
-    });
-
-    razorpay.open();
-}
-
-const storedUser = localStorage.getItem('apex_user');
-if (storedUser) {
-    renderDashboard(JSON.parse(storedUser));
-} else {
-    openLoginView();
-}
-
-loginForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const btn = document.getElementById('loginBtn');
-    btn.textContent = 'Signing In...';
-    btn.disabled = true;
-    hideAlert();
-
-    try {
-        const res = await fetch('/api/auth/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                email: document.getElementById('loginEmail').value,
-                password: document.getElementById('loginPassword').value
-            })
-        });
-
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error);
-
-        localStorage.setItem('apex_user', JSON.stringify(data.data));
-        renderDashboard(data.data);
-        if (data.data.status === 'payment_pending') {
-            showAlert('Account found. Complete payment from your account to activate remote access.');
-        }
-    } catch (err) {
-        showAlert(err.message);
-    } finally {
-        btn.textContent = 'Sign In';
-        btn.disabled = false;
-    }
-});
-
-signupForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const btn = document.getElementById('signupBtn');
-    const defaultText = 'Create Account and Pay';
-    btn.textContent = 'Creating Account...';
-    btn.disabled = true;
-    hideAlert();
-
-    const subdomain = document.getElementById('signupSubdomain').value;
-    if (!/^[a-z0-9\-]{3,20}$/.test(subdomain)) {
-        showAlert('Subdomain can only contain lowercase letters, numbers, and hyphens (3-20 chars).');
-        restoreButton(btn, defaultText);
-        return;
-    }
-
-    try {
-        const res = await fetch('/api/auth/signup', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                email: document.getElementById('signupEmail').value,
-                password: document.getElementById('signupPassword').value,
-                subdomain
-            })
-        });
-
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error);
-
-        localStorage.setItem('apex_user', JSON.stringify(data.data));
-        renderDashboard(data.data);
-        showAlert(data.message, false);
-        openCheckout(data.checkout, btn, defaultText);
-    } catch (err) {
-        showAlert(err.message);
-        restoreButton(btn, defaultText);
-    }
-});
-</script>
 </body>
 </html>
