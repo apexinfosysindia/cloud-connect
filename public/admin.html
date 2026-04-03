@@ -29,11 +29,6 @@
     </header>
 
     <main class="admin-main">
-        <section class="section-card admin-intro-card">
-            <h1 class="section-title">Customer accounts, billing state and service activation.</h1>
-            <p class="section-text">Review each customer account, inspect subscription records and apply only the actions that make sense for the current service state.</p>
-        </section>
-
         <div id="alertBox" class="alert"></div>
 
         <section id="loginPanel" class="section-card admin-login-card">
@@ -119,10 +114,16 @@ const ADMIN_TOKEN_KEY = 'apex_admin_token';
 
 function showAlert(message, isError = true) {
     alertBox.textContent = message;
+    window.clearTimeout(showAlert.dismissTimer);
     alertBox.className = `alert is-visible ${isError ? 'is-error' : 'is-success'}`;
+
+    showAlert.dismissTimer = window.setTimeout(() => {
+        hideAlert();
+    }, 3500);
 }
 
 function hideAlert() {
+    window.clearTimeout(showAlert.dismissTimer);
     alertBox.className = 'alert';
 }
 
@@ -234,30 +235,19 @@ function getActionButtons(user) {
     if (user.status === 'trial') {
         return [
             buildActionButton(user, 'Activate', 'active'),
-            buildActionButton(user, 'Suspend', 'suspended'),
-            buildActionButton(user, 'Expire', 'expired')
+            buildActionButton(user, 'Suspend', 'suspended')
         ];
     }
 
     if (user.status === 'active') {
         return [
-            buildActionButton(user, 'Suspend', 'suspended'),
-            buildActionButton(user, 'Expire', 'expired')
+            buildActionButton(user, 'Suspend', 'suspended')
         ];
     }
 
     if (user.status === 'suspended') {
         return [
-            buildActionButton(user, 'Activate', 'active'),
-            buildActionButton(user, 'Require Payment', 'payment_pending'),
-            buildActionButton(user, 'Expire', 'expired')
-        ];
-    }
-
-    if (user.status === 'expired') {
-        return [
-            buildActionButton(user, 'Activate', 'active'),
-            buildActionButton(user, 'Require Payment', 'payment_pending')
+            buildActionButton(user, 'Activate', 'active')
         ];
     }
 
@@ -275,37 +265,79 @@ function renderUsers(users) {
     usersTableBody.innerHTML = users.map((user) => {
         const accessSummary = getAccessSummary(user);
         return `
-        <article class="user-card">
-            <div class="user-card__top">
+        <article class="user-card" data-user-card>
+            <button type="button" class="user-card__summary" data-card-toggle>
                 <div class="user-card__identity">
                     <div class="user-card__name">${user.email}</div>
-                    <div class="user-card__meta">${user.domain}</div>
-                    <div class="user-card__meta">Created ${formatDate(user.created_at)}</div>
+                    <div class="user-card__meta">${user.domain || 'Cloud address not set'}</div>
                 </div>
-                ${statusPill(user)}
-            </div>
+                <div class="user-card__summary-right">
+                    <span class="user-card__chevron" aria-hidden="true">▾</span>
+                </div>
+            </button>
 
-            <div class="user-card__sections">
-                <section class="user-card__section">
-                    <span class="user-card__section-label">Access</span>
-                    <div class="user-card__section-text">State: ${accessSummary.state}</div>
-                    <div class="user-card__section-text">${accessSummary.detail}</div>
-                </section>
+            <div class="user-card__details">
+                <div class="user-card__details-head">
+                    <div class="user-card__section-text">Status: ${statusPill(user)}</div>
+                </div>
+                <div class="user-card__meta">Created ${formatDate(user.created_at)}</div>
 
-                <section class="user-card__section">
-                    <span class="user-card__section-label">Billing</span>
-                    <div class="user-card__section-text">Subscription: ${user.razorpay_subscription_status || '—'}</div>
-                    <div class="user-card__section-text">Sub ID: ${user.razorpay_subscription_id || '—'}</div>
-                    <div class="user-card__section-text">Payment ID: ${user.razorpay_payment_id || '—'}</div>
-                </section>
-            </div>
+                <div class="user-card__sections">
+                    <section class="user-card__section">
+                        <span class="user-card__section-label">Access</span>
+                        <div class="user-card__section-text">State: ${accessSummary.state}</div>
+                        <div class="user-card__section-text">${accessSummary.detail}</div>
+                    </section>
 
-            <div class="action-row">
-                ${getActionButtons(user).join('')}
+                    <section class="user-card__section">
+                        <span class="user-card__section-label">Billing</span>
+                        <div class="user-card__section-text">Subscription: ${user.razorpay_subscription_status || 'Pending/Not linked yet'}</div>
+                        <div class="user-card__section-text">Sub ID: ${user.razorpay_subscription_id || 'Pending/Not linked yet'}</div>
+                        <div class="user-card__section-text">Payment ID: ${user.razorpay_payment_id || 'Pending/Not captured yet'}</div>
+                    </section>
+                </div>
+
+                <div class="action-row">
+                    ${getActionButtons(user).join('')}
+                </div>
             </div>
         </article>
     `;
     }).join('');
+}
+
+function applyRealtimeUserUpdate(user) {
+    if (!user) return;
+    const userCards = Array.from(usersTableBody.querySelectorAll('[data-user-card]'));
+
+    for (const card of userCards) {
+        const emailNode = card.querySelector('.user-card__name');
+        if (!emailNode || emailNode.textContent !== user.email) {
+            continue;
+        }
+
+        const statusContainer = card.querySelector('.user-card__details-head .user-card__section-text');
+        if (statusContainer) {
+            statusContainer.innerHTML = `Status: ${statusPill(user)}`;
+        }
+
+        const accessSectionTexts = card.querySelectorAll('.user-card__section:nth-of-type(1) .user-card__section-text');
+        const accessSummary = getAccessSummary(user);
+        if (accessSectionTexts[0]) accessSectionTexts[0].textContent = `State: ${accessSummary.state}`;
+        if (accessSectionTexts[1]) accessSectionTexts[1].textContent = accessSummary.detail;
+
+        const billingSectionTexts = card.querySelectorAll('.user-card__section:nth-of-type(2) .user-card__section-text');
+        if (billingSectionTexts[0]) billingSectionTexts[0].textContent = `Subscription: ${user.razorpay_subscription_status || 'Pending/Not linked yet'}`;
+        if (billingSectionTexts[1]) billingSectionTexts[1].textContent = `Sub ID: ${user.razorpay_subscription_id || 'Pending/Not linked yet'}`;
+        if (billingSectionTexts[2]) billingSectionTexts[2].textContent = `Payment ID: ${user.razorpay_payment_id || 'Pending/Not captured yet'}`;
+
+        const actionRow = card.querySelector('.action-row');
+        if (actionRow) {
+            actionRow.innerHTML = getActionButtons(user).join('');
+        }
+
+        break;
+    }
 }
 
 async function loadUsers() {
@@ -314,13 +346,15 @@ async function loadUsers() {
 }
 
 async function applyStatus(userId, status, trialDays) {
-    await api(`/api/admin/users/${userId}/status`, {
+    const response = await api(`/api/admin/users/${userId}/status`, {
         method: 'POST',
         body: {
             status,
             trial_days: trialDays ? Number(trialDays) : undefined
         }
     });
+
+    applyRealtimeUserUpdate(response.user);
     await loadUsers();
     showAlert('User updated successfully.', false);
 }
@@ -412,7 +446,18 @@ tokenModal.addEventListener('click', (event) => {
 usersTableBody.addEventListener('click', async (event) => {
     const reveal = event.target.closest('.status-reveal');
     if (reveal) {
+        event.preventDefault();
+        event.stopPropagation();
         openTokenModal(reveal.dataset.userEmail, reveal.dataset.accessToken);
+        return;
+    }
+
+    const toggle = event.target.closest('[data-card-toggle]');
+    if (toggle) {
+        const card = toggle.closest('[data-user-card]');
+        if (card) {
+            card.classList.toggle('is-expanded');
+        }
         return;
     }
 

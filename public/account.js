@@ -21,6 +21,9 @@
     const loginTitle = `Sign In | ${portalBrandTitle}`;
     const signupTitle = `Create Account | ${portalBrandTitle}`;
     const dashboardTitle = `Account | ${portalBrandTitle}`;
+    const ACCOUNT_REFRESH_MS = 2000;
+    let accountRefreshTimer = null;
+    let accountRefreshInFlight = false;
 
     function scrollToAccountShell() {
         accountShell.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -28,10 +31,16 @@
 
     function showAlert(message, isError = true) {
         alertBox.textContent = message;
+        window.clearTimeout(showAlert.dismissTimer);
         alertBox.className = `alert is-visible ${isError ? 'is-error' : 'is-success'}`;
+
+        showAlert.dismissTimer = window.setTimeout(() => {
+            hideAlert();
+        }, 3500);
     }
 
     function hideAlert() {
+        window.clearTimeout(showAlert.dismissTimer);
         alertBox.className = 'alert';
     }
 
@@ -72,6 +81,7 @@
     }
 
     function clearSessionAndShowAuth() {
+        stopAccountAutoRefresh();
         localStorage.removeItem('apex_user');
         setHeaderState(null);
 
@@ -83,6 +93,7 @@
     }
 
     function showLoginView() {
+        stopAccountAutoRefresh();
         if (signupForm) signupForm.classList.add('hidden');
         if (loginForm) loginForm.classList.remove('hidden');
         if (dashboard) dashboard.classList.add('hidden');
@@ -95,6 +106,7 @@
     }
 
     function showSignupView() {
+        stopAccountAutoRefresh();
         if (loginForm) loginForm.classList.add('hidden');
         if (signupForm) signupForm.classList.remove('hidden');
         if (dashboard) dashboard.classList.add('hidden');
@@ -154,7 +166,8 @@
         };
     }
 
-    function renderDashboard(userData) {
+    function renderDashboard(userData, options = {}) {
+        const shouldScroll = options.scroll !== false;
         if (loginForm) loginForm.classList.add('hidden');
         if (signupForm) signupForm.classList.add('hidden');
         dashboard.classList.remove('hidden');
@@ -220,8 +233,64 @@
             }
         }
 
-        scrollToAccountShell();
+        if (shouldScroll) {
+            scrollToAccountShell();
+        }
+
+        startAccountAutoRefresh();
     }
+
+    function stopAccountAutoRefresh() {
+        if (accountRefreshTimer) {
+            window.clearInterval(accountRefreshTimer);
+            accountRefreshTimer = null;
+        }
+        accountRefreshInFlight = false;
+    }
+
+    async function refreshAccountState({ silent = true } = {}) {
+        if (accountRefreshInFlight) {
+            return;
+        }
+
+        const storedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
+        if (!storedUser?.portal_session_token) {
+            stopAccountAutoRefresh();
+            return;
+        }
+
+        accountRefreshInFlight = true;
+        try {
+            const res = await fetch('/api/account/me', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ portal_session_token: storedUser.portal_session_token })
+            });
+
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Unable to refresh account status');
+
+            localStorage.setItem('apex_user', JSON.stringify(data.data));
+            renderDashboard(data.data, { scroll: false });
+        } catch (err) {
+            if (!silent) {
+                showAlert(err.message);
+            }
+        } finally {
+            accountRefreshInFlight = false;
+        }
+    }
+
+    function startAccountAutoRefresh() {
+        stopAccountAutoRefresh();
+        accountRefreshTimer = window.setInterval(() => {
+            refreshAccountState({ silent: true });
+        }, ACCOUNT_REFRESH_MS);
+    }
+
+    window.addEventListener('beforeunload', () => {
+        stopAccountAutoRefresh();
+    });
 
     async function verifyPayment(response, button, fallbackText) {
         const res = await fetch('/api/billing/verify', {
@@ -469,6 +538,13 @@
     const storedUser = localStorage.getItem('apex_user');
     if (storedUser) {
         renderDashboard(JSON.parse(storedUser));
+        refreshAccountState({ silent: true });
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                refreshAccountState({ silent: true });
+            }
+        });
     } else if (pageMode === 'signup') {
         showSignupView();
     } else {
