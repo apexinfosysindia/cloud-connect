@@ -407,11 +407,12 @@ function verifyWebhookSignature(rawBody, signature) {
 function extractWebhookSubscriptionInfo(payload) {
     const subscription = payload?.payload?.subscription?.entity || payload?.payload?.subscription || null;
     const payment = payload?.payload?.payment?.entity || payload?.payload?.payment || null;
+    const invoice = payload?.payload?.invoice?.entity || payload?.payload?.invoice || null;
 
     return {
         subscriptionId: subscription?.id || payment?.subscription_id || null,
         subscriptionStatus: subscription?.status || null,
-        paymentId: payment?.id || null
+        paymentId: payment?.id || invoice?.payment_id || null
     };
 }
 
@@ -468,10 +469,8 @@ async function updateUserStatus(userId, status, options = {}) {
         trialEndsAt = null;
         trialApprovedAt = null;
         activatedAt = null;
-        accessToken = null;
     } else if (status === 'expired' || status === 'suspended') {
         trialEndsAt = null;
-        accessToken = null;
     }
 
     await dbRun(
@@ -630,6 +629,33 @@ app.post('/api/account/subdomain', async (req, res) => {
     } catch (error) {
         console.error('SUBDOMAIN UPDATE ERROR:', error);
         return res.status(500).json({ error: 'Unable to save cloud address right now.' });
+    }
+});
+
+app.post('/api/account/me', async (req, res) => {
+    const { portal_session_token } = req.body;
+
+    if (!portal_session_token) {
+        return res.status(400).json({ error: 'Portal session token is required' });
+    }
+
+    try {
+        const session = verifyPortalSessionToken(portal_session_token);
+        if (!session) {
+            return res.status(401).json({ error: 'Invalid portal session. Please log in again.' });
+        }
+
+        const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [session.email]);
+        if (!user) {
+            return res.status(404).json({ error: 'Account not found' });
+        }
+
+        return res.status(200).json({
+            data: serializeUser(user)
+        });
+    } catch (error) {
+        console.error('ACCOUNT ME ERROR:', error);
+        return res.status(500).json({ error: 'Unable to load account details right now.' });
     }
 });
 
@@ -822,7 +848,7 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
 app.post('/api/admin/users/:id/status', requireAdmin, async (req, res) => {
     const { id } = req.params;
     const { status, trial_days } = req.body;
-    const allowedStatuses = ['payment_pending', 'active', 'trial', 'expired', 'suspended'];
+    const allowedStatuses = ['active', 'trial', 'suspended'];
 
     if (!allowedStatuses.includes(status)) {
         return res.status(400).json({ error: 'Invalid status' });
@@ -895,18 +921,25 @@ app.post('/api/internal/verify-token', async (req, res) => {
     const reject = (reason) => res.status(200).json({ reject: true, reject_reason: reason });
     const accept = () => res.status(200).json({ reject: false, unchange: true });
 
-    if (op !== 'Login') {
+    const opsRequiringTokenValidation = new Set(['Login', 'Ping', 'NewWorkConn', 'NewUserConn']);
+    if (!opsRequiringTokenValidation.has(op)) {
         return accept();
     }
 
-    const token = content?.metas?.token ||
-        content?.meta?.token ||
-        content?.client_token ||
-        content?.user ||
-        content?.token ||
-        content?.metadatas?.token ||
-        (content?.custom_dict && content?.custom_dict.token) ||
-        (content?.run_id && content.run_id);
+    const tokenCandidates = [
+        content?.metas?.token,
+        content?.user?.metas?.token,
+        content?.meta?.token,
+        content?.user?.meta?.token,
+        content?.client_token,
+        typeof content?.user === 'string' ? content.user : null,
+        content?.token,
+        content?.metadatas?.token,
+        content?.custom_dict?.token,
+        content?.run_id
+    ];
+
+    const token = tokenCandidates.find((candidate) => typeof candidate === 'string' && candidate.length > 0);
 
     if (!token) {
         console.error('Token not found in payload:', JSON.stringify(content, null, 2));

@@ -24,4 +24,4 @@ auth.token = "apexcloud_transport_v1"
 name = "user-auth"
 addr = "127.0.0.1:3000"
 path = "/api/internal/verify-token"
-ops = ["Login"]
+ops = ["Login", "Ping", "NewWorkConn", "NewUserConn"]
