@@ -48,6 +48,8 @@ body {
 body.portal-page,
 body.admin-page {
     padding: 20px 0 28px;
+    display: flex;
+    flex-direction: column;
 }
 
 a {
@@ -76,6 +78,13 @@ code {
 .page-shell {
     width: min(1180px, calc(100% - 32px));
     margin: 0 auto;
+    flex: 1;
+}
+
+.page-shell--admin {
+    width: 100%;
+    max-width: 100%;
+    padding: 0 16px;
 }
 
 .page-shell--portal,
@@ -192,8 +201,11 @@ code {
     gap: 20px;
 }
 
+.portal-main,
 .auth-main {
+    flex: 1;
     display: flex;
+    flex-direction: column;
     justify-content: center;
 }
 
@@ -389,6 +401,7 @@ code {
 
 .auth-page .auth-main {
     justify-content: center;
+    align-items: center;
 }
 
 .auth-page .section-title {
