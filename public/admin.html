@@ -52,19 +52,19 @@
 
         <section id="dashboard" class="admin-dashboard hidden">
             <div class="stats-grid">
-                <article class="stat-card">
+                <article class="stat-card stat-card--pending">
                     <span class="stat-label">Pending Payment</span>
                     <span id="countPending" class="stat-value">0</span>
                 </article>
-                <article class="stat-card">
+                <article class="stat-card stat-card--trial">
                     <span class="stat-label">Approved</span>
                     <span id="countTrial" class="stat-value">0</span>
                 </article>
-                <article class="stat-card">
+                <article class="stat-card stat-card--active">
                     <span class="stat-label">Active</span>
                     <span id="countActive" class="stat-value">0</span>
                 </article>
-                <article class="stat-card">
+                <article class="stat-card stat-card--suspended">
                     <span class="stat-label">Suspended / Expired</span>
                     <span id="countDisabled" class="stat-value">0</span>
                 </article>
@@ -272,14 +272,12 @@ function renderUsers(users) {
                     <div class="user-card__meta">${user.domain || 'Cloud address not set'}</div>
                 </div>
                 <div class="user-card__summary-right">
+                    ${statusPill(user)}
                     <span class="user-card__chevron" aria-hidden="true">▾</span>
                 </div>
             </button>
 
             <div class="user-card__details">
-                <div class="user-card__details-head">
-                    <div class="user-card__section-text">Status: ${statusPill(user)}</div>
-                </div>
                 <div class="user-card__meta">Created ${formatDate(user.created_at)}</div>
 
                 <div class="user-card__sections">
@@ -316,9 +314,10 @@ function applyRealtimeUserUpdate(user) {
             continue;
         }
 
-        const statusContainer = card.querySelector('.user-card__details-head .user-card__section-text');
+        const statusContainer = card.querySelector('.user-card__summary-right');
         if (statusContainer) {
-            statusContainer.innerHTML = `Status: ${statusPill(user)}`;
+            const chevron = statusContainer.querySelector('.user-card__chevron').outerHTML;
+            statusContainer.innerHTML = `${statusPill(user)}${chevron}`;
         }
 
         const accessSectionTexts = card.querySelectorAll('.user-card__section:nth-of-type(1) .user-card__section-text');
