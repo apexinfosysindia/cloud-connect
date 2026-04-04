@@ -81,12 +81,6 @@ code {
     flex: 1;
 }
 
-.page-shell--admin {
-    width: 100%;
-    max-width: 100%;
-    padding: 0 16px;
-}
-
 .page-shell--portal,
 .page-shell--admin {
     display: flex;
@@ -202,7 +196,8 @@ code {
 }
 
 .portal-main,
-.auth-main {
+.auth-main,
+.admin-main {
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -523,12 +518,34 @@ code {
 
 .admin-page .stats-grid {
     gap: 12px;
-    width: min(960px, 100%);
-    margin: 0 auto;
+    width: 100%;
+    margin: 0;
 }
 
 .admin-page .stat-card {
     padding: 16px;
+    border-top: 3px solid var(--line);
+    background: var(--surface);
+}
+
+.admin-page .stat-card--pending {
+    border-top-color: #f5d0a7;
+    background: linear-gradient(180deg, #fffcf8 0%, var(--surface) 20%);
+}
+
+.admin-page .stat-card--trial {
+    border-top-color: #a5b4fc;
+    background: linear-gradient(180deg, #f5f3ff 0%, var(--surface) 20%);
+}
+
+.admin-page .stat-card--active {
+    border-top-color: #5eead4;
+    background: linear-gradient(180deg, #f0fdfa 0%, var(--surface) 20%);
+}
+
+.admin-page .stat-card--suspended {
+    border-top-color: #fca5a5;
+    background: linear-gradient(180deg, #fef2f2 0%, var(--surface) 20%);
 }
 
 .admin-page .stat-value {
@@ -541,8 +558,8 @@ code {
 }
 
 .admin-page .user-section {
-    width: min(960px, 100%);
-    margin: 0 auto;
+    width: 100%;
+    margin: 0;
 }
 
 .admin-page .user-card {
@@ -894,6 +911,8 @@ code {
     display: flex;
     flex-direction: column;
     gap: 20px;
+    width: min(960px, 100%);
+    margin: 0 auto;
 }
 
 .stats-grid {
