@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <title>500 Internal Server Error | Apex Infosys</title>
+
+  <link href="https://fonts.googleapis.com/css?family=Montserrat:400,700,900" rel="stylesheet" />
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      font-family: "Montserrat", sans-serif;
+      background: #f6f7fb;
+      color: #111;
+    }
+
+    .notfound {
+      width: 100%;
+      max-width: 760px;
+      text-align: center;
+      background: #fff;
+      border-radius: 16px;
+      padding: 48px 28px;
+      box-shadow: 0 10px 35px rgba(0, 0, 0, 0.08);
+    }
+
+    .notfound-404 h1 {
+      margin: 0 0 10px;
+      font-size: clamp(72px, 16vw, 150px);
+      line-height: 1;
+      font-weight: 900;
+      color: #d32f2f;
+      letter-spacing: 2px;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: clamp(22px, 5vw, 34px);
+      font-weight: 700;
+    }
+
+    p {
+      margin: 0 0 24px;
+      font-size: 15px;
+      line-height: 1.6;
+      color: #444;
+    }
+
+    a {
+      display: inline-block;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 700;
+      color: #fff;
+      background: #111;
+      border-radius: 10px;
+      padding: 12px 22px;
+      transition: transform 0.15s ease, opacity 0.15s ease;
+    }
+
+    a:hover {
+      transform: translateY(-1px);
+      opacity: 0.92;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="notfound">
+    <div class="notfound">
+      <div class="notfound-404">
+        <h1>500</h1>
+      </div>
+      <h2>Internal Server Error</h2>
+      <p>Your Apex MCU (Master Control Unit) seems to have an issue connecting to our servers. <br />Have you tried turning it off &amp; on again?</p>
+      <a href="javascript:location.reload();">Retry</a>
+    </div>
+  </div>
+</body>
+
+</html>

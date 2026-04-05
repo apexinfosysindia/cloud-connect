@@ -88,8 +88,16 @@ jobs:
             sudo caddy validate --config /etc/caddy/Caddyfile
             sudo systemctl reload caddy
           fi
+          RESTART_FRPS=0
           if ! cmp -s "$APP_DIR/frps.toml" /etc/frp/frps.toml; then
             sudo install -m 644 "$APP_DIR/frps.toml" /etc/frp/frps.toml
+            RESTART_FRPS=1
+          fi
+          if ! cmp -s "$APP_DIR/custom_404.html" /etc/frp/custom_404.html; then
+            sudo install -m 644 "$APP_DIR/custom_404.html" /etc/frp/custom_404.html
+            RESTART_FRPS=1
+          fi
+          if [ "$RESTART_FRPS" -eq 1 ]; then
             sudo systemctl restart frps
           fi
 
