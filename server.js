@@ -11,6 +11,11 @@ const db = require('./db');
 const CUSTOMER_PORTAL_HOST = process.env.CUSTOMER_PORTAL_HOST || 'oasis.apexinfosys.in';
 const ADMIN_PORTAL_HOST = process.env.ADMIN_PORTAL_HOST || 'vista.apexinfosys.in';
 const CLOUD_BASE_DOMAIN = process.env.CLOUD_BASE_DOMAIN || 'cloud.apexinfosys.in';
+const DEVICE_HEARTBEAT_TIMEOUT_SECONDS = Number(process.env.DEVICE_HEARTBEAT_TIMEOUT_SECONDS || 45);
+const DEVICE_HEARTBEAT_INTERVAL_SECONDS = Number(process.env.DEVICE_HEARTBEAT_INTERVAL_SECONDS || 20);
+const ADMIN_CONNECT_TOKEN_TTL_MINUTES = Number(process.env.ADMIN_CONNECT_TOKEN_TTL_MINUTES || 10);
+const DEVICE_TOKEN_PREFIX = 'dvc_';
+const ADMIN_CONNECT_TOKEN_PREFIX = 'acn_';
 
 const app = express();
 app.use(express.json({
@@ -78,6 +83,243 @@ let razorpayClient = null;
 
 function generateToken() {
     return 'apx_' + crypto.randomBytes(16).toString('hex');
+}
+
+function hashSecret(value) {
+    return crypto.createHash('sha256').update(String(value || '')).digest('hex');
+}
+
+function generateDeviceAuthToken() {
+    return DEVICE_TOKEN_PREFIX + crypto.randomBytes(24).toString('hex');
+}
+
+function generateAdminConnectToken() {
+    return ADMIN_CONNECT_TOKEN_PREFIX + crypto.randomBytes(24).toString('hex');
+}
+
+function sanitizeString(value, maxLength = 120) {
+    if (typeof value !== 'string') {
+        return null;
+    }
+
+    const normalized = value.trim();
+    if (!normalized) {
+        return null;
+    }
+
+    return normalized.slice(0, maxLength);
+}
+
+function sanitizeDeviceUid(value) {
+    const normalized = sanitizeString(value, 80);
+    if (!normalized) {
+        return null;
+    }
+
+    return /^[a-zA-Z0-9._-]+$/.test(normalized) ? normalized : null;
+}
+
+function sanitizeRemoteUser(value) {
+    const normalized = sanitizeString(value, 48);
+    if (!normalized) {
+        return null;
+    }
+
+    return /^[a-z_][a-z0-9_-]*$/i.test(normalized) ? normalized : null;
+}
+
+function sanitizeEventType(value) {
+    const normalized = sanitizeString(value, 64);
+    if (!normalized) {
+        return null;
+    }
+
+    return /^[a-z0-9._-]+$/i.test(normalized) ? normalized.toLowerCase() : null;
+}
+
+function sanitizePort(value) {
+    if (value === null || value === undefined || value === '') {
+        return null;
+    }
+
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+        return null;
+    }
+
+    return parsed;
+}
+
+function normalizeLocalIps(value) {
+    const entries = [];
+
+    if (Array.isArray(value)) {
+        entries.push(...value);
+    } else if (typeof value === 'string') {
+        entries.push(...value.split(/[\s,]+/g));
+    }
+
+    const unique = [];
+    for (const entry of entries) {
+        const candidate = String(entry || '').trim();
+        if (!candidate) {
+            continue;
+        }
+
+        if (!/^[0-9a-fA-F:.]+$/.test(candidate)) {
+            continue;
+        }
+
+        if (!unique.includes(candidate)) {
+            unique.push(candidate);
+        }
+    }
+
+    return unique.slice(0, 8).join(',') || null;
+}
+
+function parseJsonSafe(value, fallback = null) {
+    if (!value) {
+        return fallback;
+    }
+
+    if (typeof value === 'object') {
+        return value;
+    }
+
+    try {
+        return JSON.parse(value);
+    } catch (error) {
+        return fallback;
+    }
+}
+
+function getHeartbeatWindowSeconds() {
+    if (!Number.isFinite(DEVICE_HEARTBEAT_TIMEOUT_SECONDS)) {
+        return 45;
+    }
+
+    return Math.max(20, Math.min(300, Math.round(DEVICE_HEARTBEAT_TIMEOUT_SECONDS)));
+}
+
+function isDeviceOnline(lastSeenAt) {
+    if (!lastSeenAt) {
+        return false;
+    }
+
+    const lastSeenEpoch = new Date(lastSeenAt).getTime();
+    if (!Number.isFinite(lastSeenEpoch)) {
+        return false;
+    }
+
+    return (Date.now() - lastSeenEpoch) <= (getHeartbeatWindowSeconds() * 1000);
+}
+
+function getHeartbeatIntervalSeconds() {
+    if (!Number.isFinite(DEVICE_HEARTBEAT_INTERVAL_SECONDS)) {
+        return 20;
+    }
+
+    return Math.max(10, Math.min(120, Math.round(DEVICE_HEARTBEAT_INTERVAL_SECONDS)));
+}
+
+function getAdminConnectTokenTtlMinutes() {
+    if (!Number.isFinite(ADMIN_CONNECT_TOKEN_TTL_MINUTES)) {
+        return 10;
+    }
+
+    return Math.max(3, Math.min(60, Math.round(ADMIN_CONNECT_TOKEN_TTL_MINUTES)));
+}
+
+function serializeDevice(row) {
+    const ownerDomain = row.user_subdomain ? `${row.user_subdomain}.${CLOUD_BASE_DOMAIN}` : null;
+    const online = isDeviceOnline(row.last_seen_at);
+    const accountEnabled = isAccessEnabled(row.user_status);
+    const connectReady = accountEnabled && Boolean(row.tunnel_host && row.tunnel_port);
+
+    return {
+        id: row.id,
+        owner: {
+            user_id: row.user_id,
+            email: row.user_email,
+            status: row.user_status,
+            domain: ownerDomain
+        },
+        device_uid: row.device_uid,
+        device_name: row.device_name,
+        hostname: row.hostname,
+        local_ips: row.local_ips ? row.local_ips.split(',').filter(Boolean) : [],
+        ssh_port: row.ssh_port || 22,
+        remote_user: row.remote_user || 'root',
+        tunnel_host: row.tunnel_host,
+        tunnel_port: row.tunnel_port,
+        addon_version: row.addon_version,
+        agent_state: row.agent_state,
+        online,
+        connect_ready: connectReady,
+        account_enabled: accountEnabled,
+        last_seen_at: row.last_seen_at,
+        created_at: row.created_at,
+        updated_at: row.updated_at
+    };
+}
+
+async function insertDeviceLog(deviceId, level, eventType, message, payload = null) {
+    const normalizedLevel = ['info', 'warn', 'error'].includes(level) ? level : 'info';
+    const normalizedEventType = sanitizeEventType(eventType) || 'event';
+    const normalizedMessage = sanitizeString(message, 400) || 'Device event';
+    const payloadText = payload ? JSON.stringify(payload).slice(0, 2000) : null;
+
+    await dbRun(
+        `
+            INSERT INTO device_logs (device_id, level, event_type, message, payload)
+            VALUES (?, ?, ?, ?, ?)
+        `,
+        [deviceId, normalizedLevel, normalizedEventType, normalizedMessage, payloadText]
+    );
+
+    await dbRun(
+        `
+            DELETE FROM device_logs
+            WHERE device_id = ?
+              AND id NOT IN (
+                SELECT id FROM device_logs WHERE device_id = ? ORDER BY id DESC LIMIT 250
+              )
+        `,
+        [deviceId, deviceId]
+    );
+}
+
+async function insertAdminAccessLog(deviceId, adminEmail, action, details = null) {
+    await dbRun(
+        `
+            INSERT INTO admin_access_logs (device_id, admin_email, action, details)
+            VALUES (?, ?, ?, ?)
+        `,
+        [deviceId || null, adminEmail, action, details ? JSON.stringify(details).slice(0, 2000) : null]
+    );
+}
+
+async function findDeviceByToken(deviceToken) {
+    if (!deviceToken) {
+        return null;
+    }
+
+    const tokenHash = hashSecret(deviceToken);
+    return dbGet(
+        `
+            SELECT
+                d.*,
+                u.id AS user_id,
+                u.email AS user_email,
+                u.status AS user_status,
+                u.subdomain AS user_subdomain
+            FROM devices d
+            INNER JOIN users u ON u.id = d.user_id
+            WHERE d.device_token_hash = ?
+        `,
+        [tokenHash]
+    );
 }
 
 function dbGet(query, params = []) {
@@ -300,6 +542,44 @@ function requireAdmin(req, res, next) {
     next();
 }
 
+async function requireDeviceAuth(req, res, next) {
+    try {
+        const authHeader = req.get('authorization') || '';
+        const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+        const deviceToken = req.get('x-device-token') || bearerToken || req.body?.device_token || '';
+
+        if (!deviceToken) {
+            return res.status(401).json({ error: 'Device token is required' });
+        }
+
+        const device = await findDeviceByToken(deviceToken);
+        if (!device) {
+            return res.status(401).json({ error: 'Invalid device token' });
+        }
+
+        req.deviceAuthToken = deviceToken;
+        req.device = device;
+        return next();
+    } catch (error) {
+        console.error('DEVICE AUTH ERROR:', error);
+        return res.status(500).json({ error: 'Unable to authenticate device' });
+    }
+}
+
+function buildAdminConnectCommand(device, options = {}) {
+    const remoteUserOverride = sanitizeRemoteUser(options.remote_user);
+    const remoteUser = remoteUserOverride || sanitizeRemoteUser(device.remote_user) || 'root';
+    const tunnelHost = sanitizeString(device.tunnel_host, 255);
+    const tunnelPort = sanitizePort(device.tunnel_port);
+    const sshPort = sanitizePort(device.ssh_port) || 22;
+
+    if (!tunnelHost || !tunnelPort) {
+        return null;
+    }
+
+    return `ssh -p ${tunnelPort} ${remoteUser}@${tunnelHost} # Local SSH port: ${sshPort}`;
+}
+
 async function getOrCreateCustomer(user) {
     const razorpay = getRazorpayClient();
     const customers = await razorpay.customers.all({ email: user.email });
@@ -488,6 +768,537 @@ async function updateUserStatus(userId, status, options = {}) {
 
     return dbGet(`SELECT * FROM users WHERE id = ?`, [userId]);
 }
+
+function parsePositiveInt(value) {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+        return null;
+    }
+
+    return parsed;
+}
+
+async function getDeviceWithOwnerById(deviceId) {
+    return dbGet(
+        `
+            SELECT
+                d.*,
+                u.id AS user_id,
+                u.email AS user_email,
+                u.status AS user_status,
+                u.subdomain AS user_subdomain
+            FROM devices d
+            INNER JOIN users u ON u.id = d.user_id
+            WHERE d.id = ?
+        `,
+        [deviceId]
+    );
+}
+
+app.post('/api/internal/devices/register', async (req, res) => {
+    const accessToken = sanitizeString(req.body?.access_token, 180);
+    const deviceUid = sanitizeDeviceUid(req.body?.device_uid);
+
+    if (!accessToken || !deviceUid) {
+        return res.status(400).json({ error: 'access_token and device_uid are required' });
+    }
+
+    try {
+        const user = await dbGet(`SELECT * FROM users WHERE access_token = ?`, [accessToken]);
+
+        if (!user) {
+            return res.status(404).json({ error: 'No account found for this access token' });
+        }
+
+        if (!isAccessEnabled(user.status)) {
+            return res.status(403).json({ error: 'Account is not active for remote access' });
+        }
+
+        const nowIso = new Date().toISOString();
+        const deviceToken = generateDeviceAuthToken();
+        const deviceTokenHash = hashSecret(deviceToken);
+        const deviceName = sanitizeString(req.body?.device_name, 120);
+        const hostname = sanitizeString(req.body?.hostname, 120);
+        const localIps = normalizeLocalIps(req.body?.local_ips);
+        const sshPort = sanitizePort(req.body?.ssh_port) || 22;
+        const remoteUser = sanitizeRemoteUser(req.body?.remote_user) || 'root';
+        const tunnelHost = sanitizeString(req.body?.tunnel_host, 255);
+        const tunnelPort = sanitizePort(req.body?.tunnel_port);
+        const addonVersion = sanitizeString(req.body?.addon_version, 64);
+        const agentState = sanitizeString(req.body?.agent_state, 64);
+
+        const existing = await dbGet(
+            `SELECT id FROM devices WHERE user_id = ? AND device_uid = ?`,
+            [user.id, deviceUid]
+        );
+
+        let deviceId;
+
+        if (existing) {
+            await dbRun(
+                `
+                    UPDATE devices
+                    SET device_name = ?,
+                        hostname = ?,
+                        local_ips = ?,
+                        ssh_port = ?,
+                        remote_user = ?,
+                        tunnel_host = ?,
+                        tunnel_port = ?,
+                        addon_version = ?,
+                        agent_state = ?,
+                        device_token_hash = ?,
+                        last_seen_at = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                `,
+                [
+                    deviceName,
+                    hostname,
+                    localIps,
+                    sshPort,
+                    remoteUser,
+                    tunnelHost,
+                    tunnelPort,
+                    addonVersion,
+                    agentState,
+                    deviceTokenHash,
+                    nowIso,
+                    nowIso,
+                    existing.id
+                ]
+            );
+            deviceId = existing.id;
+        } else {
+            const insertResult = await dbRun(
+                `
+                    INSERT INTO devices (
+                        user_id,
+                        device_uid,
+                        device_name,
+                        hostname,
+                        local_ips,
+                        ssh_port,
+                        remote_user,
+                        tunnel_host,
+                        tunnel_port,
+                        addon_version,
+                        agent_state,
+                        device_token_hash,
+                        last_seen_at,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `,
+                [
+                    user.id,
+                    deviceUid,
+                    deviceName,
+                    hostname,
+                    localIps,
+                    sshPort,
+                    remoteUser,
+                    tunnelHost,
+                    tunnelPort,
+                    addonVersion,
+                    agentState,
+                    deviceTokenHash,
+                    nowIso,
+                    nowIso,
+                    nowIso
+                ]
+            );
+            deviceId = insertResult.lastID;
+        }
+
+        await insertDeviceLog(
+            deviceId,
+            'info',
+            existing ? 'device.re_register' : 'device.register',
+            existing ? 'Device registration refreshed' : 'Device registered',
+            {
+                device_uid: deviceUid,
+                hostname,
+                addon_version: addonVersion,
+                tunnel_host: tunnelHost,
+                tunnel_port: tunnelPort
+            }
+        );
+
+        const deviceRow = await getDeviceWithOwnerById(deviceId);
+
+        return res.status(existing ? 200 : 201).json({
+            message: existing ? 'Device registration updated' : 'Device registered',
+            device_token: deviceToken,
+            heartbeat_interval_seconds: getHeartbeatIntervalSeconds(),
+            data: serializeDevice(deviceRow)
+        });
+    } catch (error) {
+        console.error('DEVICE REGISTER ERROR:', error);
+        return res.status(500).json({ error: 'Unable to register device' });
+    }
+});
+
+app.post('/api/internal/devices/heartbeat', requireDeviceAuth, async (req, res) => {
+    try {
+        const nowIso = new Date().toISOString();
+        const body = req.body || {};
+        const hasOwn = Object.prototype.hasOwnProperty;
+        const current = req.device;
+
+        const deviceName = hasOwn.call(body, 'device_name')
+            ? sanitizeString(body.device_name, 120)
+            : current.device_name;
+        const hostname = hasOwn.call(body, 'hostname')
+            ? sanitizeString(body.hostname, 120)
+            : current.hostname;
+        const localIps = hasOwn.call(body, 'local_ips')
+            ? normalizeLocalIps(body.local_ips)
+            : current.local_ips;
+
+        const nextSshPort = hasOwn.call(body, 'ssh_port')
+            ? (sanitizePort(body.ssh_port) || current.ssh_port || 22)
+            : (current.ssh_port || 22);
+
+        const nextRemoteUser = hasOwn.call(body, 'remote_user')
+            ? (sanitizeRemoteUser(body.remote_user) || current.remote_user || 'root')
+            : (current.remote_user || 'root');
+
+        const tunnelHost = hasOwn.call(body, 'tunnel_host')
+            ? sanitizeString(body.tunnel_host, 255)
+            : current.tunnel_host;
+
+        const nextTunnelPort = hasOwn.call(body, 'tunnel_port')
+            ? sanitizePort(body.tunnel_port)
+            : current.tunnel_port;
+
+        const addonVersion = hasOwn.call(body, 'addon_version')
+            ? sanitizeString(body.addon_version, 64)
+            : current.addon_version;
+
+        const agentState = hasOwn.call(body, 'agent_state')
+            ? sanitizeString(body.agent_state, 64)
+            : current.agent_state;
+
+        await dbRun(
+            `
+                UPDATE devices
+                SET device_name = ?,
+                    hostname = ?,
+                    local_ips = ?,
+                    ssh_port = ?,
+                    remote_user = ?,
+                    tunnel_host = ?,
+                    tunnel_port = ?,
+                    addon_version = ?,
+                    agent_state = ?,
+                    last_seen_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+            `,
+            [
+                deviceName,
+                hostname,
+                localIps,
+                nextSshPort,
+                nextRemoteUser,
+                tunnelHost,
+                nextTunnelPort,
+                addonVersion,
+                agentState,
+                nowIso,
+                nowIso,
+                current.id
+            ]
+        );
+
+        if (agentState && agentState !== current.agent_state) {
+            await insertDeviceLog(
+                current.id,
+                'info',
+                'device.state',
+                `Agent state changed to ${agentState}`,
+                {
+                    previous_state: current.agent_state,
+                    current_state: agentState
+                }
+            );
+        }
+
+        const updated = await getDeviceWithOwnerById(current.id);
+
+        return res.status(200).json({
+            message: 'Heartbeat accepted',
+            heartbeat_interval_seconds: getHeartbeatIntervalSeconds(),
+            data: serializeDevice(updated)
+        });
+    } catch (error) {
+        console.error('DEVICE HEARTBEAT ERROR:', error);
+        return res.status(500).json({ error: 'Unable to process heartbeat' });
+    }
+});
+
+app.post('/api/internal/devices/log', requireDeviceAuth, async (req, res) => {
+    try {
+        const level = sanitizeString(req.body?.level, 12)?.toLowerCase() || 'info';
+        const eventType = sanitizeEventType(req.body?.event_type);
+        const message = sanitizeString(req.body?.message, 400);
+        const payload = req.body?.payload || null;
+
+        if (!eventType || !message) {
+            return res.status(400).json({ error: 'event_type and message are required' });
+        }
+
+        await insertDeviceLog(req.device.id, level, eventType, message, payload);
+
+        const nowIso = new Date().toISOString();
+        await dbRun(
+            `
+                UPDATE devices
+                SET last_seen_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+            `,
+            [nowIso, nowIso, req.device.id]
+        );
+
+        return res.status(200).json({ message: 'Log stored' });
+    } catch (error) {
+        console.error('DEVICE LOG ERROR:', error);
+        return res.status(500).json({ error: 'Unable to store device log' });
+    }
+});
+
+app.get('/api/admin/fleet', requireAdmin, async (req, res) => {
+    try {
+        await dbRun(`DELETE FROM admin_connect_sessions WHERE expires_at < ?`, [new Date().toISOString()]);
+
+        const rows = await dbAll(
+            `
+                SELECT
+                    d.*,
+                    u.id AS user_id,
+                    u.email AS user_email,
+                    u.status AS user_status,
+                    u.subdomain AS user_subdomain,
+                    (
+                        SELECT COUNT(*)
+                        FROM device_logs dl
+                        WHERE dl.device_id = d.id
+                    ) AS log_count,
+                    (
+                        SELECT dl.level
+                        FROM device_logs dl
+                        WHERE dl.device_id = d.id
+                        ORDER BY dl.id DESC
+                        LIMIT 1
+                    ) AS last_event_level,
+                    (
+                        SELECT dl.event_type
+                        FROM device_logs dl
+                        WHERE dl.device_id = d.id
+                        ORDER BY dl.id DESC
+                        LIMIT 1
+                    ) AS last_event_type,
+                    (
+                        SELECT dl.message
+                        FROM device_logs dl
+                        WHERE dl.device_id = d.id
+                        ORDER BY dl.id DESC
+                        LIMIT 1
+                    ) AS last_event_message,
+                    (
+                        SELECT dl.created_at
+                        FROM device_logs dl
+                        WHERE dl.device_id = d.id
+                        ORDER BY dl.id DESC
+                        LIMIT 1
+                    ) AS last_event_at
+                FROM devices d
+                INNER JOIN users u ON u.id = d.user_id
+                ORDER BY d.last_seen_at DESC, d.updated_at DESC, d.created_at DESC
+            `
+        );
+
+        const devices = rows.map((row) => {
+            const data = serializeDevice(row);
+            return {
+                ...data,
+                log_count: Number(row.log_count || 0),
+                last_event: row.last_event_at
+                    ? {
+                        level: row.last_event_level,
+                        event_type: row.last_event_type,
+                        message: row.last_event_message,
+                        created_at: row.last_event_at
+                    }
+                    : null
+            };
+        });
+
+        const stats = {
+            total: devices.length,
+            online: devices.filter((device) => device.online).length,
+            offline: devices.filter((device) => !device.online).length,
+            connect_ready: devices.filter((device) => device.connect_ready).length,
+            blocked: devices.filter((device) => !device.account_enabled).length
+        };
+
+        return res.status(200).json({
+            stats,
+            heartbeat_window_seconds: getHeartbeatWindowSeconds(),
+            devices
+        });
+    } catch (error) {
+        console.error('ADMIN FLEET LIST ERROR:', error);
+        return res.status(500).json({ error: 'Unable to load fleet devices' });
+    }
+});
+
+app.get('/api/admin/fleet/:id/logs', requireAdmin, async (req, res) => {
+    const deviceId = parsePositiveInt(req.params.id);
+    const requestedLimit = Number(req.query.limit);
+    const limit = Number.isFinite(requestedLimit)
+        ? Math.max(10, Math.min(200, Math.round(requestedLimit)))
+        : 60;
+
+    if (!deviceId) {
+        return res.status(400).json({ error: 'Invalid device id' });
+    }
+
+    try {
+        const device = await getDeviceWithOwnerById(deviceId);
+        if (!device) {
+            return res.status(404).json({ error: 'Device not found' });
+        }
+
+        const deviceLogs = await dbAll(
+            `
+                SELECT id, level, event_type, message, payload, created_at
+                FROM device_logs
+                WHERE device_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+            `,
+            [deviceId, limit]
+        );
+
+        const adminLogs = await dbAll(
+            `
+                SELECT id, admin_email, action, details, created_at
+                FROM admin_access_logs
+                WHERE device_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+            `,
+            [deviceId, Math.max(10, Math.min(100, Math.round(limit / 2)))]
+        );
+
+        return res.status(200).json({
+            device: serializeDevice(device),
+            logs: deviceLogs.map((entry) => ({
+                id: entry.id,
+                level: entry.level,
+                event_type: entry.event_type,
+                message: entry.message,
+                payload: parseJsonSafe(entry.payload, entry.payload),
+                created_at: entry.created_at
+            })),
+            admin_actions: adminLogs.map((entry) => ({
+                id: entry.id,
+                admin_email: entry.admin_email,
+                action: entry.action,
+                details: parseJsonSafe(entry.details, entry.details),
+                created_at: entry.created_at
+            }))
+        });
+    } catch (error) {
+        console.error('ADMIN FLEET LOGS ERROR:', error);
+        return res.status(500).json({ error: 'Unable to load device logs' });
+    }
+});
+
+app.post('/api/admin/fleet/:id/connect', requireAdmin, async (req, res) => {
+    const deviceId = parsePositiveInt(req.params.id);
+
+    if (!deviceId) {
+        return res.status(400).json({ error: 'Invalid device id' });
+    }
+
+    try {
+        const device = await getDeviceWithOwnerById(deviceId);
+        if (!device) {
+            return res.status(404).json({ error: 'Device not found' });
+        }
+
+        if (!isAccessEnabled(device.user_status)) {
+            return res.status(403).json({ error: 'Owner account is not active for remote access' });
+        }
+
+        const command = buildAdminConnectCommand(device, {
+            remote_user: req.body?.remote_user
+        });
+
+        if (!command) {
+            return res.status(409).json({ error: 'Device tunnel is not ready. Wait for next heartbeat.' });
+        }
+
+        const reason = sanitizeString(req.body?.reason, 200);
+        const connectToken = generateAdminConnectToken();
+        const connectTokenHash = hashSecret(connectToken);
+        const ttlMinutes = getAdminConnectTokenTtlMinutes();
+        const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000).toISOString();
+
+        await dbRun(`DELETE FROM admin_connect_sessions WHERE expires_at < ?`, [new Date().toISOString()]);
+        await dbRun(
+            `
+                INSERT INTO admin_connect_sessions (
+                    device_id,
+                    admin_email,
+                    token_hash,
+                    expires_at,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+            `,
+            [deviceId, req.admin.email, connectTokenHash, expiresAt, new Date().toISOString()]
+        );
+
+        await insertAdminAccessLog(deviceId, req.admin.email, 'connect_command_issued', {
+            reason: reason || null,
+            device_uid: device.device_uid,
+            tunnel_host: device.tunnel_host,
+            tunnel_port: device.tunnel_port,
+            requested_remote_user: sanitizeRemoteUser(req.body?.remote_user) || null,
+            ttl_minutes: ttlMinutes
+        });
+
+        await insertDeviceLog(
+            deviceId,
+            'info',
+            'admin.connect',
+            `Admin ${req.admin.email} generated an SSH connect command`,
+            {
+                reason: reason || null,
+                expires_at: expiresAt
+            }
+        );
+
+        return res.status(200).json({
+            device: serializeDevice(device),
+            connect: {
+                token: connectToken,
+                expires_at: expiresAt,
+                command,
+                note: 'Token is issued for admin session tracking and rotates on each connect request.'
+            }
+        });
+    } catch (error) {
+        console.error('ADMIN CONNECT ERROR:', error);
+        return res.status(500).json({ error: 'Unable to create connect command right now' });
+    }
+});
 
 app.post('/api/auth/signup', async (req, res) => {
     const { email, password, subdomain } = req.body;

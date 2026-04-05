@@ -39,6 +39,10 @@ Control plane flow:
 - Manual 365-day trial approval
 - Domain verification for Caddy on-demand TLS
 - FRP login authorization using access tokens
+- Admin fleet visibility for registered SSH tunnel devices
+- Device heartbeat tracking (online/offline, local IPs, last seen)
+- Device and admin access logs for auditability
+- Admin-only connect command generation for remote SSH
 ## Admin Dashboard
 Path:
 - `/admin.html`
@@ -49,10 +53,26 @@ Capabilities:
 - Set user status to `suspended`
 - Set user status to `expired`
 - Move a user back to `payment_pending`
+- View live/offline device fleet state
+- Inspect recent device events and admin connect actions
+- Generate short-lived admin SSH connect commands per device
 Required environment variables:
 - `ADMIN_EMAIL`
 - `ADMIN_PASSWORD`
 - Optional: `ADMIN_SESSION_SECRET`
+
+## Device Fleet API (Internal + Admin)
+Internal device endpoints:
+- `POST /api/internal/devices/register`
+- `POST /api/internal/devices/heartbeat`
+- `POST /api/internal/devices/log`
+
+Admin endpoints:
+- `GET /api/admin/fleet`
+- `GET /api/admin/fleet/:id/logs`
+- `POST /api/admin/fleet/:id/connect`
+
+All admin fleet routes require admin bearer auth.
 ## User Statuses
 - `payment_pending`: account created, billing not completed, remote access disabled
 - `active`: paid subscription active, remote access enabled
@@ -71,6 +91,9 @@ ADMIN_EMAIL=
 ADMIN_PASSWORD=
 ADMIN_SESSION_SECRET=
 PORTAL_SESSION_SECRET=
+DEVICE_HEARTBEAT_TIMEOUT_SECONDS=45
+DEVICE_HEARTBEAT_INTERVAL_SECONDS=20
+ADMIN_CONNECT_TOKEN_TTL_MINUTES=10
 ```
 ## Local Development
 Install dependencies:
@@ -109,7 +132,20 @@ The separate `apex-cloud-link` add-on repo:
 - downloads `frpc`
 - connects to `cloud.apexinfosys.in:7000`
 - registers the customer domain through FRP
+- can optionally register into admin fleet tracking and send heartbeats/logs
+- can optionally expose SSH over FRP TCP when `ssh_remote_port` is configured
 Remote access only succeeds when the portal authorizes the token and the account is `active` or `trial`.
+
+Recommended `apex-cloud-link` options for admin fleet tracking:
+- `fleet_reporting_enabled=true`
+- `cloud_api_url=https://cloud.apexinfosys.in`
+- `device_uid=<stable-device-id>`
+- `device_name=<friendly-name>`
+
+Optional admin SSH publish settings:
+- `ssh_remote_port=<unique-public-port-on-frps>` (set `0` to disable)
+- `ssh_local_port=22`
+- `ssh_remote_user=root`
 ## Billing Notes
 - Checkout is Razorpay subscription-based.
 - Payment activation is verified both from the browser callback and Razorpay webhooks.

@@ -741,6 +741,120 @@ code {
     margin-top: 6px;
 }
 
+.admin-page .fleet-section {
+    background: linear-gradient(180deg, #ffffff 0%, #f5faff 100%);
+}
+
+.admin-page .fleet-stats-grid {
+    margin-top: 4px;
+}
+
+.admin-page .fleet-list {
+    display: grid;
+    gap: 14px;
+}
+
+.admin-page .fleet-card .user-card__summary {
+    cursor: pointer;
+}
+
+.fleet-command-meta {
+    display: grid;
+    gap: 8px;
+    font-size: 0.88rem;
+    color: var(--text-muted);
+}
+
+.fleet-command-meta code {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 4px 8px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    word-break: break-all;
+}
+
+.modal__panel--wide {
+    width: min(920px, 100%);
+}
+
+.fleet-log-columns {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.fleet-log-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 0;
+}
+
+.fleet-log-title {
+    margin: 0;
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: #0f172a;
+}
+
+.fleet-log-list {
+    display: grid;
+    gap: 10px;
+    max-height: 360px;
+    overflow: auto;
+    padding-right: 6px;
+}
+
+.fleet-log-item {
+    border: 1px solid #dce6f2;
+    border-radius: 12px;
+    background: #fdfefe;
+    padding: 10px;
+}
+
+.fleet-log-item__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.fleet-log-item__event {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: #0f172a;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.fleet-log-item__time {
+    font-size: 0.78rem;
+    color: #64748b;
+    white-space: nowrap;
+}
+
+.fleet-log-item__meta {
+    margin-top: 6px;
+    font-size: 0.85rem;
+    color: #334155;
+    line-height: 1.45;
+}
+
+.fleet-log-item__payload {
+    margin: 8px 0 0;
+    padding: 8px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #f8fafc;
+    font-family: "SFMono-Regular", SFMono-Regular, ui-monospace, Menlo, Consolas, monospace;
+    font-size: 0.76rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 .admin-page .status-badge {
     border-color: #d2deea;
     background: #fff;
@@ -1428,6 +1542,10 @@ code {
 
     .action-row {
         flex-direction: column;
+    }
+
+    .fleet-log-columns {
+        grid-template-columns: 1fr;
     }
 
     .alert {
