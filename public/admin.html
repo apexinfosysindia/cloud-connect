@@ -177,16 +177,24 @@
                 <input id="connectRemoteUser" class="input" type="text" maxlength="48" placeholder="root">
             </div>
 
+            <div class="field">
+                <label class="field-label" for="connectSshPublicKey">Your SSH Public Key (optional)</label>
+                <textarea id="connectSshPublicKey" class="input input-textarea" rows="4" placeholder="If left blank, portal generates one-time keypair and shows private key."></textarea>
+            </div>
+
             <button id="generateConnectBtn" class="button button-primary">Generate SSH Command</button>
 
             <code id="connectCommand" class="token-value">Generate a command to begin remote SSH access.</code>
+            <code id="connectPrivateKey" class="token-value hidden">One-time SSH private key will appear here.</code>
 
             <div class="fleet-command-meta">
                 <div><strong>Session token:</strong> <code id="connectToken">-</code></div>
                 <div><strong>Expires:</strong> <span id="connectExpiry">-</span></div>
+                <div><strong>JIT session:</strong> <span id="connectJitStatus">-</span></div>
             </div>
 
             <button id="copyConnectBtn" class="button button-secondary" disabled>Copy SSH Command</button>
+            <button id="copyPrivateKeyBtn" class="button button-secondary" disabled>Copy One-Time Private Key</button>
         </div>
     </div>
 </div>
@@ -224,11 +232,15 @@ const connectModalClose = document.getElementById('connectModalClose');
 const connectTarget = document.getElementById('connectTarget');
 const connectReason = document.getElementById('connectReason');
 const connectRemoteUser = document.getElementById('connectRemoteUser');
+const connectSshPublicKey = document.getElementById('connectSshPublicKey');
 const generateConnectBtn = document.getElementById('generateConnectBtn');
 const connectCommand = document.getElementById('connectCommand');
+const connectPrivateKey = document.getElementById('connectPrivateKey');
 const connectToken = document.getElementById('connectToken');
 const connectExpiry = document.getElementById('connectExpiry');
+const connectJitStatus = document.getElementById('connectJitStatus');
 const copyConnectBtn = document.getElementById('copyConnectBtn');
+const copyPrivateKeyBtn = document.getElementById('copyPrivateKeyBtn');
 
 const loginBtn = document.getElementById('loginBtn');
 const ADMIN_TOKEN_KEY = 'apex_admin_token';
@@ -237,6 +249,7 @@ const FLEET_REFRESH_MS = 15000;
 let fleetDevices = [];
 let selectedConnectDeviceId = null;
 let latestConnectCommand = '';
+let latestOneTimePrivateKey = '';
 let fleetRefreshTimer = null;
 
 function syncAdminMasthead() {
@@ -582,6 +595,7 @@ function renderFleet(devices, stats, heartbeatWindowSeconds) {
                         <div class="user-card__section-text">UID: ${escapeHtml(device.device_uid || '-')}</div>
                         <div class="user-card__section-text">State: ${escapeHtml(device.agent_state || 'unknown')} | Version: ${escapeHtml(device.addon_version || 'unknown')}</div>
                         <div class="user-card__section-text">Last event: ${escapeHtml(getFleetLastEventSummary(device))}</div>
+                        <div class="user-card__section-text">JIT SSH: ${escapeHtml(renderSshSessionState(device))}</div>
                     </section>
                 </div>
 
@@ -633,6 +647,29 @@ function renderLogItems(targetElement, items, mode) {
             </article>
         `;
     }).join('');
+}
+
+function renderSshSessionState(device) {
+    const session = device.ssh_session;
+    if (!session) {
+        return 'No JIT session yet';
+    }
+
+    const parts = [session.status || 'unknown'];
+    if (session.ssh_username) {
+        parts.push(`user ${session.ssh_username}`);
+    }
+    if (session.fingerprint) {
+        parts.push(`fp ${session.fingerprint}`);
+    }
+    if (session.expires_at) {
+        parts.push(`exp ${formatSince(session.expires_at)}`);
+    }
+    if (session.last_error) {
+        parts.push(`err ${session.last_error}`);
+    }
+
+    return parts.join(' | ');
 }
 
 function applyRealtimeUserUpdate(user) {
@@ -726,7 +763,28 @@ async function openFleetLogsModal(deviceId) {
 
     try {
         const response = await api(`/api/admin/fleet/${Number(deviceId)}/logs?limit=80`);
-        renderLogItems(fleetLogsBody, response.logs || [], 'device');
+        const combinedDeviceLogs = [];
+        combinedDeviceLogs.push(...(response.logs || []));
+        for (const sshSession of (response.ssh_sessions || [])) {
+            combinedDeviceLogs.push({ ...sshSession, mode: 'ssh' });
+        }
+
+        combinedDeviceLogs.sort((a, b) => {
+            const left = new Date(a.created_at || a.issued_at || 0).getTime();
+            const right = new Date(b.created_at || b.issued_at || 0).getTime();
+            return right - left;
+        });
+
+        const renderedLogs = combinedDeviceLogs.map((entry) => {
+            if (entry.mode === 'ssh') {
+                return { ...entry, __render_mode: 'ssh' };
+            }
+            return { ...entry, __render_mode: 'device' };
+        });
+
+        fleetLogsBody.innerHTML = renderedLogs.length
+            ? renderedLogs.map((entry) => renderLogItemsToHtml(entry)).join('')
+            : '<div class="user-empty">No activity captured yet.</div>';
         renderLogItems(fleetAdminLogsBody, response.admin_actions || [], 'admin');
     } catch (error) {
         renderLogItems(fleetLogsBody, [], 'device');
@@ -735,16 +793,48 @@ async function openFleetLogsModal(deviceId) {
     }
 }
 
+function renderLogItemsToHtml(entry) {
+    if (entry.__render_mode === 'ssh') {
+        return `
+            <article class="fleet-log-item">
+                <div class="fleet-log-item__head">
+                    <span class="fleet-log-item__event">SSH session #${escapeHtml(String(entry.id || '-'))}</span>
+                    <span class="fleet-log-item__time">${formatDate(entry.issued_at)}</span>
+                </div>
+                <div class="fleet-log-item__meta">${escapeHtml((entry.status || 'unknown').toUpperCase())} | user ${escapeHtml(entry.ssh_username || '-')} | fp ${escapeHtml(entry.fingerprint || 'n/a')}</div>
+                <div class="fleet-log-item__meta">Expires ${formatDate(entry.expires_at)}${entry.last_error ? ` | ${escapeHtml(entry.last_error)}` : ''}</div>
+            </article>
+        `;
+    }
+
+    return `
+            <article class="fleet-log-item">
+                <div class="fleet-log-item__head">
+                    <span class="fleet-log-item__event">${escapeHtml(entry.event_type || 'event')}</span>
+                    <span class="fleet-log-item__time">${formatDate(entry.created_at)}</span>
+                </div>
+                <div class="fleet-log-item__meta">${escapeHtml((entry.level || 'info').toUpperCase())} | ${escapeHtml(entry.message || '-')}</div>
+                ${entry.payload ? `<pre class="fleet-log-item__payload">${escapeHtml(typeof entry.payload === 'string' ? entry.payload : JSON.stringify(entry.payload, null, 2))}</pre>` : ''}
+            </article>
+        `;
+}
+
 function closeConnectModal() {
     selectedConnectDeviceId = null;
     latestConnectCommand = '';
+    latestOneTimePrivateKey = '';
     connectReason.value = '';
     connectRemoteUser.value = '';
+    connectSshPublicKey.value = '';
     connectTarget.textContent = 'Select a device to generate a connect command.';
     connectCommand.textContent = 'Generate a command to begin remote SSH access.';
+    connectPrivateKey.textContent = 'One-time SSH private key will appear here.';
+    connectPrivateKey.classList.add('hidden');
     connectToken.textContent = '-';
     connectExpiry.textContent = '-';
+    connectJitStatus.textContent = '-';
     copyConnectBtn.disabled = true;
+    copyPrivateKeyBtn.disabled = true;
     connectModal.classList.add('hidden');
 }
 
@@ -757,13 +847,19 @@ function openConnectModal(deviceId) {
 
     selectedConnectDeviceId = Number(deviceId);
     latestConnectCommand = '';
+    latestOneTimePrivateKey = '';
     connectReason.value = '';
     connectRemoteUser.value = '';
+    connectSshPublicKey.value = '';
     connectTarget.textContent = `Generate admin SSH command for ${device.device_name || device.hostname || device.device_uid} (${device.owner?.email || 'unknown owner'})`;
     connectCommand.textContent = 'Generate a command to begin remote SSH access.';
+    connectPrivateKey.textContent = 'One-time SSH private key will appear here.';
+    connectPrivateKey.classList.add('hidden');
     connectToken.textContent = '-';
     connectExpiry.textContent = '-';
+    connectJitStatus.textContent = '-';
     copyConnectBtn.disabled = true;
+    copyPrivateKeyBtn.disabled = true;
     connectModal.classList.remove('hidden');
 }
 
@@ -924,17 +1020,30 @@ generateConnectBtn.addEventListener('click', async () => {
             method: 'POST',
             body: {
                 reason: connectReason.value.trim() || undefined,
-                remote_user: connectRemoteUser.value.trim() || undefined
+                remote_user: connectRemoteUser.value.trim() || undefined,
+                ssh_public_key: connectSshPublicKey.value.trim() || undefined
             }
         });
 
         latestConnectCommand = response.connect?.command || '';
+        latestOneTimePrivateKey = response.connect?.private_key || '';
         connectCommand.textContent = latestConnectCommand || 'Connect command was not returned.';
+        if (latestOneTimePrivateKey) {
+            connectPrivateKey.textContent = latestOneTimePrivateKey;
+            connectPrivateKey.classList.remove('hidden');
+        } else {
+            connectPrivateKey.textContent = 'Using your provided public key. No private key generated by portal.';
+            connectPrivateKey.classList.remove('hidden');
+        }
         connectToken.textContent = response.connect?.token || '-';
         connectExpiry.textContent = formatDate(response.connect?.expires_at);
+        connectJitStatus.textContent = response.connect?.ssh_session
+            ? `${response.connect.ssh_session.status} (session ${response.connect.ssh_session.id})`
+            : '-';
         copyConnectBtn.disabled = !latestConnectCommand;
+        copyPrivateKeyBtn.disabled = !latestOneTimePrivateKey;
         await loadFleet();
-        showAlert('SSH command generated for admin access.', false);
+        showAlert('SSH command generated. Device will apply key on next sync.', false);
     } catch (error) {
         showAlert(normalizeErrorMessage(error, 'Unable to generate SSH command'));
     } finally {
@@ -953,6 +1062,19 @@ copyConnectBtn.addEventListener('click', async () => {
         showAlert('SSH command copied to clipboard.', false);
     } catch (error) {
         showAlert('Unable to copy command automatically. Copy it manually.');
+    }
+});
+
+copyPrivateKeyBtn.addEventListener('click', async () => {
+    if (!latestOneTimePrivateKey) {
+        return;
+    }
+
+    try {
+        await copyToClipboard(latestOneTimePrivateKey);
+        showAlert('One-time private key copied. Save as ~/.ssh/apex-session-key with chmod 600.', false);
+    } catch (error) {
+        showAlert('Unable to copy private key automatically. Copy it manually.');
     }
 });
 

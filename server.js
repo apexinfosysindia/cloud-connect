@@ -5,6 +5,10 @@ const cors = require('cors');
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
+const fs = require('fs/promises');
+const os = require('os');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 
 const db = require('./db');
 
@@ -14,8 +18,11 @@ const CLOUD_BASE_DOMAIN = process.env.CLOUD_BASE_DOMAIN || 'cloud.apexinfosys.in
 const DEVICE_HEARTBEAT_TIMEOUT_SECONDS = Number(process.env.DEVICE_HEARTBEAT_TIMEOUT_SECONDS || 45);
 const DEVICE_HEARTBEAT_INTERVAL_SECONDS = Number(process.env.DEVICE_HEARTBEAT_INTERVAL_SECONDS || 20);
 const ADMIN_CONNECT_TOKEN_TTL_MINUTES = Number(process.env.ADMIN_CONNECT_TOKEN_TTL_MINUTES || 10);
+const DEVICE_SSH_POLL_INTERVAL_SECONDS = Number(process.env.DEVICE_SSH_POLL_INTERVAL_SECONDS || 15);
+const DEVICE_SSH_SESSION_TTL_MINUTES = Number(process.env.DEVICE_SSH_SESSION_TTL_MINUTES || 30);
 const DEVICE_TOKEN_PREFIX = 'dvc_';
 const ADMIN_CONNECT_TOKEN_PREFIX = 'acn_';
+const execFileAsync = promisify(execFile);
 
 const app = express();
 app.use(express.json({
@@ -229,6 +236,102 @@ function getAdminConnectTokenTtlMinutes() {
     }
 
     return Math.max(3, Math.min(60, Math.round(ADMIN_CONNECT_TOKEN_TTL_MINUTES)));
+}
+
+function getDeviceSshPollIntervalSeconds() {
+    if (!Number.isFinite(DEVICE_SSH_POLL_INTERVAL_SECONDS)) {
+        return 15;
+    }
+
+    return Math.max(5, Math.min(60, Math.round(DEVICE_SSH_POLL_INTERVAL_SECONDS)));
+}
+
+function getDeviceSshSessionTtlMinutes() {
+    if (!Number.isFinite(DEVICE_SSH_SESSION_TTL_MINUTES)) {
+        return 30;
+    }
+
+    return Math.max(5, Math.min(240, Math.round(DEVICE_SSH_SESSION_TTL_MINUTES)));
+}
+
+function sanitizeSshPublicKey(value) {
+    const normalized = sanitizeString(value, 1200);
+    if (!normalized) {
+        return null;
+    }
+
+    const pattern = /^ssh-(ed25519|rsa|ecdsa-[a-z0-9@._-]+)\s+[A-Za-z0-9+/=]+(?:\s+.*)?$/;
+    return pattern.test(normalized) ? normalized : null;
+}
+
+function getSshSessionExpiryIso(ttlMinutes = 30) {
+    const normalizedTtl = Number.isFinite(ttlMinutes)
+        ? Math.max(5, Math.min(180, Math.round(ttlMinutes)))
+        : 30;
+    return new Date(Date.now() + normalizedTtl * 60 * 1000).toISOString();
+}
+
+function escapeShellSingleQuotes(value) {
+    return String(value || '').replace(/'/g, `'"'"'`);
+}
+
+async function computePublicKeyFingerprint(publicKey) {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'apex-ssh-key-'));
+    const keyPath = path.join(tempDir, 'session.pub');
+
+    try {
+        await fs.writeFile(keyPath, `${publicKey.trim()}\n`, 'utf8');
+        const { stdout } = await execFileAsync('ssh-keygen', ['-lf', keyPath]);
+        const parts = String(stdout || '').trim().split(/\s+/);
+        return parts[1] || null;
+    } catch (error) {
+        return null;
+    } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+    }
+}
+
+async function generateEphemeralSshKeyPair(comment = 'apex-jit-session') {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'apex-ssh-session-'));
+    const keyPath = path.join(tempDir, 'session_key');
+
+    try {
+        await execFileAsync('ssh-keygen', [
+            '-q',
+            '-t',
+            'ed25519',
+            '-N',
+            '',
+            '-C',
+            comment,
+            '-f',
+            keyPath
+        ]);
+
+        const privateKey = await fs.readFile(keyPath, 'utf8');
+        const publicKey = await fs.readFile(`${keyPath}.pub`, 'utf8');
+        const fingerprint = await computePublicKeyFingerprint(publicKey);
+
+        return {
+            private_key: privateKey.trim(),
+            public_key: publicKey.trim(),
+            fingerprint
+        };
+    } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+    }
+}
+
+async function expireStaleSshSessions() {
+    await dbRun(
+        `
+            UPDATE device_ssh_sessions
+            SET status = 'expired'
+            WHERE status IN ('pending', 'active')
+              AND expires_at <= ?
+        `,
+        [new Date().toISOString()]
+    );
 }
 
 function serializeDevice(row) {
@@ -572,12 +675,13 @@ function buildAdminConnectCommand(device, options = {}) {
     const tunnelHost = sanitizeString(device.tunnel_host, 255);
     const tunnelPort = sanitizePort(device.tunnel_port);
     const sshPort = sanitizePort(device.ssh_port) || 22;
+    const identityFile = sanitizeString(options.identity_file, 256) || '~/.ssh/apex-session-key';
 
     if (!tunnelHost || !tunnelPort) {
         return null;
     }
 
-    return `ssh -p ${tunnelPort} ${remoteUser}@${tunnelHost} # Local SSH port: ${sshPort}`;
+    return `ssh -p ${tunnelPort} -o IdentitiesOnly=yes -i '${escapeShellSingleQuotes(identityFile)}' ${remoteUser}@${tunnelHost} # Local SSH port: ${sshPort}`;
 }
 
 async function getOrCreateCustomer(user) {
@@ -1070,8 +1174,190 @@ app.post('/api/internal/devices/log', requireDeviceAuth, async (req, res) => {
     }
 });
 
+app.post('/api/internal/devices/ssh-sync', requireDeviceAuth, async (req, res) => {
+    try {
+        const nowIso = new Date().toISOString();
+        await expireStaleSshSessions();
+
+        const deviceId = req.device.id;
+        const body = req.body || {};
+        const appliedSessionIds = Array.isArray(body.applied_session_ids)
+            ? body.applied_session_ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
+            : [];
+        const failedSessions = Array.isArray(body.failed_sessions)
+            ? body.failed_sessions
+            : [];
+        const revokedSessionIds = Array.isArray(body.revoked_session_ids)
+            ? body.revoked_session_ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
+            : [];
+
+        for (const sessionId of appliedSessionIds) {
+            await dbRun(
+                `
+                    UPDATE device_ssh_sessions
+                    SET status = 'active',
+                        activated_at = COALESCE(activated_at, ?),
+                        last_error = NULL
+                    WHERE id = ?
+                      AND device_id = ?
+                      AND status IN ('pending', 'active')
+                `,
+                [nowIso, sessionId, deviceId]
+            );
+        }
+
+        for (const failed of failedSessions) {
+            const sessionId = Number(failed?.session_id);
+            const errorText = sanitizeString(failed?.error, 300) || 'Failed to apply session key';
+            if (!Number.isInteger(sessionId) || sessionId <= 0) {
+                continue;
+            }
+
+            await dbRun(
+                `
+                    UPDATE device_ssh_sessions
+                    SET status = 'failed',
+                        last_error = ?
+                    WHERE id = ?
+                      AND device_id = ?
+                      AND status IN ('pending', 'active')
+                `,
+                [errorText, sessionId, deviceId]
+            );
+
+            await insertDeviceLog(
+                deviceId,
+                'error',
+                'ssh.session_failed',
+                `SSH session ${sessionId} key apply failed`,
+                { session_id: sessionId, error: errorText }
+            );
+        }
+
+        for (const sessionId of revokedSessionIds) {
+            await dbRun(
+                `
+                    UPDATE device_ssh_sessions
+                    SET status = 'revoked',
+                        revoked_at = COALESCE(revoked_at, ?)
+                    WHERE id = ?
+                      AND device_id = ?
+                      AND status IN ('active', 'pending', 'failed')
+                `,
+                [nowIso, sessionId, deviceId]
+            );
+        }
+
+        const pending = await dbAll(
+            `
+                SELECT
+                    id,
+                    ssh_username,
+                    public_key,
+                    public_key_fingerprint,
+                    expires_at,
+                    issued_at,
+                    admin_email,
+                    reason
+                FROM device_ssh_sessions
+                WHERE device_id = ?
+                  AND status = 'pending'
+                  AND expires_at > ?
+                ORDER BY issued_at ASC
+                LIMIT 25
+            `,
+            [deviceId, nowIso]
+        );
+
+        const active = await dbAll(
+            `
+                SELECT
+                    id,
+                    ssh_username,
+                    public_key,
+                    public_key_fingerprint,
+                    expires_at,
+                    issued_at,
+                    activated_at,
+                    admin_email,
+                    reason
+                FROM device_ssh_sessions
+                WHERE device_id = ?
+                  AND status = 'active'
+                  AND expires_at > ?
+                ORDER BY issued_at ASC
+                LIMIT 50
+            `,
+            [deviceId, nowIso]
+        );
+
+        const revoke = await dbAll(
+            `
+                SELECT
+                    id,
+                    ssh_username,
+                    public_key_fingerprint,
+                    expires_at,
+                    revoked_at,
+                    admin_email,
+                    reason
+                FROM device_ssh_sessions
+                WHERE device_id = ?
+                  AND (
+                    status IN ('revoked', 'failed', 'expired')
+                    OR (status IN ('active', 'pending') AND expires_at <= ?)
+                  )
+                ORDER BY id DESC
+                LIMIT 60
+            `,
+            [deviceId, nowIso]
+        );
+
+        return res.status(200).json({
+            poll_interval_seconds: getDeviceSshPollIntervalSeconds(),
+            server_time: nowIso,
+            desired_state: {
+                add: pending.map((row) => ({
+                    session_id: row.id,
+                    ssh_username: row.ssh_username,
+                    public_key: row.public_key,
+                    fingerprint: row.public_key_fingerprint,
+                    expires_at: row.expires_at,
+                    issued_at: row.issued_at,
+                    admin_email: row.admin_email,
+                    reason: row.reason
+                })),
+                keep: active.map((row) => ({
+                    session_id: row.id,
+                    ssh_username: row.ssh_username,
+                    public_key: row.public_key,
+                    fingerprint: row.public_key_fingerprint,
+                    expires_at: row.expires_at,
+                    issued_at: row.issued_at,
+                    activated_at: row.activated_at,
+                    admin_email: row.admin_email,
+                    reason: row.reason
+                })),
+                revoke: revoke.map((row) => ({
+                    session_id: row.id,
+                    ssh_username: row.ssh_username,
+                    fingerprint: row.public_key_fingerprint,
+                    expires_at: row.expires_at,
+                    revoked_at: row.revoked_at,
+                    admin_email: row.admin_email,
+                    reason: row.reason
+                }))
+            }
+        });
+    } catch (error) {
+        console.error('DEVICE SSH SYNC ERROR:', error);
+        return res.status(500).json({ error: 'Unable to sync ssh sessions' });
+    }
+});
+
 app.get('/api/admin/fleet', requireAdmin, async (req, res) => {
     try {
+        await expireStaleSshSessions();
         await dbRun(`DELETE FROM admin_connect_sessions WHERE expires_at < ?`, [new Date().toISOString()]);
 
         const rows = await dbAll(
@@ -1137,18 +1423,62 @@ app.get('/api/admin/fleet', requireAdmin, async (req, res) => {
             };
         });
 
+        const latestSshRows = await dbAll(
+            `
+                SELECT
+                    s.device_id,
+                    s.id,
+                    s.status,
+                    s.ssh_username,
+                    s.public_key_fingerprint,
+                    s.expires_at,
+                    s.issued_at,
+                    s.activated_at,
+                    s.revoked_at,
+                    s.last_error
+                FROM device_ssh_sessions s
+                INNER JOIN (
+                    SELECT device_id, MAX(id) AS max_id
+                    FROM device_ssh_sessions
+                    GROUP BY device_id
+                ) latest ON latest.device_id = s.device_id AND latest.max_id = s.id
+            `
+        );
+
+        const sshSessionByDevice = new Map(
+            latestSshRows.map((row) => [
+                row.device_id,
+                {
+                    id: row.id,
+                    status: row.status,
+                    ssh_username: row.ssh_username,
+                    fingerprint: row.public_key_fingerprint,
+                    expires_at: row.expires_at,
+                    issued_at: row.issued_at,
+                    activated_at: row.activated_at,
+                    revoked_at: row.revoked_at,
+                    last_error: row.last_error
+                }
+            ])
+        );
+
+        const devicesWithSsh = devices.map((device) => ({
+            ...device,
+            ssh_session: sshSessionByDevice.get(device.id) || null
+        }));
+
         const stats = {
-            total: devices.length,
-            online: devices.filter((device) => device.online).length,
-            offline: devices.filter((device) => !device.online).length,
-            connect_ready: devices.filter((device) => device.connect_ready).length,
-            blocked: devices.filter((device) => !device.account_enabled).length
+            total: devicesWithSsh.length,
+            online: devicesWithSsh.filter((device) => device.online).length,
+            offline: devicesWithSsh.filter((device) => !device.online).length,
+            connect_ready: devicesWithSsh.filter((device) => device.connect_ready).length,
+            blocked: devicesWithSsh.filter((device) => !device.account_enabled).length
         };
 
         return res.status(200).json({
             stats,
             heartbeat_window_seconds: getHeartbeatWindowSeconds(),
-            devices
+            devices: devicesWithSsh
         });
     } catch (error) {
         console.error('ADMIN FLEET LIST ERROR:', error);
@@ -1195,6 +1525,28 @@ app.get('/api/admin/fleet/:id/logs', requireAdmin, async (req, res) => {
             [deviceId, Math.max(10, Math.min(100, Math.round(limit / 2)))]
         );
 
+        const sshSessions = await dbAll(
+            `
+                SELECT
+                    id,
+                    admin_email,
+                    reason,
+                    ssh_username,
+                    public_key_fingerprint,
+                    status,
+                    expires_at,
+                    issued_at,
+                    activated_at,
+                    revoked_at,
+                    last_error
+                FROM device_ssh_sessions
+                WHERE device_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+            `,
+            [deviceId, Math.max(10, Math.min(120, Math.round(limit)))]
+        );
+
         return res.status(200).json({
             device: serializeDevice(device),
             logs: deviceLogs.map((entry) => ({
@@ -1211,6 +1563,19 @@ app.get('/api/admin/fleet/:id/logs', requireAdmin, async (req, res) => {
                 action: entry.action,
                 details: parseJsonSafe(entry.details, entry.details),
                 created_at: entry.created_at
+            })),
+            ssh_sessions: sshSessions.map((entry) => ({
+                id: entry.id,
+                admin_email: entry.admin_email,
+                reason: entry.reason,
+                ssh_username: entry.ssh_username,
+                fingerprint: entry.public_key_fingerprint,
+                status: entry.status,
+                expires_at: entry.expires_at,
+                issued_at: entry.issued_at,
+                activated_at: entry.activated_at,
+                revoked_at: entry.revoked_at,
+                last_error: entry.last_error
             }))
         });
     } catch (error) {
@@ -1236,8 +1601,43 @@ app.post('/api/admin/fleet/:id/connect', requireAdmin, async (req, res) => {
             return res.status(403).json({ error: 'Owner account is not active for remote access' });
         }
 
+        const sshUsername = sanitizeRemoteUser(req.body?.remote_user) || sanitizeRemoteUser(device.remote_user) || 'root';
+        const requestedPublicKey = sanitizeSshPublicKey(req.body?.ssh_public_key);
+        const providedPublicKey = Boolean(requestedPublicKey);
+
+        await expireStaleSshSessions();
+
+        const sshTtlMinutes = getDeviceSshSessionTtlMinutes();
+        let selectedPublicKey = requestedPublicKey;
+        let generatedPrivateKey = null;
+        let sshFingerprint = null;
+
+        if (!selectedPublicKey) {
+            const keyComment = `apex-jit:${req.admin.email}|device:${device.device_uid}|${Date.now()}`;
+            const keyPair = await generateEphemeralSshKeyPair(keyComment);
+            selectedPublicKey = keyPair.public_key;
+            generatedPrivateKey = keyPair.private_key;
+            sshFingerprint = keyPair.fingerprint;
+        }
+
+        const existingOpenSession = await dbGet(
+            `
+                SELECT id, status, expires_at
+                FROM device_ssh_sessions
+                WHERE device_id = ?
+                  AND ssh_username = ?
+                  AND public_key = ?
+                  AND status IN ('pending', 'active')
+                  AND expires_at > ?
+                ORDER BY id DESC
+                LIMIT 1
+            `,
+            [deviceId, sshUsername, selectedPublicKey, new Date().toISOString()]
+        );
+
         const command = buildAdminConnectCommand(device, {
-            remote_user: req.body?.remote_user
+            remote_user: sshUsername,
+            identity_file: '~/.ssh/apex-session-key'
         });
 
         if (!command) {
@@ -1249,6 +1649,59 @@ app.post('/api/admin/fleet/:id/connect', requireAdmin, async (req, res) => {
         const connectTokenHash = hashSecret(connectToken);
         const ttlMinutes = getAdminConnectTokenTtlMinutes();
         const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000).toISOString();
+        const sshSessionExpiry = getSshSessionExpiryIso(sshTtlMinutes);
+        if (!sshFingerprint) {
+            sshFingerprint = await computePublicKeyFingerprint(selectedPublicKey);
+        }
+
+        let sshSessionId;
+        let sshSessionStatus;
+
+        if (existingOpenSession) {
+            await dbRun(
+                `
+                    UPDATE device_ssh_sessions
+                    SET expires_at = ?,
+                        reason = COALESCE(?, reason),
+                        last_error = NULL
+                    WHERE id = ?
+                `,
+                [sshSessionExpiry, reason || null, existingOpenSession.id]
+            );
+
+            sshSessionId = existingOpenSession.id;
+            sshSessionStatus = existingOpenSession.status || 'active';
+        } else {
+            const sshSessionInsert = await dbRun(
+                `
+                    INSERT INTO device_ssh_sessions (
+                        device_id,
+                        admin_email,
+                        reason,
+                        ssh_username,
+                        public_key,
+                        public_key_fingerprint,
+                        status,
+                        expires_at,
+                        issued_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                `,
+                [
+                    deviceId,
+                    req.admin.email,
+                    reason || null,
+                    sshUsername,
+                    selectedPublicKey,
+                    sshFingerprint,
+                    sshSessionExpiry,
+                    new Date().toISOString()
+                ]
+            );
+
+            sshSessionId = sshSessionInsert.lastID;
+            sshSessionStatus = 'pending';
+        }
 
         await dbRun(`DELETE FROM admin_connect_sessions WHERE expires_at < ?`, [new Date().toISOString()]);
         await dbRun(
@@ -1270,8 +1723,13 @@ app.post('/api/admin/fleet/:id/connect', requireAdmin, async (req, res) => {
             device_uid: device.device_uid,
             tunnel_host: device.tunnel_host,
             tunnel_port: device.tunnel_port,
-            requested_remote_user: sanitizeRemoteUser(req.body?.remote_user) || null,
-            ttl_minutes: ttlMinutes
+            requested_remote_user: sshUsername,
+            ttl_minutes: ttlMinutes,
+            ssh_session_id: sshSessionId,
+            ssh_session_expires_at: sshSessionExpiry,
+            ssh_fingerprint: sshFingerprint,
+            public_key_provided: providedPublicKey,
+            ssh_session_reused: Boolean(existingOpenSession)
         });
 
         await insertDeviceLog(
@@ -1281,7 +1739,12 @@ app.post('/api/admin/fleet/:id/connect', requireAdmin, async (req, res) => {
             `Admin ${req.admin.email} generated an SSH connect command`,
             {
                 reason: reason || null,
-                expires_at: expiresAt
+                expires_at: expiresAt,
+                ssh_session_id: sshSessionId,
+                ssh_session_expires_at: sshSessionExpiry,
+                ssh_fingerprint: sshFingerprint,
+                public_key_provided: providedPublicKey,
+                ssh_session_reused: Boolean(existingOpenSession)
             }
         );
 
@@ -1291,8 +1754,22 @@ app.post('/api/admin/fleet/:id/connect', requireAdmin, async (req, res) => {
                 token: connectToken,
                 expires_at: expiresAt,
                 command,
-                note: 'Token is issued for admin session tracking and rotates on each connect request.'
-            }
+                note: existingOpenSession
+                    ? 'Existing JIT session reused. Key should already be active on device.'
+                    : 'Session key accepted. Device agent will apply key shortly.',
+                private_key: generatedPrivateKey,
+                ssh_session: {
+                    id: sshSessionId,
+                    status: sshSessionStatus,
+                    ssh_username: sshUsername,
+                    fingerprint: sshFingerprint,
+                    expires_at: sshSessionExpiry,
+                    private_key_path_hint: '~/.ssh/apex-session-key',
+                    public_key_provided: providedPublicKey,
+                    reused: Boolean(existingOpenSession)
+                }
+            },
+            auth_mode: 'jit_temporary_key'
         });
     } catch (error) {
         console.error('ADMIN CONNECT ERROR:', error);
