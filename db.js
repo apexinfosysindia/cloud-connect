@@ -83,16 +83,38 @@ const ADMIN_ACCESS_LOGS_TABLE_SCHEMA = `
     )
 `;
 
+const DEVICE_SSH_SESSIONS_TABLE_SCHEMA = `
+    CREATE TABLE IF NOT EXISTS device_ssh_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id INTEGER NOT NULL,
+        admin_email TEXT NOT NULL,
+        reason TEXT,
+        ssh_username TEXT NOT NULL,
+        public_key TEXT NOT NULL,
+        public_key_fingerprint TEXT,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'active', 'expired', 'revoked', 'failed')),
+        expires_at DATETIME NOT NULL,
+        issued_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        activated_at DATETIME,
+        revoked_at DATETIME,
+        last_error TEXT,
+        FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+    )
+`;
+
 const DEVICE_SCHEMA_STATEMENTS = [
     DEVICES_TABLE_SCHEMA,
     DEVICE_LOGS_TABLE_SCHEMA,
     ADMIN_CONNECT_SESSIONS_TABLE_SCHEMA,
     ADMIN_ACCESS_LOGS_TABLE_SCHEMA,
+    DEVICE_SSH_SESSIONS_TABLE_SCHEMA,
     'CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id)',
     'CREATE INDEX IF NOT EXISTS idx_devices_last_seen ON devices(last_seen_at)',
     'CREATE INDEX IF NOT EXISTS idx_device_logs_device_created ON device_logs(device_id, created_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_admin_connect_sessions_expiry ON admin_connect_sessions(expires_at)',
-    'CREATE INDEX IF NOT EXISTS idx_admin_access_logs_device_created ON admin_access_logs(device_id, created_at DESC)'
+    'CREATE INDEX IF NOT EXISTS idx_admin_access_logs_device_created ON admin_access_logs(device_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_device_ssh_sessions_device_status_expiry ON device_ssh_sessions(device_id, status, expires_at)',
+    'CREATE INDEX IF NOT EXISTS idx_device_ssh_sessions_expiry ON device_ssh_sessions(expires_at)'
 ];
 
 const USERS_REBUILD_COLUMNS = [

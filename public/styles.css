@@ -855,6 +855,13 @@ code {
     word-break: break-word;
 }
 
+.input-textarea {
+    resize: vertical;
+    min-height: 94px;
+    font-family: "SFMono-Regular", SFMono-Regular, ui-monospace, Menlo, Consolas, monospace;
+    font-size: 0.83rem;
+}
+
 .admin-page .status-badge {
     border-color: #d2deea;
     background: #fff;

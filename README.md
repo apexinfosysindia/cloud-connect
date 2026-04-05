@@ -43,6 +43,7 @@ Control plane flow:
 - Device heartbeat tracking (online/offline, local IPs, last seen)
 - Device and admin access logs for auditability
 - Admin-only connect command generation for remote SSH
+- JIT temporary SSH session keys (30 minute default TTL)
 ## Admin Dashboard
 Path:
 - `/admin.html`
@@ -66,6 +67,7 @@ Internal device endpoints:
 - `POST /api/internal/devices/register`
 - `POST /api/internal/devices/heartbeat`
 - `POST /api/internal/devices/log`
+- `POST /api/internal/devices/ssh-sync`
 
 Admin endpoints:
 - `GET /api/admin/fleet`
@@ -94,6 +96,8 @@ PORTAL_SESSION_SECRET=
 DEVICE_HEARTBEAT_TIMEOUT_SECONDS=45
 DEVICE_HEARTBEAT_INTERVAL_SECONDS=20
 ADMIN_CONNECT_TOKEN_TTL_MINUTES=10
+DEVICE_SSH_POLL_INTERVAL_SECONDS=15
+DEVICE_SSH_SESSION_TTL_MINUTES=30
 ```
 ## Local Development
 Install dependencies:
@@ -146,6 +150,16 @@ Optional admin SSH publish settings:
 - `ssh_remote_port=<unique-public-port-on-frps>` (set `0` to disable)
 - `ssh_local_port=22`
 - `ssh_remote_user=root`
+- `ssh_auth_user=root`
+- `ssh_authorized_keys_file=` (optional explicit file path)
+
+## JIT SSH Key Flow
+1. Admin clicks Connect in fleet UI.
+2. Cloud Connect generates one-time SSH keypair when admin key is not provided.
+3. Cloud Connect stores public key as a pending device SSH session.
+4. `apex-cloud-link` polls `/api/internal/devices/ssh-sync` and updates target `authorized_keys`.
+5. Admin connects using provided command and one-time private key.
+6. Expired/revoked sessions are removed by addon on sync.
 ## Billing Notes
 - Checkout is Razorpay subscription-based.
 - Payment activation is verified both from the browser callback and Razorpay webhooks.
