@@ -194,7 +194,6 @@
             </div>
 
             <button id="copyConnectBtn" class="button button-secondary" disabled>Copy SSH Command</button>
-            <button id="copyPrivateKeyBtn" class="button button-secondary" disabled>Copy One-Time Private Key</button>
             <button id="downloadPrivateKeyBtn" class="button button-secondary" disabled>Download One-Time Private Key</button>
             <button id="downloadConnectScriptBtn" class="button button-secondary" disabled>Download Ready Connect Script</button>
         </div>
@@ -242,7 +241,6 @@ const connectToken = document.getElementById('connectToken');
 const connectExpiry = document.getElementById('connectExpiry');
 const connectJitStatus = document.getElementById('connectJitStatus');
 const copyConnectBtn = document.getElementById('copyConnectBtn');
-const copyPrivateKeyBtn = document.getElementById('copyPrivateKeyBtn');
 const downloadPrivateKeyBtn = document.getElementById('downloadPrivateKeyBtn');
 const downloadConnectScriptBtn = document.getElementById('downloadConnectScriptBtn');
 
@@ -840,7 +838,6 @@ function closeConnectModal() {
     connectExpiry.textContent = '-';
     connectJitStatus.textContent = '-';
     copyConnectBtn.disabled = true;
-    copyPrivateKeyBtn.disabled = true;
     downloadPrivateKeyBtn.disabled = true;
     downloadConnectScriptBtn.disabled = true;
     connectModal.classList.add('hidden');
@@ -868,7 +865,6 @@ function openConnectModal(deviceId) {
     connectExpiry.textContent = '-';
     connectJitStatus.textContent = '-';
     copyConnectBtn.disabled = true;
-    copyPrivateKeyBtn.disabled = true;
     downloadPrivateKeyBtn.disabled = true;
     downloadConnectScriptBtn.disabled = true;
     connectModal.classList.remove('hidden');
@@ -909,7 +905,10 @@ function buildReadyConnectScript(command, privateKey) {
     }
 
     const commandWithoutComment = command.replace(/\s+#\s+Local SSH port:.*$/, '');
-    const commandWithKeyRef = commandWithoutComment.replace(/-i\s+'[^']*'/, '-i "$KEY_FILE"');
+    let commandWithKeyRef = commandWithoutComment.replace(/-i\s+'[^']*'/, '-i "$KEY_FILE"');
+    if (commandWithKeyRef === commandWithoutComment) {
+        commandWithKeyRef = commandWithoutComment.replace(/-i\s+\S+/, '-i "$KEY_FILE"');
+    }
 
     return `#!/usr/bin/env bash
 set -euo pipefail
@@ -1092,7 +1091,6 @@ generateConnectBtn.addEventListener('click', async () => {
             ? `${response.connect.ssh_session.status} (session ${response.connect.ssh_session.id})`
             : '-';
         copyConnectBtn.disabled = !latestConnectCommand;
-        copyPrivateKeyBtn.disabled = !latestOneTimePrivateKey;
         downloadPrivateKeyBtn.disabled = !latestOneTimePrivateKey;
         downloadConnectScriptBtn.disabled = !(latestOneTimePrivateKey && latestConnectCommand);
         await loadFleet();
@@ -1118,27 +1116,14 @@ copyConnectBtn.addEventListener('click', async () => {
     }
 });
 
-copyPrivateKeyBtn.addEventListener('click', async () => {
-    if (!latestOneTimePrivateKey) {
-        return;
-    }
-
-    try {
-        await copyToClipboard(latestOneTimePrivateKey);
-        showAlert('One-time private key copied. Save as ~/.ssh/apex-session-key with chmod 600.', false);
-    } catch (error) {
-        showAlert('Unable to copy private key automatically. Copy it manually.');
-    }
-});
-
 downloadPrivateKeyBtn.addEventListener('click', () => {
     if (!latestOneTimePrivateKey) {
         return;
     }
 
     const sessionId = latestSshSession?.id ? String(latestSshSession.id) : String(Date.now());
-    downloadTextFile(`apex-session-key-${sessionId}`, `${latestOneTimePrivateKey}\n`);
-    showAlert('Private key downloaded.', false);
+    downloadTextFile(`apex-session-key-${sessionId}.key`, `${latestOneTimePrivateKey}\n`, 'application/x-pem-file');
+    showAlert('Private key downloaded (.key). Run: chmod 600 ~/Downloads/apex-session-key-<id>.key', false);
 });
 
 downloadConnectScriptBtn.addEventListener('click', () => {
@@ -1149,7 +1134,7 @@ downloadConnectScriptBtn.addEventListener('click', () => {
 
     const sessionId = latestSshSession?.id ? String(latestSshSession.id) : String(Date.now());
     downloadTextFile(`apex-connect-session-${sessionId}.sh`, script, 'text/x-shellscript');
-    showAlert('Ready connect script downloaded.', false);
+    showAlert('Ready connect script downloaded. Run: chmod +x ~/Downloads/apex-connect-session-<id>.sh && ~/Downloads/apex-connect-session-<id>.sh', false);
 });
 
 tokenModalClose.addEventListener('click', closeTokenModal);
