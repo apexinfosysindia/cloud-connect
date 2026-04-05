@@ -43,7 +43,6 @@ Control plane flow:
 - Device heartbeat tracking (online/offline, local IPs, last seen)
 - Device and admin access logs for auditability
 - Admin-only connect command generation for remote SSH
-- JIT temporary SSH session keys (30 minute default TTL)
 ## Admin Dashboard
 Path:
 - `/admin.html`
@@ -67,7 +66,6 @@ Internal device endpoints:
 - `POST /api/internal/devices/register`
 - `POST /api/internal/devices/heartbeat`
 - `POST /api/internal/devices/log`
-- `POST /api/internal/devices/ssh-sync`
 
 Admin endpoints:
 - `GET /api/admin/fleet`
@@ -96,8 +94,9 @@ PORTAL_SESSION_SECRET=
 DEVICE_HEARTBEAT_TIMEOUT_SECONDS=45
 DEVICE_HEARTBEAT_INTERVAL_SECONDS=20
 ADMIN_CONNECT_TOKEN_TTL_MINUTES=10
-DEVICE_SSH_POLL_INTERVAL_SECONDS=15
-DEVICE_SSH_SESSION_TTL_MINUTES=30
+DEVICE_TUNNEL_HOST=cloud.apexinfosys.in
+DEVICE_TUNNEL_PORT_MIN=22000
+DEVICE_TUNNEL_PORT_MAX=22999
 ```
 ## Local Development
 Install dependencies:
@@ -136,30 +135,20 @@ The separate `apex-cloud-link` add-on repo:
 - downloads `frpc`
 - connects to `cloud.apexinfosys.in:7000`
 - registers the customer domain through FRP
-- can optionally register into admin fleet tracking and send heartbeats/logs
-- can optionally expose SSH over FRP TCP when `ssh_remote_port` is configured
+- automatically registers into admin fleet tracking and sends heartbeats/logs
+- automatically receives and uses assigned SSH tunnel port from Cloud Connect
 Remote access only succeeds when the portal authorizes the token and the account is `active` or `trial`.
 
-Recommended `apex-cloud-link` options for admin fleet tracking:
-- `fleet_reporting_enabled=true`
-- `cloud_api_url=https://cloud.apexinfosys.in`
-- `device_uid=<stable-device-id>`
-- `device_name=<friendly-name>`
-
 Optional admin SSH publish settings:
-- `ssh_remote_port=<unique-public-port-on-frps>` (set `0` to disable)
-- `ssh_local_port=22`
-- `ssh_remote_user=root`
-- `ssh_auth_user=root`
-- `ssh_authorized_keys_file=` (optional explicit file path)
+- None required. `apex-cloud-link` now auto-registers and receives assigned SSH tunnel port from Cloud Connect.
 
-## JIT SSH Key Flow
-1. Admin clicks Connect in fleet UI.
-2. Cloud Connect generates one-time SSH keypair when admin key is not provided.
-3. Cloud Connect stores public key as a pending device SSH session.
-4. `apex-cloud-link` polls `/api/internal/devices/ssh-sync` and updates target `authorized_keys`.
-5. Admin connects using provided command and one-time private key.
-6. Expired/revoked sessions are removed by addon on sync.
+Automatic addon behavior:
+- Fleet reporting is always on
+- Device identity is derived from hostname
+- SSH user is fixed to `root`
+- SSH local port is fixed to `22`
+- Tunnel host is set by Cloud Connect (`DEVICE_TUNNEL_HOST`, defaults to `CLOUD_BASE_DOMAIN`)
+- Tunnel port is auto-assigned by Cloud Connect from `DEVICE_TUNNEL_PORT_MIN..DEVICE_TUNNEL_PORT_MAX`
 ## Billing Notes
 - Checkout is Razorpay subscription-based.
 - Payment activation is verified both from the browser callback and Razorpay webhooks.
