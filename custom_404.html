@@ -12,67 +12,99 @@
 
   <style>
     * {
+      -webkit-box-sizing: border-box;
       box-sizing: border-box;
     }
 
     body {
+      padding: 0;
       margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      padding: 20px;
-      font-family: "Montserrat", sans-serif;
-      background: #f6f7fb;
-      color: #111;
+    }
+
+    #notfound {
+      position: relative;
+      height: 100vh;
+    }
+
+    #notfound .notfound {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      -webkit-transform: translate(-50%, -50%);
+      -ms-transform: translate(-50%, -50%);
+      transform: translate(-50%, -50%);
     }
 
     .notfound {
+      max-width: 410px;
       width: 100%;
-      max-width: 760px;
       text-align: center;
-      background: #fff;
-      border-radius: 16px;
-      padding: 48px 28px;
-      box-shadow: 0 10px 35px rgba(0, 0, 0, 0.08);
     }
 
-    .notfound-404 h1 {
-      margin: 0 0 10px;
-      font-size: clamp(72px, 16vw, 150px);
-      line-height: 1;
+    .notfound .notfound-404 {
+      height: 280px;
+      position: relative;
+      z-index: -1;
+    }
+
+    .notfound .notfound-404 h1 {
+      font-family: "Montserrat", sans-serif;
+      font-size: 230px;
+      margin: 0;
       font-weight: 900;
-      color: #d32f2f;
-      letter-spacing: 2px;
+      position: absolute;
+      left: 50%;
+      -webkit-transform: translateX(-50%);
+      -ms-transform: translateX(-50%);
+      transform: translateX(-50%);
+      background: url("https://error.cloud.apexinfosys.in/img/bg.jpg") no-repeat;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-size: cover;
+      background-position: center;
     }
 
-    h2 {
-      margin: 0 0 14px;
-      font-size: clamp(22px, 5vw, 34px);
+    .notfound h2 {
+      font-family: "Montserrat", sans-serif;
+      color: #000;
+      font-size: 24px;
       font-weight: 700;
+      text-transform: uppercase;
+      margin-top: 0;
     }
 
-    p {
-      margin: 0 0 24px;
-      font-size: 15px;
-      line-height: 1.6;
-      color: #444;
-    }
-
-    a {
-      display: inline-block;
-      text-decoration: none;
+    .notfound p {
+      font-family: "Montserrat", sans-serif;
+      color: #000;
       font-size: 14px;
-      font-weight: 700;
-      color: #fff;
-      background: #111;
-      border-radius: 10px;
-      padding: 12px 22px;
-      transition: transform 0.15s ease, opacity 0.15s ease;
+      font-weight: 400;
+      margin-bottom: 20px;
+      margin-top: 0;
     }
 
-    a:hover {
-      transform: translateY(-1px);
-      opacity: 0.92;
+    .notfound a {
+      font-family: "Montserrat", sans-serif;
+      font-size: 14px;
+      text-decoration: none;
+      text-transform: uppercase;
+      background: #0046d5;
+      display: inline-block;
+      padding: 15px 30px;
+      border-radius: 40px;
+      color: #fff;
+      font-weight: 700;
+      -webkit-box-shadow: 0 4px 15px -5px #0046d5;
+      box-shadow: 0 4px 15px -5px #0046d5;
+    }
+
+    @media only screen and (max-width: 767px) {
+      .notfound .notfound-404 {
+        height: 142px;
+      }
+
+      .notfound .notfound-404 h1 {
+        font-size: 112px;
+      }
     }
   </style>
 </head>
