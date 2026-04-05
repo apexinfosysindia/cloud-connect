@@ -186,6 +186,7 @@
 
             <code id="connectCommand" class="token-value">Generate a command to begin remote SSH access.</code>
             <code id="connectPrivateKey" class="token-value hidden">One-time SSH private key will appear here.</code>
+            <code id="connectKnownKeyPaths" class="token-value hidden">Known key paths from device will appear here.</code>
 
             <div class="fleet-command-meta">
                 <div><strong>Session token:</strong> <code id="connectToken">-</code></div>
@@ -237,6 +238,7 @@ const connectSshPublicKey = document.getElementById('connectSshPublicKey');
 const generateConnectBtn = document.getElementById('generateConnectBtn');
 const connectCommand = document.getElementById('connectCommand');
 const connectPrivateKey = document.getElementById('connectPrivateKey');
+const connectKnownKeyPaths = document.getElementById('connectKnownKeyPaths');
 const connectToken = document.getElementById('connectToken');
 const connectExpiry = document.getElementById('connectExpiry');
 const connectJitStatus = document.getElementById('connectJitStatus');
@@ -253,6 +255,7 @@ let selectedConnectDeviceId = null;
 let latestConnectCommand = '';
 let latestOneTimePrivateKey = '';
 let latestSshSession = null;
+let latestKnownPrivateKeyPaths = [];
 let fleetRefreshTimer = null;
 
 function syncAdminMasthead() {
@@ -827,6 +830,7 @@ function closeConnectModal() {
     latestConnectCommand = '';
     latestOneTimePrivateKey = '';
     latestSshSession = null;
+    latestKnownPrivateKeyPaths = [];
     connectReason.value = '';
     connectRemoteUser.value = '';
     connectSshPublicKey.value = '';
@@ -834,6 +838,8 @@ function closeConnectModal() {
     connectCommand.textContent = 'Generate a command to begin remote SSH access.';
     connectPrivateKey.textContent = 'One-time SSH private key will appear here.';
     connectPrivateKey.classList.add('hidden');
+    connectKnownKeyPaths.textContent = 'Known key paths from device will appear here.';
+    connectKnownKeyPaths.classList.add('hidden');
     connectToken.textContent = '-';
     connectExpiry.textContent = '-';
     connectJitStatus.textContent = '-';
@@ -854,6 +860,7 @@ function openConnectModal(deviceId) {
     latestConnectCommand = '';
     latestOneTimePrivateKey = '';
     latestSshSession = null;
+    latestKnownPrivateKeyPaths = [];
     connectReason.value = '';
     connectRemoteUser.value = '';
     connectSshPublicKey.value = '';
@@ -861,6 +868,8 @@ function openConnectModal(deviceId) {
     connectCommand.textContent = 'Generate a command to begin remote SSH access.';
     connectPrivateKey.textContent = 'One-time SSH private key will appear here.';
     connectPrivateKey.classList.add('hidden');
+    connectKnownKeyPaths.textContent = 'Known key paths from device will appear here.';
+    connectKnownKeyPaths.classList.add('hidden');
     connectToken.textContent = '-';
     connectExpiry.textContent = '-';
     connectJitStatus.textContent = '-';
@@ -905,10 +914,7 @@ function buildReadyConnectScript(command, privateKey) {
     }
 
     const commandWithoutComment = command.replace(/\s+#\s+Local SSH port:.*$/, '');
-    let commandWithKeyRef = commandWithoutComment.replace(/-i\s+'[^']*'/, '-i "$KEY_FILE"');
-    if (commandWithKeyRef === commandWithoutComment) {
-        commandWithKeyRef = commandWithoutComment.replace(/-i\s+\S+/, '-i "$KEY_FILE"');
-    }
+    const commandWithKeyRef = commandWithoutComment.replace(/-i\s+\S+/, '-i "$KEY_FILE"');
 
     return `#!/usr/bin/env bash
 set -euo pipefail
@@ -926,6 +932,25 @@ EOF
 chmod 600 "$KEY_FILE"
 
 ${commandWithKeyRef}
+`;
+}
+
+function buildKnownKeyConnectScript(command, keyPath) {
+    if (!command || !keyPath) {
+        return null;
+    }
+
+    const commandWithoutComment = command.replace(/\s+#\s+Local SSH port:.*$/, '');
+    const escapedPath = String(keyPath).replace(/"/g, '\\"');
+    const commandWithKnownPath = commandWithoutComment
+        .replace(/-i\s+'[^']*'/, `-i "${escapedPath}"`)
+        .replace(/-i\s+"[^"]*"/, `-i "${escapedPath}"`)
+        .replace(/-i\s+\S+/, `-i "${escapedPath}"`);
+
+    return `#!/usr/bin/env bash
+set -euo pipefail
+
+${commandWithKnownPath}
 `;
 }
 
@@ -1077,6 +1102,9 @@ generateConnectBtn.addEventListener('click', async () => {
         latestConnectCommand = response.connect?.command || '';
         latestOneTimePrivateKey = response.connect?.private_key || '';
         latestSshSession = response.connect?.ssh_session || null;
+        latestKnownPrivateKeyPaths = Array.isArray(response.connect?.known_private_key_paths)
+            ? response.connect.known_private_key_paths
+            : [];
         connectCommand.textContent = latestConnectCommand || 'Connect command was not returned.';
         if (latestOneTimePrivateKey) {
             connectPrivateKey.textContent = latestOneTimePrivateKey;
@@ -1085,6 +1113,14 @@ generateConnectBtn.addEventListener('click', async () => {
             connectPrivateKey.textContent = 'Using your provided public key. No private key generated by portal.';
             connectPrivateKey.classList.remove('hidden');
         }
+
+        if (latestKnownPrivateKeyPaths.length > 0) {
+            connectKnownKeyPaths.textContent = `Device already has matching private key(s): ${latestKnownPrivateKeyPaths.join(', ')}`;
+            connectKnownKeyPaths.classList.remove('hidden');
+        } else {
+            connectKnownKeyPaths.textContent = 'No known matching private key path reported by device.';
+            connectKnownKeyPaths.classList.remove('hidden');
+        }
         connectToken.textContent = response.connect?.token || '-';
         connectExpiry.textContent = formatDate(response.connect?.expires_at);
         connectJitStatus.textContent = response.connect?.ssh_session
@@ -1092,7 +1128,7 @@ generateConnectBtn.addEventListener('click', async () => {
             : '-';
         copyConnectBtn.disabled = !latestConnectCommand;
         downloadPrivateKeyBtn.disabled = !latestOneTimePrivateKey;
-        downloadConnectScriptBtn.disabled = !(latestOneTimePrivateKey && latestConnectCommand);
+        downloadConnectScriptBtn.disabled = !(latestConnectCommand && (latestOneTimePrivateKey || latestKnownPrivateKeyPaths.length > 0));
         await loadFleet();
         showAlert('SSH command generated. Device will apply key on next sync.', false);
     } catch (error) {
@@ -1127,14 +1163,20 @@ downloadPrivateKeyBtn.addEventListener('click', () => {
 });
 
 downloadConnectScriptBtn.addEventListener('click', () => {
-    const script = buildReadyConnectScript(latestConnectCommand, latestOneTimePrivateKey);
+    let script = null;
+    if (latestOneTimePrivateKey) {
+        script = buildReadyConnectScript(latestConnectCommand, latestOneTimePrivateKey);
+    } else if (latestKnownPrivateKeyPaths.length > 0) {
+        script = buildKnownKeyConnectScript(latestConnectCommand, latestKnownPrivateKeyPaths[0]);
+    }
+
     if (!script) {
         return;
     }
 
     const sessionId = latestSshSession?.id ? String(latestSshSession.id) : String(Date.now());
     downloadTextFile(`apex-connect-session-${sessionId}.sh`, script, 'text/x-shellscript');
-    showAlert('Ready connect script downloaded. Run: chmod +x ~/Downloads/apex-connect-session-<id>.sh && ~/Downloads/apex-connect-session-<id>.sh', false);
+    showAlert('Ready connect script downloaded. Run: bash ~/Downloads/apex-connect-session-<id>.sh', false);
 });
 
 tokenModalClose.addEventListener('click', closeTokenModal);

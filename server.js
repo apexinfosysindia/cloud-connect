@@ -356,6 +356,10 @@ function serializeDevice(row) {
         remote_user: row.remote_user || 'root',
         tunnel_host: row.tunnel_host,
         tunnel_port: row.tunnel_port,
+        host_root_known_private_keys: row.host_root_known_private_keys
+            ? row.host_root_known_private_keys.split(',').map((entry) => entry.trim()).filter(Boolean)
+            : [],
+        host_root_public_key: row.host_root_public_key || null,
         addon_version: row.addon_version,
         agent_state: row.agent_state,
         online,
@@ -681,7 +685,8 @@ function buildAdminConnectCommand(device, options = {}) {
         return null;
     }
 
-    return `ssh -p ${tunnelPort} -o IdentitiesOnly=yes -i '${escapeShellSingleQuotes(identityFile)}' ${remoteUser}@${tunnelHost} # Local SSH port: ${sshPort}`;
+    const sanitizedIdentity = sanitizeString(identityFile, 256) || '~/.ssh/apex-session-key';
+    return `ssh -p ${tunnelPort} -o IdentitiesOnly=yes -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o BatchMode=yes -i ${sanitizedIdentity} ${remoteUser}@${tunnelHost} # Local SSH port: ${sshPort}`;
 }
 
 async function getOrCreateCustomer(user) {
@@ -928,6 +933,14 @@ app.post('/api/internal/devices/register', async (req, res) => {
         const remoteUser = sanitizeRemoteUser(req.body?.remote_user) || 'root';
         const tunnelHost = sanitizeString(req.body?.tunnel_host, 255);
         const tunnelPort = sanitizePort(req.body?.tunnel_port);
+        const hostRootKnownPrivateKeys = Array.isArray(req.body?.host_root_known_private_keys)
+            ? req.body.host_root_known_private_keys
+                .map((entry) => sanitizeString(entry, 260))
+                .filter(Boolean)
+                .slice(0, 8)
+                .join(',')
+            : null;
+        const hostRootPublicKey = sanitizeSshPublicKey(req.body?.host_root_public_key);
         const addonVersion = sanitizeString(req.body?.addon_version, 64);
         const agentState = sanitizeString(req.body?.agent_state, 64);
 
@@ -949,6 +962,8 @@ app.post('/api/internal/devices/register', async (req, res) => {
                         remote_user = ?,
                         tunnel_host = ?,
                         tunnel_port = ?,
+                        host_root_known_private_keys = ?,
+                        host_root_public_key = ?,
                         addon_version = ?,
                         agent_state = ?,
                         device_token_hash = ?,
@@ -964,6 +979,8 @@ app.post('/api/internal/devices/register', async (req, res) => {
                     remoteUser,
                     tunnelHost,
                     tunnelPort,
+                    hostRootKnownPrivateKeys,
+                    hostRootPublicKey,
                     addonVersion,
                     agentState,
                     deviceTokenHash,
@@ -986,6 +1003,8 @@ app.post('/api/internal/devices/register', async (req, res) => {
                         remote_user,
                         tunnel_host,
                         tunnel_port,
+                        host_root_known_private_keys,
+                        host_root_public_key,
                         addon_version,
                         agent_state,
                         device_token_hash,
@@ -1005,6 +1024,8 @@ app.post('/api/internal/devices/register', async (req, res) => {
                     remoteUser,
                     tunnelHost,
                     tunnelPort,
+                    hostRootKnownPrivateKeys,
+                    hostRootPublicKey,
                     addonVersion,
                     agentState,
                     deviceTokenHash,
@@ -1077,6 +1098,20 @@ app.post('/api/internal/devices/heartbeat', requireDeviceAuth, async (req, res) 
             ? sanitizePort(body.tunnel_port)
             : current.tunnel_port;
 
+        const hostRootKnownPrivateKeys = hasOwn.call(body, 'host_root_known_private_keys')
+            ? (Array.isArray(body.host_root_known_private_keys)
+                ? body.host_root_known_private_keys
+                    .map((entry) => sanitizeString(entry, 260))
+                    .filter(Boolean)
+                    .slice(0, 8)
+                    .join(',')
+                : null)
+            : current.host_root_known_private_keys;
+
+        const hostRootPublicKey = hasOwn.call(body, 'host_root_public_key')
+            ? sanitizeSshPublicKey(body.host_root_public_key)
+            : current.host_root_public_key;
+
         const addonVersion = hasOwn.call(body, 'addon_version')
             ? sanitizeString(body.addon_version, 64)
             : current.addon_version;
@@ -1095,6 +1130,8 @@ app.post('/api/internal/devices/heartbeat', requireDeviceAuth, async (req, res) 
                     remote_user = ?,
                     tunnel_host = ?,
                     tunnel_port = ?,
+                    host_root_known_private_keys = ?,
+                    host_root_public_key = ?,
                     addon_version = ?,
                     agent_state = ?,
                     last_seen_at = ?,
@@ -1109,6 +1146,8 @@ app.post('/api/internal/devices/heartbeat', requireDeviceAuth, async (req, res) 
                 nextRemoteUser,
                 tunnelHost,
                 nextTunnelPort,
+                hostRootKnownPrivateKeys,
+                hostRootPublicKey,
                 addonVersion,
                 agentState,
                 nowIso,
@@ -1612,6 +1651,18 @@ app.post('/api/admin/fleet/:id/connect', requireAdmin, async (req, res) => {
         let generatedPrivateKey = null;
         let sshFingerprint = null;
 
+        const knownDevicePrivateKeys = Array.isArray(device.host_root_known_private_keys)
+            ? device.host_root_known_private_keys.filter(Boolean)
+            : String(device.host_root_known_private_keys || '')
+                .split(',')
+                .map((entry) => String(entry || '').trim())
+                .filter(Boolean);
+        const knownDevicePublicKey = sanitizeSshPublicKey(device.host_root_public_key);
+
+        if (!selectedPublicKey && knownDevicePublicKey) {
+            selectedPublicKey = knownDevicePublicKey;
+        }
+
         if (!selectedPublicKey) {
             const keyComment = `apex-jit:${req.admin.email}|device:${device.device_uid}|${Date.now()}`;
             const keyPair = await generateEphemeralSshKeyPair(keyComment);
@@ -1758,6 +1809,9 @@ app.post('/api/admin/fleet/:id/connect', requireAdmin, async (req, res) => {
                     ? 'Existing JIT session reused. Key should already be active on device.'
                     : 'Session key accepted. Device agent will apply key shortly.',
                 private_key: generatedPrivateKey,
+                known_private_key_paths: (!generatedPrivateKey && knownDevicePrivateKeys.length > 0)
+                    ? knownDevicePrivateKeys
+                    : [],
                 ssh_session: {
                     id: sshSessionId,
                     status: sshSessionStatus,
