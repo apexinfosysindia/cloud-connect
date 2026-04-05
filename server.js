@@ -685,11 +685,11 @@ function buildAdminConnectCommand(device) {
         return null;
     }
 
-    const jumpSpec = sshRoute.jump_port === 22
+    const jumpHostArg = sshRoute.jump_port === 22
         ? `${sshRoute.jump_user}@${sshRoute.jump_host}`
-        : `${sshRoute.jump_user}@${sshRoute.jump_host}:${sshRoute.jump_port}`;
+        : `${sshRoute.jump_user}@${sshRoute.jump_host} -p ${sshRoute.jump_port}`;
 
-    return `ssh -J ${jumpSpec} -p ${tunnelPort} ${sshRoute.target_user}@${sshRoute.target_host}`;
+    return `ssh -o "ProxyCommand=ssh -i ~/.ssh/jump_key -W %h:%p ${jumpHostArg}" -i ~/.ssh/device_key -p ${tunnelPort} ${sshRoute.target_user}@${sshRoute.target_host}`;
 }
 
 async function getOrCreateCustomer(user) {
