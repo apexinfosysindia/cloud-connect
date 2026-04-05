@@ -4,6 +4,7 @@
 
 bindPort = 7000
 vhostHTTPPort = 8080
+proxyBindAddr = "127.0.0.1"
 custom404Page = "/etc/frp/custom_404.html"
 
 transport.tcpMux = true

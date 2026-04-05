@@ -142,6 +142,24 @@ Remote access only succeeds when the portal authorizes the token and the account
 Optional admin SSH publish settings:
 - None required. `apex-cloud-link` now auto-registers and receives assigned SSH tunnel port from Cloud Connect.
 
+## Method B: Single-Port Admin SSH (ProxyJump)
+Cloud Connect now generates admin connect commands using SSH ProxyJump:
+- `ssh -J <jump-user>@<jump-host> -p <assigned-port> root@127.0.0.1`
+
+Current internal defaults in code:
+- jump host: `cloud.apexinfosys.in`
+- jump user: `fleetadmin`
+- jump port: `22`
+- target host on VPS: `127.0.0.1`
+
+This keeps per-device FRP TCP ports private to the FRPS host and exposes only the jump-host SSH port publicly.
+
+Production requirements:
+- Set FRPS `proxyBindAddr = "127.0.0.1"` in `/etc/frp/frps.toml`
+- Create a restricted jump user on VPS (example: `fleetadmin`)
+- Open only jump-host SSH port (`22` or `443`) in cloud firewall/NSG
+- Keep FRP assigned port range closed from public internet
+
 Automatic addon behavior:
 - Fleet reporting is always on
 - Device identity is derived from hostname

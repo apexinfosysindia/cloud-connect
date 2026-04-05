@@ -86,7 +86,7 @@
                 <div class="section-header">
                     <div>
                         <h2 class="section-title section-title--small">Live device fleet</h2>
-                        <p class="section-text">Admin-only device visibility and remote SSH access. Online state auto-expires after <strong id="fleetWindow">45</strong> seconds.</p>
+                        <p class="section-text">Admin-only device visibility and remote SSH access through jump host. Online state auto-expires after <strong id="fleetWindow">45</strong> seconds.</p>
                     </div>
                     <button id="refreshFleetBtn" class="button button-secondary">Refresh Fleet</button>
                 </div>
@@ -484,6 +484,23 @@ function getFleetDisplayName(device) {
     return device.device_name || device.hostname || device.device_uid || `Device ${device.id}`;
 }
 
+function getSshRouteHint(device) {
+    const route = device?.ssh_route;
+    if (!route || !route.jump_host) {
+        return 'Jump host routing not configured';
+    }
+
+    const jumpPort = Number(route.jump_port || 22);
+    const jumpUser = route.jump_user || 'root';
+    const jumpHost = route.jump_host;
+    const targetHost = route.target_host || '127.0.0.1';
+    const jumpEndpoint = jumpPort === 22
+        ? `${jumpUser}@${jumpHost}`
+        : `${jumpUser}@${jumpHost}:${jumpPort}`;
+
+    return `Route: ${jumpEndpoint} -> ${targetHost}:${device.tunnel_port || '?'}`;
+}
+
 function truncateDeviceNameInput(value) {
     return String(value || '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 120);
 }
@@ -568,6 +585,7 @@ function renderFleet(devices, stats, heartbeatWindowSeconds) {
                     <section class="user-card__section">
                         <span class="user-card__section-label">Connectivity</span>
                         <div class="user-card__section-text">SSH endpoint: ${escapeHtml(endpoint)}</div>
+                        <div class="user-card__section-text">${escapeHtml(getSshRouteHint(device))}</div>
                         <div class="user-card__section-text">Local IP(s): ${escapeHtml(localIps)}</div>
                         <div class="user-card__section-text">Remote user: ${escapeHtml(device.remote_user || 'root')} | SSH port: ${escapeHtml(String(device.ssh_port || 22))}</div>
                     </section>
