@@ -189,6 +189,10 @@ const FLEET_REFRESH_MS = 15000;
 
 let fleetDevices = [];
 let fleetRefreshTimer = null;
+let fleetHeartbeatWindowSeconds = 45;
+let editingFleetNameDeviceId = null;
+let editingFleetNameDraft = '';
+let savingFleetNameDeviceId = null;
 
 function syncAdminMasthead() {
     const hasVisibleActions = !adminIdentity.classList.contains('hidden') || !logoutBtn.classList.contains('hidden');
@@ -476,23 +480,42 @@ function getFleetLastEventSummary(device) {
     return `${event}: ${message}`;
 }
 
+function getFleetDisplayName(device) {
+    return device.device_name || device.hostname || device.device_uid || `Device ${device.id}`;
+}
+
+function truncateDeviceNameInput(value) {
+    return String(value || '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 120);
+}
+
+function escapeAttr(value) {
+    return escapeHtml(value).replace(/`/g, '&#96;');
+}
+
 function renderFleet(devices, stats, heartbeatWindowSeconds) {
+    fleetHeartbeatWindowSeconds = heartbeatWindowSeconds || fleetHeartbeatWindowSeconds || 45;
     updateFleetCounts(stats || deriveFleetStats(devices));
-    if (fleetWindow && heartbeatWindowSeconds) {
-        fleetWindow.textContent = heartbeatWindowSeconds;
+    if (fleetWindow) {
+        fleetWindow.textContent = fleetHeartbeatWindowSeconds;
     }
 
     if (!devices.length) {
+        editingFleetNameDeviceId = null;
+        editingFleetNameDraft = '';
+        savingFleetNameDeviceId = null;
         fleetList.innerHTML = '<div class="user-empty">No registered devices yet. Devices appear here after addon registration and heartbeat.</div>';
         return;
     }
 
     fleetList.innerHTML = devices.map((device) => {
-        const displayName = device.device_name || device.hostname || device.device_uid;
+        const displayName = getFleetDisplayName(device);
         const owner = `${device.owner?.email || 'Unknown owner'}${device.owner?.domain ? ` (${device.owner.domain})` : ''}`;
         const localIps = (device.local_ips && device.local_ips.length > 0) ? device.local_ips.join(', ') : 'Not reported';
         const endpoint = (device.tunnel_host && device.tunnel_port) ? `${device.tunnel_host}:${device.tunnel_port}` : 'Waiting for tunnel endpoint';
         const canConnect = Boolean(device.online && device.connect_ready);
+        const isEditingName = Number(editingFleetNameDeviceId) === Number(device.id);
+        const isSavingName = Number(savingFleetNameDeviceId) === Number(device.id);
+        const nameDraft = isEditingName ? editingFleetNameDraft : displayName;
 
         let connectHint = 'Ready';
         if (!device.account_enabled) {
@@ -503,17 +526,38 @@ function renderFleet(devices, stats, heartbeatWindowSeconds) {
             connectHint = 'Tunnel endpoint unavailable';
         }
 
+        const titleRow = isEditingName
+            ? `
+                <div class="fleet-name-editor" data-fleet-name-editor>
+                    <input
+                        type="text"
+                        class="input fleet-name-input"
+                        data-device-id="${device.id}"
+                        value="${escapeAttr(nameDraft)}"
+                        maxlength="120"
+                        aria-label="Edit device name"
+                        ${isSavingName ? 'disabled' : ''}
+                    >
+                    <button type="button" class="button button-primary button-small fleet-name-save" data-device-id="${device.id}" ${isSavingName ? 'disabled' : ''}>${isSavingName ? 'Saving...' : 'Save'}</button>
+                    <button type="button" class="button button-secondary button-small fleet-name-cancel" data-device-id="${device.id}" ${isSavingName ? 'disabled' : ''}>Cancel</button>
+                </div>
+            `
+            : `
+                <div class="fleet-device-title-row">
+                    <div class="user-card__name">${escapeHtml(displayName)}</div>
+                    <button type="button" class="fleet-name-edit" data-device-id="${device.id}" aria-label="Rename device" title="Rename device">&#9998;</button>
+                </div>
+            `;
+
         return `
         <article class="user-card fleet-card" data-fleet-card>
             <div class="user-card__summary" data-fleet-card-toggle role="button" tabindex="0" aria-expanded="false">
                 <div class="user-card__identity">
-                    <div class="user-card__name">${escapeHtml(displayName)}</div>
+                    ${titleRow}
                     <div class="user-card__meta">${escapeHtml(owner)}</div>
                 </div>
                 <div class="user-card__summary-right">
                     ${deviceOnlineBadge(device)}
-                    ${statusBadge(device.owner?.status)}
-                    <span class="user-card__chevron" aria-hidden="true">v</span>
                 </div>
             </div>
 
@@ -737,10 +781,100 @@ async function issueFleetConnect(deviceId, triggerButton = null) {
     }
 }
 
+function beginFleetNameEdit(deviceId) {
+    const device = getDeviceById(deviceId);
+    if (!device) {
+        showAlert('Device not found. Refresh and try again.');
+        return;
+    }
+
+    editingFleetNameDeviceId = Number(deviceId);
+    editingFleetNameDraft = getFleetDisplayName(device);
+    savingFleetNameDeviceId = null;
+    renderFleet(fleetDevices, deriveFleetStats(fleetDevices), fleetHeartbeatWindowSeconds);
+
+    window.requestAnimationFrame(() => {
+        const input = fleetList.querySelector(`.fleet-name-input[data-device-id="${Number(deviceId)}"]`);
+        if (input) {
+            input.focus();
+            input.select();
+        }
+    });
+}
+
+function cancelFleetNameEdit() {
+    editingFleetNameDeviceId = null;
+    editingFleetNameDraft = '';
+    savingFleetNameDeviceId = null;
+    renderFleet(fleetDevices, deriveFleetStats(fleetDevices), fleetHeartbeatWindowSeconds);
+}
+
+function updateFleetNameDraft(deviceId, value) {
+    if (Number(editingFleetNameDeviceId) !== Number(deviceId)) {
+        return;
+    }
+
+    editingFleetNameDraft = String(value || '').slice(0, 120);
+}
+
+async function saveFleetName(deviceId) {
+    if (Number(editingFleetNameDeviceId) !== Number(deviceId)) {
+        return;
+    }
+
+    if (Number(savingFleetNameDeviceId) === Number(deviceId)) {
+        return;
+    }
+
+    const device = getDeviceById(deviceId);
+    if (!device) {
+        showAlert('Device not found. Refresh and try again.');
+        return;
+    }
+
+    const nextName = truncateDeviceNameInput(editingFleetNameDraft);
+    if (!nextName) {
+        showAlert('Device name cannot be empty.');
+        return;
+    }
+
+    const currentName = getFleetDisplayName(device);
+    if (nextName === currentName) {
+        cancelFleetNameEdit();
+        return;
+    }
+
+    try {
+        savingFleetNameDeviceId = Number(deviceId);
+        renderFleet(fleetDevices, deriveFleetStats(fleetDevices), fleetHeartbeatWindowSeconds);
+
+        await api(`/api/admin/fleet/${Number(deviceId)}/name`, {
+            method: 'POST',
+            body: {
+                device_name: nextName
+            }
+        });
+
+        editingFleetNameDeviceId = null;
+        editingFleetNameDraft = '';
+        savingFleetNameDeviceId = null;
+        await loadFleet();
+        showAlert('Device name updated.', false);
+    } catch (error) {
+        savingFleetNameDeviceId = null;
+        renderFleet(fleetDevices, deriveFleetStats(fleetDevices), fleetHeartbeatWindowSeconds);
+        showAlert(normalizeErrorMessage(error, 'Unable to update device name'));
+    }
+}
+
 function startFleetAutoRefresh() {
     stopFleetAutoRefresh();
     fleetRefreshTimer = window.setInterval(async () => {
         if (dashboard.classList.contains('hidden')) {
+            return;
+        }
+
+        if (editingFleetNameDeviceId !== null || savingFleetNameDeviceId !== null) {
             return;
         }
 
@@ -926,6 +1060,34 @@ usersTableBody.addEventListener('keydown', (event) => {
 });
 
 fleetList.addEventListener('click', async (event) => {
+    const renameAction = event.target.closest('.fleet-name-edit');
+    if (renameAction) {
+        event.preventDefault();
+        event.stopPropagation();
+        beginFleetNameEdit(renameAction.dataset.deviceId);
+        return;
+    }
+
+    const renameSaveAction = event.target.closest('.fleet-name-save');
+    if (renameSaveAction) {
+        event.preventDefault();
+        event.stopPropagation();
+        await saveFleetName(renameSaveAction.dataset.deviceId);
+        return;
+    }
+
+    const renameCancelAction = event.target.closest('.fleet-name-cancel');
+    if (renameCancelAction) {
+        event.preventDefault();
+        event.stopPropagation();
+        cancelFleetNameEdit();
+        return;
+    }
+
+    if (event.target.closest('.fleet-name-editor')) {
+        return;
+    }
+
     const toggle = event.target.closest('[data-fleet-card-toggle]');
     if (toggle) {
         const card = toggle.closest('[data-fleet-card]');
@@ -949,6 +1111,21 @@ fleetList.addEventListener('click', async (event) => {
 });
 
 fleetList.addEventListener('keydown', (event) => {
+    if (event.target.closest('.fleet-name-edit') || event.target.closest('.fleet-name-editor')) {
+        if (event.target.matches('.fleet-name-input')) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                void saveFleetName(event.target.dataset.deviceId);
+            }
+
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                cancelFleetNameEdit();
+            }
+        }
+        return;
+    }
+
     const toggle = event.target.closest('[data-fleet-card-toggle]');
     if (!toggle) return;
     if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -958,6 +1135,33 @@ fleetList.addEventListener('keydown', (event) => {
     if (!card) return;
     card.classList.toggle('is-expanded');
     toggle.setAttribute('aria-expanded', card.classList.contains('is-expanded') ? 'true' : 'false');
+});
+
+fleetList.addEventListener('input', (event) => {
+    const nameInput = event.target.closest('.fleet-name-input');
+    if (!nameInput) {
+        return;
+    }
+
+    updateFleetNameDraft(nameInput.dataset.deviceId, nameInput.value);
+});
+
+fleetList.addEventListener('focusout', (event) => {
+    const nameInput = event.target.closest('.fleet-name-input');
+    if (!nameInput) {
+        return;
+    }
+
+    const nextFocus = event.relatedTarget;
+    if (nextFocus && (nextFocus.closest('.fleet-name-save') || nextFocus.closest('.fleet-name-cancel') || nextFocus.closest('.fleet-name-input'))) {
+        return;
+    }
+
+    if (Number(savingFleetNameDeviceId) === Number(nameInput.dataset.deviceId)) {
+        return;
+    }
+
+    void saveFleetName(nameInput.dataset.deviceId);
 });
 
 window.addEventListener('beforeunload', stopFleetAutoRefresh);

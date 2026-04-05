@@ -28,6 +28,7 @@ const DEVICES_TABLE_SCHEMA = `
         user_id INTEGER NOT NULL,
         device_uid TEXT NOT NULL,
         device_name TEXT,
+        admin_name_override INTEGER NOT NULL DEFAULT 0,
         hostname TEXT,
         local_ips TEXT,
         ssh_port INTEGER DEFAULT 22,
@@ -92,7 +93,8 @@ const DEVICE_SCHEMA_STATEMENTS = [
     'CREATE INDEX IF NOT EXISTS idx_devices_last_seen ON devices(last_seen_at)',
     'CREATE INDEX IF NOT EXISTS idx_device_logs_device_created ON device_logs(device_id, created_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_admin_connect_sessions_expiry ON admin_connect_sessions(expires_at)',
-    'CREATE INDEX IF NOT EXISTS idx_admin_access_logs_device_created ON admin_access_logs(device_id, created_at DESC)'
+    'CREATE INDEX IF NOT EXISTS idx_admin_access_logs_device_created ON admin_access_logs(device_id, created_at DESC)',
+    'ALTER TABLE devices ADD COLUMN admin_name_override INTEGER NOT NULL DEFAULT 0'
 ];
 
 const USERS_REBUILD_COLUMNS = [
