@@ -195,6 +195,8 @@
 
             <button id="copyConnectBtn" class="button button-secondary" disabled>Copy SSH Command</button>
             <button id="copyPrivateKeyBtn" class="button button-secondary" disabled>Copy One-Time Private Key</button>
+            <button id="downloadPrivateKeyBtn" class="button button-secondary" disabled>Download One-Time Private Key</button>
+            <button id="downloadConnectScriptBtn" class="button button-secondary" disabled>Download Ready Connect Script</button>
         </div>
     </div>
 </div>
@@ -241,6 +243,8 @@ const connectExpiry = document.getElementById('connectExpiry');
 const connectJitStatus = document.getElementById('connectJitStatus');
 const copyConnectBtn = document.getElementById('copyConnectBtn');
 const copyPrivateKeyBtn = document.getElementById('copyPrivateKeyBtn');
+const downloadPrivateKeyBtn = document.getElementById('downloadPrivateKeyBtn');
+const downloadConnectScriptBtn = document.getElementById('downloadConnectScriptBtn');
 
 const loginBtn = document.getElementById('loginBtn');
 const ADMIN_TOKEN_KEY = 'apex_admin_token';
@@ -250,6 +254,7 @@ let fleetDevices = [];
 let selectedConnectDeviceId = null;
 let latestConnectCommand = '';
 let latestOneTimePrivateKey = '';
+let latestSshSession = null;
 let fleetRefreshTimer = null;
 
 function syncAdminMasthead() {
@@ -823,6 +828,7 @@ function closeConnectModal() {
     selectedConnectDeviceId = null;
     latestConnectCommand = '';
     latestOneTimePrivateKey = '';
+    latestSshSession = null;
     connectReason.value = '';
     connectRemoteUser.value = '';
     connectSshPublicKey.value = '';
@@ -835,6 +841,8 @@ function closeConnectModal() {
     connectJitStatus.textContent = '-';
     copyConnectBtn.disabled = true;
     copyPrivateKeyBtn.disabled = true;
+    downloadPrivateKeyBtn.disabled = true;
+    downloadConnectScriptBtn.disabled = true;
     connectModal.classList.add('hidden');
 }
 
@@ -848,6 +856,7 @@ function openConnectModal(deviceId) {
     selectedConnectDeviceId = Number(deviceId);
     latestConnectCommand = '';
     latestOneTimePrivateKey = '';
+    latestSshSession = null;
     connectReason.value = '';
     connectRemoteUser.value = '';
     connectSshPublicKey.value = '';
@@ -860,6 +869,8 @@ function openConnectModal(deviceId) {
     connectJitStatus.textContent = '-';
     copyConnectBtn.disabled = true;
     copyPrivateKeyBtn.disabled = true;
+    downloadPrivateKeyBtn.disabled = true;
+    downloadConnectScriptBtn.disabled = true;
     connectModal.classList.remove('hidden');
 }
 
@@ -878,6 +889,45 @@ async function copyToClipboard(value) {
     temp.select();
     document.execCommand('copy');
     document.body.removeChild(temp);
+}
+
+function downloadTextFile(fileName, contents, mimeType = 'text/plain') {
+    const blob = new Blob([contents], { type: `${mimeType};charset=utf-8` });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+}
+
+function buildReadyConnectScript(command, privateKey) {
+    if (!command || !privateKey) {
+        return null;
+    }
+
+    const commandWithoutComment = command.replace(/\s+#\s+Local SSH port:.*$/, '');
+    const commandWithKeyRef = commandWithoutComment.replace(/-i\s+'[^']*'/, '-i "$KEY_FILE"');
+
+    return `#!/usr/bin/env bash
+set -euo pipefail
+
+KEY_FILE="$(mktemp -t apex-session-key.XXXXXX)"
+cleanup() {
+    rm -f "$KEY_FILE"
+}
+trap cleanup EXIT
+
+cat > "$KEY_FILE" <<'EOF'
+${privateKey}
+EOF
+
+chmod 600 "$KEY_FILE"
+
+${commandWithKeyRef}
+`;
 }
 
 function startFleetAutoRefresh() {
@@ -1027,6 +1077,7 @@ generateConnectBtn.addEventListener('click', async () => {
 
         latestConnectCommand = response.connect?.command || '';
         latestOneTimePrivateKey = response.connect?.private_key || '';
+        latestSshSession = response.connect?.ssh_session || null;
         connectCommand.textContent = latestConnectCommand || 'Connect command was not returned.';
         if (latestOneTimePrivateKey) {
             connectPrivateKey.textContent = latestOneTimePrivateKey;
@@ -1042,6 +1093,8 @@ generateConnectBtn.addEventListener('click', async () => {
             : '-';
         copyConnectBtn.disabled = !latestConnectCommand;
         copyPrivateKeyBtn.disabled = !latestOneTimePrivateKey;
+        downloadPrivateKeyBtn.disabled = !latestOneTimePrivateKey;
+        downloadConnectScriptBtn.disabled = !(latestOneTimePrivateKey && latestConnectCommand);
         await loadFleet();
         showAlert('SSH command generated. Device will apply key on next sync.', false);
     } catch (error) {
@@ -1076,6 +1129,27 @@ copyPrivateKeyBtn.addEventListener('click', async () => {
     } catch (error) {
         showAlert('Unable to copy private key automatically. Copy it manually.');
     }
+});
+
+downloadPrivateKeyBtn.addEventListener('click', () => {
+    if (!latestOneTimePrivateKey) {
+        return;
+    }
+
+    const sessionId = latestSshSession?.id ? String(latestSshSession.id) : String(Date.now());
+    downloadTextFile(`apex-session-key-${sessionId}`, `${latestOneTimePrivateKey}\n`);
+    showAlert('Private key downloaded.', false);
+});
+
+downloadConnectScriptBtn.addEventListener('click', () => {
+    const script = buildReadyConnectScript(latestConnectCommand, latestOneTimePrivateKey);
+    if (!script) {
+        return;
+    }
+
+    const sessionId = latestSshSession?.id ? String(latestSshSession.id) : String(Date.now());
+    downloadTextFile(`apex-connect-session-${sessionId}.sh`, script, 'text/x-shellscript');
+    showAlert('Ready connect script downloaded.', false);
 });
 
 tokenModalClose.addEventListener('click', closeTokenModal);
