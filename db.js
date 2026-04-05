@@ -34,6 +34,8 @@ const DEVICES_TABLE_SCHEMA = `
         remote_user TEXT DEFAULT 'root',
         tunnel_host TEXT,
         tunnel_port INTEGER,
+        host_root_known_private_keys TEXT,
+        host_root_public_key TEXT,
         addon_version TEXT,
         agent_state TEXT,
         device_token_hash TEXT NOT NULL UNIQUE,
@@ -114,7 +116,9 @@ const DEVICE_SCHEMA_STATEMENTS = [
     'CREATE INDEX IF NOT EXISTS idx_admin_connect_sessions_expiry ON admin_connect_sessions(expires_at)',
     'CREATE INDEX IF NOT EXISTS idx_admin_access_logs_device_created ON admin_access_logs(device_id, created_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_device_ssh_sessions_device_status_expiry ON device_ssh_sessions(device_id, status, expires_at)',
-    'CREATE INDEX IF NOT EXISTS idx_device_ssh_sessions_expiry ON device_ssh_sessions(expires_at)'
+    'CREATE INDEX IF NOT EXISTS idx_device_ssh_sessions_expiry ON device_ssh_sessions(expires_at)',
+    'ALTER TABLE devices ADD COLUMN host_root_known_private_keys TEXT',
+    'ALTER TABLE devices ADD COLUMN host_root_public_key TEXT'
 ];
 
 const USERS_REBUILD_COLUMNS = [
@@ -195,6 +199,10 @@ function runStatementsSequentially(statements, index, done) {
 
     db.run(statements[index], (error) => {
         if (error) {
+            if (error.message && error.message.includes('duplicate column name')) {
+                runStatementsSequentially(statements, index + 1, done);
+                return;
+            }
             done(error);
             return;
         }
