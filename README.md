@@ -142,9 +142,9 @@ Remote access only succeeds when the portal authorizes the token and the account
 Optional admin SSH publish settings:
 - None required. `apex-cloud-link` now auto-registers and receives assigned SSH tunnel port from Cloud Connect.
 
-## Method B: Single-Port Admin SSH (ProxyJump)
-Cloud Connect now generates admin connect commands using SSH ProxyJump:
-- `ssh -J <jump-user>@<jump-host> -p <assigned-port> root@127.0.0.1`
+## Method B: Single-Port Admin SSH (ProxyCommand)
+Cloud Connect now generates admin connect commands in explicit dual-key format:
+- `ssh -o "ProxyCommand=ssh -i ~/.ssh/jump_key -W %h:%p <jump-user>@<jump-host>" -i ~/.ssh/device_key -p <assigned-port> root@127.0.0.1`
 
 Current internal defaults in code:
 - jump host: `cloud.apexinfosys.in`
