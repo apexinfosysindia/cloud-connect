@@ -680,18 +680,6 @@ code {
     justify-self: end;
 }
 
-.admin-page .user-card__chevron {
-    display: inline-flex;
-    width: 24px;
-    height: 24px;
-    align-items: center;
-    justify-content: center;
-    border-radius: 999px;
-    border: 1px solid #d3dce8;
-    background: #f8fafd;
-    color: #60728d;
-}
-
 .admin-page .user-card__identity {
     flex: 1 1 180px;
     min-width: 0;
@@ -758,6 +746,61 @@ code {
     cursor: pointer;
 }
 
+.admin-page .fleet-device-title-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.admin-page .fleet-name-editor {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    width: min(100%, 560px);
+}
+
+.admin-page .fleet-name-input {
+    min-height: 36px;
+    width: min(100%, 320px);
+    padding: 0 10px;
+    font-size: 0.9rem;
+    flex: 1 1 240px;
+}
+
+.admin-page .fleet-name-edit {
+    width: 28px;
+    height: 28px;
+    border: 1px solid #d3dce8;
+    border-radius: 8px;
+    background: #f8fafd;
+    color: #4b5d78;
+    font-size: 0.82rem;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    flex: 0 0 auto;
+}
+
+.admin-page .fleet-name-edit:hover {
+    background: #eef4fb;
+    border-color: #becce0;
+}
+
+.admin-page .fleet-name-edit:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+.admin-page .fleet-name-save,
+.admin-page .fleet-name-cancel {
+    min-height: 36px;
+    padding: 0 12px;
+}
+
 .fleet-command-meta {
     display: grid;
     gap: 8px;
@@ -781,7 +824,7 @@ code {
 
 .fleet-log-columns {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
     gap: 16px;
 }
 
@@ -886,6 +929,18 @@ code {
 }
 
 .admin-page .status-badge--active {
+    color: #0f766e;
+    background: #f0fdfa;
+    border-color: #99f6e4;
+}
+
+.admin-page .fleet-card .status-badge--pending {
+    color: #b45309;
+    background: #fff7ed;
+    border-color: #f7d4aa;
+}
+
+.admin-page .fleet-card .status-badge--active {
     color: #0f766e;
     background: #f0fdfa;
     border-color: #99f6e4;
@@ -1277,16 +1332,6 @@ code {
     gap: 10px;
 }
 
-.user-card__chevron {
-    color: var(--text-soft);
-    font-size: 0.9rem;
-    transition: transform 0.16s ease;
-}
-
-.user-card.is-expanded .user-card__chevron {
-    transform: rotate(180deg);
-}
-
 .user-card__details {
     display: none;
     margin-top: 12px;
@@ -1553,10 +1598,6 @@ code {
         flex-direction: column;
     }
 
-    .fleet-log-columns {
-        grid-template-columns: 1fr;
-    }
-
     .alert {
         right: 12px;
         bottom: 12px;
@@ -1634,6 +1675,16 @@ code {
     .admin-page .user-card__summary {
         gap: 10px;
         padding: 14px;
+    }
+
+    .admin-page .fleet-name-input {
+        width: 100%;
+        flex: 1 1 100%;
+    }
+
+    .admin-page .fleet-name-save,
+    .admin-page .fleet-name-cancel {
+        width: auto;
     }
 
     .admin-page .user-card__details {

@@ -122,6 +122,15 @@ function sanitizeDeviceUid(value) {
     return /^[a-zA-Z0-9._-]+$/.test(normalized) ? normalized : null;
 }
 
+function sanitizeDeviceName(value) {
+    const normalized = sanitizeString(value, 120);
+    if (!normalized) {
+        return null;
+    }
+
+    return normalized.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+}
+
 function sanitizeEventType(value) {
     const normalized = sanitizeString(value, 64);
     if (!normalized) {
@@ -299,6 +308,7 @@ function serializeDevice(row) {
         },
         device_uid: row.device_uid,
         device_name: row.device_name,
+        admin_name_override: Boolean(row.admin_name_override),
         hostname: row.hostname,
         local_ips: row.local_ips ? row.local_ips.split(',').filter(Boolean) : [],
         ssh_port: row.ssh_port || 22,
@@ -867,16 +877,17 @@ app.post('/api/internal/devices/register', async (req, res) => {
         const nowIso = new Date().toISOString();
         const deviceToken = generateDeviceAuthToken();
         const deviceTokenHash = hashSecret(deviceToken);
-        const deviceName = sanitizeString(req.body?.device_name, 120);
+        const incomingDeviceName = sanitizeDeviceName(req.body?.device_name);
         const hostname = sanitizeString(req.body?.hostname, 120);
         const localIps = normalizeLocalIps(req.body?.local_ips);
         const sshPort = sanitizePort(req.body?.ssh_port) || 22;
         const remoteUser = 'root';
         const addonVersion = sanitizeString(req.body?.addon_version, 64);
         const agentState = sanitizeString(req.body?.agent_state, 64);
+        const defaultDeviceName = incomingDeviceName || hostname || deviceUid;
 
         const existing = await dbGet(
-            `SELECT id, tunnel_host, tunnel_port FROM devices WHERE user_id = ? AND device_uid = ?`,
+            `SELECT id, device_name, admin_name_override, tunnel_host, tunnel_port FROM devices WHERE user_id = ? AND device_uid = ?`,
             [user.id, deviceUid]
         );
 
@@ -885,6 +896,10 @@ app.post('/api/internal/devices/register', async (req, res) => {
         let assignedTunnelPort = null;
 
         if (existing) {
+            const preservedName = existing.admin_name_override
+                ? sanitizeDeviceName(existing.device_name)
+                : null;
+            const nextDeviceName = preservedName || incomingDeviceName || sanitizeDeviceName(existing.device_name) || defaultDeviceName;
             assignedTunnelHost = sanitizeString(existing.tunnel_host, 255) || DEVICE_TUNNEL_HOST;
             assignedTunnelPort = sanitizePort(existing.tunnel_port);
             if (!assignedTunnelPort) {
@@ -909,7 +924,7 @@ app.post('/api/internal/devices/register', async (req, res) => {
                     WHERE id = ?
                 `,
                 [
-                    deviceName,
+                    nextDeviceName,
                     hostname,
                     localIps,
                     sshPort,
@@ -953,7 +968,7 @@ app.post('/api/internal/devices/register', async (req, res) => {
                 [
                     user.id,
                     deviceUid,
-                    deviceName,
+                    defaultDeviceName,
                     hostname,
                     localIps,
                     sshPort,
@@ -1005,10 +1020,14 @@ app.post('/api/internal/devices/heartbeat', requireDeviceAuth, async (req, res) 
         const body = req.body || {};
         const hasOwn = Object.prototype.hasOwnProperty;
         const current = req.device;
+        const currentAdminOverride = Number(current.admin_name_override || 0) === 1;
 
-        const deviceName = hasOwn.call(body, 'device_name')
-            ? sanitizeString(body.device_name, 120)
-            : current.device_name;
+        const incomingDeviceName = hasOwn.call(body, 'device_name')
+            ? sanitizeDeviceName(body.device_name)
+            : sanitizeDeviceName(current.device_name);
+        const deviceName = currentAdminOverride
+            ? sanitizeDeviceName(current.device_name)
+            : incomingDeviceName;
         const hostname = hasOwn.call(body, 'hostname')
             ? sanitizeString(body.hostname, 120)
             : current.hostname;
@@ -1271,6 +1290,68 @@ app.get('/api/admin/fleet/:id/logs', requireAdmin, async (req, res) => {
     } catch (error) {
         console.error('ADMIN FLEET LOGS ERROR:', error);
         return res.status(500).json({ error: 'Unable to load device logs' });
+    }
+});
+
+app.post('/api/admin/fleet/:id/name', requireAdmin, async (req, res) => {
+    const deviceId = parsePositiveInt(req.params.id);
+    if (!deviceId) {
+        return res.status(400).json({ error: 'Invalid device id' });
+    }
+
+    const rawName = sanitizeString(req.body?.device_name, 120);
+    if (!rawName) {
+        return res.status(400).json({ error: 'device_name is required' });
+    }
+
+    const deviceName = sanitizeDeviceName(rawName);
+    if (!deviceName) {
+        return res.status(400).json({ error: 'device_name is invalid' });
+    }
+
+    try {
+        const device = await getDeviceWithOwnerById(deviceId);
+        if (!device) {
+            return res.status(404).json({ error: 'Device not found' });
+        }
+
+        const nowIso = new Date().toISOString();
+        await dbRun(
+            `
+                UPDATE devices
+                SET device_name = ?,
+                    admin_name_override = 1,
+                    updated_at = ?
+                WHERE id = ?
+            `,
+            [deviceName, nowIso, deviceId]
+        );
+
+        await insertAdminAccessLog(deviceId, req.admin.email, 'device_rename', {
+            previous_name: device.device_name || null,
+            next_name: deviceName,
+            device_uid: device.device_uid
+        });
+
+        await insertDeviceLog(
+            deviceId,
+            'info',
+            'admin.rename',
+            `Admin ${req.admin.email} renamed device to ${deviceName}`,
+            {
+                previous_name: device.device_name || null,
+                next_name: deviceName
+            }
+        );
+
+        const updated = await getDeviceWithOwnerById(deviceId);
+        return res.status(200).json({
+            message: 'Device name updated',
+            device: serializeDevice(updated)
+        });
+    } catch (error) {
+        console.error('ADMIN FLEET RENAME ERROR:', error);
+        return res.status(500).json({ error: 'Unable to update device name' });
     }
 });
 
