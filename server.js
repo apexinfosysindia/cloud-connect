@@ -12,6 +12,10 @@ const CUSTOMER_PORTAL_HOST = process.env.CUSTOMER_PORTAL_HOST || 'oasis.apexinfo
 const ADMIN_PORTAL_HOST = process.env.ADMIN_PORTAL_HOST || 'vista.apexinfosys.in';
 const CLOUD_BASE_DOMAIN = process.env.CLOUD_BASE_DOMAIN || 'cloud.apexinfosys.in';
 const DEVICE_TUNNEL_HOST = process.env.DEVICE_TUNNEL_HOST || CLOUD_BASE_DOMAIN;
+const ADMIN_SSH_JUMP_HOST = 'cloud.apexinfosys.in';
+const ADMIN_SSH_JUMP_USER = 'fleetadmin';
+const ADMIN_SSH_JUMP_PORT = 22;
+const ADMIN_SSH_TARGET_HOST = '127.0.0.1';
 const DEVICE_HEARTBEAT_TIMEOUT_SECONDS = Number(process.env.DEVICE_HEARTBEAT_TIMEOUT_SECONDS || 45);
 const DEVICE_HEARTBEAT_INTERVAL_SECONDS = Number(process.env.DEVICE_HEARTBEAT_INTERVAL_SECONDS || 20);
 const ADMIN_CONNECT_TOKEN_TTL_MINUTES = Number(process.env.ADMIN_CONNECT_TOKEN_TTL_MINUTES || 10);
@@ -129,6 +133,24 @@ function sanitizeDeviceName(value) {
     }
 
     return normalized.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+}
+
+function sanitizeSshHost(value, maxLength = 255) {
+    const normalized = sanitizeString(value, maxLength);
+    if (!normalized) {
+        return null;
+    }
+
+    return /^[a-zA-Z0-9._:-]+$/.test(normalized) ? normalized : null;
+}
+
+function sanitizeSshUser(value) {
+    const normalized = sanitizeString(value, 48);
+    if (!normalized) {
+        return null;
+    }
+
+    return /^[a-z_][a-z0-9_-]*$/i.test(normalized) ? normalized : null;
 }
 
 function sanitizeEventType(value) {
@@ -252,6 +274,31 @@ function getDeviceTunnelPortRange() {
     return { min, max };
 }
 
+function isDeviceTunnelPortInRange(port) {
+    if (!Number.isInteger(port)) {
+        return false;
+    }
+
+    const { min, max } = getDeviceTunnelPortRange();
+    return port >= min && port <= max;
+}
+
+function getAdminSshRoute() {
+    const jumpHost = sanitizeSshHost(ADMIN_SSH_JUMP_HOST) || sanitizeSshHost(DEVICE_TUNNEL_HOST) || CLOUD_BASE_DOMAIN;
+    const jumpUser = sanitizeSshUser(ADMIN_SSH_JUMP_USER) || 'root';
+    const jumpPort = sanitizePort(ADMIN_SSH_JUMP_PORT) || 22;
+    const targetHost = sanitizeSshHost(ADMIN_SSH_TARGET_HOST) || '127.0.0.1';
+
+    return {
+        method: 'proxyjump',
+        jump_host: jumpHost,
+        jump_user: jumpUser,
+        jump_port: jumpPort,
+        target_host: targetHost,
+        target_user: 'root'
+    };
+}
+
 async function allocateDeviceTunnelPort(excludedDeviceId = null) {
     const { min, max } = getDeviceTunnelPortRange();
     const rows = excludedDeviceId
@@ -296,7 +343,8 @@ function serializeDevice(row) {
     const ownerDomain = row.user_subdomain ? `${row.user_subdomain}.${CLOUD_BASE_DOMAIN}` : null;
     const online = isDeviceOnline(row.last_seen_at);
     const accountEnabled = isAccessEnabled(row.user_status);
-    const connectReady = accountEnabled && Boolean(row.tunnel_host && row.tunnel_port);
+    const connectReady = accountEnabled && isDeviceTunnelPortInRange(sanitizePort(row.tunnel_port));
+    const sshRoute = getAdminSshRoute();
 
     return {
         id: row.id,
@@ -315,6 +363,7 @@ function serializeDevice(row) {
         remote_user: row.remote_user || 'root',
         tunnel_host: row.tunnel_host,
         tunnel_port: row.tunnel_port,
+        ssh_route: sshRoute,
         addon_version: row.addon_version,
         agent_state: row.agent_state,
         online,
@@ -629,15 +678,18 @@ async function requireDeviceAuth(req, res, next) {
 }
 
 function buildAdminConnectCommand(device) {
-    const remoteUser = 'root';
-    const tunnelHost = sanitizeString(device.tunnel_host, 255);
     const tunnelPort = sanitizePort(device.tunnel_port);
+    const sshRoute = getAdminSshRoute();
 
-    if (!tunnelHost || !tunnelPort) {
+    if (!tunnelPort || !isDeviceTunnelPortInRange(tunnelPort)) {
         return null;
     }
 
-    return `ssh -p ${tunnelPort} ${remoteUser}@${tunnelHost}`;
+    const jumpSpec = sshRoute.jump_port === 22
+        ? `${sshRoute.jump_user}@${sshRoute.jump_host}`
+        : `${sshRoute.jump_user}@${sshRoute.jump_host}:${sshRoute.jump_port}`;
+
+    return `ssh -J ${jumpSpec} -p ${tunnelPort} ${sshRoute.target_user}@${sshRoute.target_host}`;
 }
 
 async function getOrCreateCustomer(user) {
@@ -902,7 +954,7 @@ app.post('/api/internal/devices/register', async (req, res) => {
             const nextDeviceName = preservedName || incomingDeviceName || sanitizeDeviceName(existing.device_name) || defaultDeviceName;
             assignedTunnelHost = sanitizeString(existing.tunnel_host, 255) || DEVICE_TUNNEL_HOST;
             assignedTunnelPort = sanitizePort(existing.tunnel_port);
-            if (!assignedTunnelPort) {
+            if (!assignedTunnelPort || !isDeviceTunnelPortInRange(assignedTunnelPort)) {
                 assignedTunnelPort = await allocateDeviceTunnelPort(existing.id);
             }
 
@@ -1043,7 +1095,7 @@ app.post('/api/internal/devices/heartbeat', requireDeviceAuth, async (req, res) 
 
         const tunnelHost = sanitizeString(current.tunnel_host, 255) || DEVICE_TUNNEL_HOST;
         let nextTunnelPort = sanitizePort(current.tunnel_port);
-        if (!nextTunnelPort) {
+        if (!nextTunnelPort || !isDeviceTunnelPortInRange(nextTunnelPort)) {
             nextTunnelPort = await allocateDeviceTunnelPort(current.id);
         }
 
@@ -1403,6 +1455,7 @@ app.post('/api/admin/fleet/:id/connect', requireAdmin, async (req, res) => {
             device_uid: device.device_uid,
             tunnel_host: device.tunnel_host,
             tunnel_port: device.tunnel_port,
+            ssh_route: getAdminSshRoute(),
             remote_user: 'root',
             ttl_minutes: ttlMinutes
         });
@@ -1414,7 +1467,8 @@ app.post('/api/admin/fleet/:id/connect', requireAdmin, async (req, res) => {
             `Admin ${req.admin.email} generated an SSH connect command`,
             {
                 reason: reason || null,
-                expires_at: expiresAt
+                expires_at: expiresAt,
+                ssh_route: getAdminSshRoute()
             }
         );
 
