@@ -9,7 +9,7 @@
 </head>
 <body class="admin-page">
 <div class="page-shell page-shell--admin">
-    <header class="masthead masthead--admin">
+    <header class="masthead masthead--admin masthead--no-actions">
         <div class="brand-suite">
             <img src="/group-logo.png" alt="Apex Infosys" class="brand-suite__group">
             <span class="brand-suite__divider"></span>
@@ -105,12 +105,18 @@ const loginPanel = document.getElementById('loginPanel');
 const dashboard = document.getElementById('dashboard');
 const logoutBtn = document.getElementById('logoutBtn');
 const adminIdentity = document.getElementById('adminIdentity');
+const adminMasthead = document.querySelector('.masthead--admin');
 const usersTableBody = document.getElementById('usersTableBody');
 const tokenModal = document.getElementById('tokenModal');
 const tokenModalClose = document.getElementById('tokenModalClose');
 const tokenModalValue = document.getElementById('tokenModalValue');
 const tokenModalSubtitle = document.getElementById('tokenModalSubtitle');
 const ADMIN_TOKEN_KEY = 'apex_admin_token';
+
+function syncAdminMasthead() {
+    const hasVisibleActions = !adminIdentity.classList.contains('hidden') || !logoutBtn.classList.contains('hidden');
+    adminMasthead.classList.toggle('masthead--no-actions', !hasVisibleActions);
+}
 
 function showAlert(message, isError = true) {
     alertBox.textContent = message;
@@ -266,16 +272,15 @@ function renderUsers(users) {
         const accessSummary = getAccessSummary(user);
         return `
         <article class="user-card" data-user-card>
-            <button type="button" class="user-card__summary" data-card-toggle>
+            <div class="user-card__summary" data-card-toggle role="button" tabindex="0" aria-expanded="false">
                 <div class="user-card__identity">
                     <div class="user-card__name">${user.email}</div>
                     <div class="user-card__meta">${user.domain || 'Cloud address not set'}</div>
                 </div>
                 <div class="user-card__summary-right">
                     ${statusPill(user)}
-                    <span class="user-card__chevron" aria-hidden="true">▾</span>
                 </div>
-            </button>
+            </div>
 
             <div class="user-card__details">
                 <div class="user-card__meta">Created ${formatDate(user.created_at)}</div>
@@ -316,8 +321,7 @@ function applyRealtimeUserUpdate(user) {
 
         const statusContainer = card.querySelector('.user-card__summary-right');
         if (statusContainer) {
-            const chevron = statusContainer.querySelector('.user-card__chevron').outerHTML;
-            statusContainer.innerHTML = `${statusPill(user)}${chevron}`;
+            statusContainer.innerHTML = statusPill(user);
         }
 
         const accessSectionTexts = card.querySelectorAll('.user-card__section:nth-of-type(1) .user-card__section-text');
@@ -369,9 +373,11 @@ async function restoreAdminSession() {
         adminIdentity.textContent = me.email;
         adminIdentity.classList.remove('hidden');
         logoutBtn.classList.remove('hidden');
+        syncAdminMasthead();
         await loadUsers();
     } catch (error) {
         localStorage.removeItem(ADMIN_TOKEN_KEY);
+        syncAdminMasthead();
     }
 }
 
@@ -396,6 +402,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
         adminIdentity.textContent = data.email;
         adminIdentity.classList.remove('hidden');
         logoutBtn.classList.remove('hidden');
+        syncAdminMasthead();
         await loadUsers();
         showAlert('Admin login successful.', false);
     } catch (error) {
@@ -422,6 +429,7 @@ logoutBtn.addEventListener('click', () => {
     adminIdentity.textContent = '';
     logoutBtn.classList.add('hidden');
     loginPanel.classList.remove('hidden');
+    syncAdminMasthead();
     hideAlert();
 });
 
@@ -456,6 +464,7 @@ usersTableBody.addEventListener('click', async (event) => {
         const card = toggle.closest('[data-user-card]');
         if (card) {
             card.classList.toggle('is-expanded');
+            toggle.setAttribute('aria-expanded', card.classList.contains('is-expanded') ? 'true' : 'false');
         }
         return;
     }
@@ -477,6 +486,19 @@ usersTableBody.addEventListener('click', async (event) => {
     }
 });
 
+usersTableBody.addEventListener('keydown', (event) => {
+    const toggle = event.target.closest('[data-card-toggle]');
+    if (!toggle) return;
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+
+    event.preventDefault();
+    const card = toggle.closest('[data-user-card]');
+    if (!card) return;
+    card.classList.toggle('is-expanded');
+    toggle.setAttribute('aria-expanded', card.classList.contains('is-expanded') ? 'true' : 'false');
+});
+
+syncAdminMasthead();
 restoreAdminSession();
 </script>
 </body>
