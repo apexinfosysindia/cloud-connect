@@ -81,6 +81,37 @@
 
                 <div id="usersTableBody" class="user-list"></div>
             </section>
+
+            <section class="section-card user-section fleet-section">
+                <div class="section-header">
+                    <div>
+                        <h2 class="section-title section-title--small">Live device fleet</h2>
+                        <p class="section-text">Admin-only device visibility and remote SSH access. Online state auto-expires after <strong id="fleetWindow">45</strong> seconds.</p>
+                    </div>
+                    <button id="refreshFleetBtn" class="button button-secondary">Refresh Fleet</button>
+                </div>
+
+                <div class="stats-grid fleet-stats-grid">
+                    <article class="stat-card stat-card--trial">
+                        <span class="stat-label">Total Devices</span>
+                        <span id="countDevicesTotal" class="stat-value">0</span>
+                    </article>
+                    <article class="stat-card stat-card--active">
+                        <span class="stat-label">Online</span>
+                        <span id="countDevicesOnline" class="stat-value">0</span>
+                    </article>
+                    <article class="stat-card stat-card--pending">
+                        <span class="stat-label">Offline</span>
+                        <span id="countDevicesOffline" class="stat-value">0</span>
+                    </article>
+                    <article class="stat-card stat-card--suspended">
+                        <span class="stat-label">Connect Blocked</span>
+                        <span id="countDevicesBlocked" class="stat-value">0</span>
+                    </article>
+                </div>
+
+                <div id="fleetList" class="fleet-list"></div>
+            </section>
         </section>
     </main>
 </div>
@@ -99,6 +130,67 @@
     </div>
 </div>
 
+<div id="fleetLogsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="fleetLogsModalTitle">
+    <div class="modal__backdrop" data-close-fleet-logs-modal="true"></div>
+    <div class="modal__panel modal__panel--wide">
+        <div class="modal__header">
+            <div>
+                <h2 id="fleetLogsModalTitle" class="section-title section-title--small">Device Logs</h2>
+                <p id="fleetLogsModalSubtitle" class="section-text">Recent device and admin activity.</p>
+            </div>
+            <button id="fleetLogsModalClose" class="button button-secondary button-small">Close</button>
+        </div>
+
+        <div class="fleet-log-columns">
+            <section class="fleet-log-panel">
+                <h3 class="fleet-log-title">Device Events</h3>
+                <div id="fleetLogsBody" class="fleet-log-list"></div>
+            </section>
+
+            <section class="fleet-log-panel">
+                <h3 class="fleet-log-title">Admin Actions</h3>
+                <div id="fleetAdminLogsBody" class="fleet-log-list"></div>
+            </section>
+        </div>
+    </div>
+</div>
+
+<div id="connectModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="connectModalTitle">
+    <div class="modal__backdrop" data-close-connect-modal="true"></div>
+    <div class="modal__panel modal__panel--wide">
+        <div class="modal__header">
+            <div>
+                <h2 id="connectModalTitle" class="section-title section-title--small">Admin SSH Connect</h2>
+                <p id="connectTarget" class="section-text">Select a device to generate a connect command.</p>
+            </div>
+            <button id="connectModalClose" class="button button-secondary button-small">Close</button>
+        </div>
+
+        <div class="stack">
+            <div class="field">
+                <label class="field-label" for="connectReason">Access Reason (optional)</label>
+                <input id="connectReason" class="input" type="text" maxlength="200" placeholder="Incident check, maintenance, troubleshooting...">
+            </div>
+
+            <div class="field">
+                <label class="field-label" for="connectRemoteUser">Remote User Override (optional)</label>
+                <input id="connectRemoteUser" class="input" type="text" maxlength="48" placeholder="root">
+            </div>
+
+            <button id="generateConnectBtn" class="button button-primary">Generate SSH Command</button>
+
+            <code id="connectCommand" class="token-value">Generate a command to begin remote SSH access.</code>
+
+            <div class="fleet-command-meta">
+                <div><strong>Session token:</strong> <code id="connectToken">-</code></div>
+                <div><strong>Expires:</strong> <span id="connectExpiry">-</span></div>
+            </div>
+
+            <button id="copyConnectBtn" class="button button-secondary" disabled>Copy SSH Command</button>
+        </div>
+    </div>
+</div>
+
 <script>
 const alertBox = document.getElementById('alertBox');
 const loginPanel = document.getElementById('loginPanel');
@@ -107,11 +199,45 @@ const logoutBtn = document.getElementById('logoutBtn');
 const adminIdentity = document.getElementById('adminIdentity');
 const adminMasthead = document.querySelector('.masthead--admin');
 const usersTableBody = document.getElementById('usersTableBody');
+const refreshBtn = document.getElementById('refreshBtn');
 const tokenModal = document.getElementById('tokenModal');
 const tokenModalClose = document.getElementById('tokenModalClose');
 const tokenModalValue = document.getElementById('tokenModalValue');
 const tokenModalSubtitle = document.getElementById('tokenModalSubtitle');
+
+const refreshFleetBtn = document.getElementById('refreshFleetBtn');
+const fleetList = document.getElementById('fleetList');
+const fleetWindow = document.getElementById('fleetWindow');
+const countDevicesTotal = document.getElementById('countDevicesTotal');
+const countDevicesOnline = document.getElementById('countDevicesOnline');
+const countDevicesOffline = document.getElementById('countDevicesOffline');
+const countDevicesBlocked = document.getElementById('countDevicesBlocked');
+
+const fleetLogsModal = document.getElementById('fleetLogsModal');
+const fleetLogsModalClose = document.getElementById('fleetLogsModalClose');
+const fleetLogsModalSubtitle = document.getElementById('fleetLogsModalSubtitle');
+const fleetLogsBody = document.getElementById('fleetLogsBody');
+const fleetAdminLogsBody = document.getElementById('fleetAdminLogsBody');
+
+const connectModal = document.getElementById('connectModal');
+const connectModalClose = document.getElementById('connectModalClose');
+const connectTarget = document.getElementById('connectTarget');
+const connectReason = document.getElementById('connectReason');
+const connectRemoteUser = document.getElementById('connectRemoteUser');
+const generateConnectBtn = document.getElementById('generateConnectBtn');
+const connectCommand = document.getElementById('connectCommand');
+const connectToken = document.getElementById('connectToken');
+const connectExpiry = document.getElementById('connectExpiry');
+const copyConnectBtn = document.getElementById('copyConnectBtn');
+
+const loginBtn = document.getElementById('loginBtn');
 const ADMIN_TOKEN_KEY = 'apex_admin_token';
+const FLEET_REFRESH_MS = 15000;
+
+let fleetDevices = [];
+let selectedConnectDeviceId = null;
+let latestConnectCommand = '';
+let fleetRefreshTimer = null;
 
 function syncAdminMasthead() {
     const hasVisibleActions = !adminIdentity.classList.contains('hidden') || !logoutBtn.classList.contains('hidden');
@@ -137,6 +263,22 @@ function getAdminToken() {
     return localStorage.getItem(ADMIN_TOKEN_KEY);
 }
 
+function escapeHtml(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function normalizeErrorMessage(error, fallback) {
+    if (!error) return fallback;
+    if (typeof error === 'string') return error;
+    if (typeof error.message === 'string') return error.message;
+    return fallback;
+}
+
 async function api(path, options = {}) {
     const token = getAdminToken();
     const headers = {
@@ -155,6 +297,7 @@ async function api(path, options = {}) {
     if (!response.ok) {
         throw new Error(data.error || 'Request failed');
     }
+
     return data;
 }
 
@@ -173,7 +316,8 @@ function statusBadge(status) {
         suspended: 'status-badge status-badge--attention',
         expired: 'status-badge status-badge--attention'
     };
-    return `<span class="${classes[status] || 'status-badge'}">${labels[status] || status.replace('_', ' ')}</span>`;
+
+    return `<span class="${classes[status] || 'status-badge'}">${labels[status] || String(status || 'unknown').replace('_', ' ')}</span>`;
 }
 
 function statusPill(user) {
@@ -182,12 +326,58 @@ function statusPill(user) {
         return badge;
     }
 
-    return `<button type="button" class="status-reveal" data-user-email="${user.email}" data-access-token="${user.access_token}">${badge}</button>`;
+    return `<button type="button" class="status-reveal" data-user-email="${escapeHtml(user.email)}" data-access-token="${escapeHtml(user.access_token)}">${badge}</button>`;
+}
+
+function deviceOnlineBadge(device) {
+    if (device.online) {
+        return '<span class="status-badge status-badge--active">online</span>';
+    }
+
+    return '<span class="status-badge status-badge--pending">offline</span>';
 }
 
 function formatDate(value) {
-    if (!value) return '—';
-    return new Date(value).toLocaleString();
+    if (!value) {
+        return '-';
+    }
+
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) {
+        return '-';
+    }
+
+    return date.toLocaleString();
+}
+
+function formatSince(value) {
+    if (!value) {
+        return 'never';
+    }
+
+    const date = new Date(value);
+    const epoch = date.getTime();
+    if (!Number.isFinite(epoch)) {
+        return 'unknown';
+    }
+
+    const diffMs = Date.now() - epoch;
+    if (diffMs < 0) {
+        return `at ${date.toLocaleString()}`;
+    }
+
+    const diffSec = Math.floor(diffMs / 1000);
+    if (diffSec < 10) return 'just now';
+    if (diffSec < 60) return `${diffSec}s ago`;
+
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return `${diffMin}m ago`;
+
+    const diffHours = Math.floor(diffMin / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays}d ago`;
 }
 
 function getAccessSummary(user) {
@@ -223,6 +413,22 @@ function updateCounts(users) {
     document.getElementById('countTrial').textContent = users.filter((u) => u.status === 'trial').length;
     document.getElementById('countActive').textContent = users.filter((u) => u.status === 'active').length;
     document.getElementById('countDisabled').textContent = users.filter((u) => ['suspended', 'expired'].includes(u.status)).length;
+}
+
+function updateFleetCounts(stats = {}) {
+    countDevicesTotal.textContent = Number(stats.total || 0);
+    countDevicesOnline.textContent = Number(stats.online || 0);
+    countDevicesOffline.textContent = Number(stats.offline || 0);
+    countDevicesBlocked.textContent = Number(stats.blocked || 0);
+}
+
+function deriveFleetStats(devices) {
+    return {
+        total: devices.length,
+        online: devices.filter((device) => device.online).length,
+        offline: devices.filter((device) => !device.online).length,
+        blocked: devices.filter((device) => !device.account_enabled).length
+    };
 }
 
 function buildActionButton(user, label, status, extra = {}) {
@@ -264,7 +470,7 @@ function renderUsers(users) {
     updateCounts(users);
 
     if (!users.length) {
-        usersTableBody.innerHTML = `<div class="user-empty">No customer accounts found.</div>`;
+        usersTableBody.innerHTML = '<div class="user-empty">No customer accounts found.</div>';
         return;
     }
 
@@ -274,8 +480,8 @@ function renderUsers(users) {
         <article class="user-card" data-user-card>
             <div class="user-card__summary" data-card-toggle role="button" tabindex="0" aria-expanded="false">
                 <div class="user-card__identity">
-                    <div class="user-card__name">${user.email}</div>
-                    <div class="user-card__meta">${user.domain || 'Cloud address not set'}</div>
+                    <div class="user-card__name">${escapeHtml(user.email)}</div>
+                    <div class="user-card__meta">${escapeHtml(user.domain || 'Cloud address not set')}</div>
                 </div>
                 <div class="user-card__summary-right">
                     ${statusPill(user)}
@@ -288,15 +494,15 @@ function renderUsers(users) {
                 <div class="user-card__sections">
                     <section class="user-card__section">
                         <span class="user-card__section-label">Access</span>
-                        <div class="user-card__section-text">State: ${accessSummary.state}</div>
-                        <div class="user-card__section-text">${accessSummary.detail}</div>
+                        <div class="user-card__section-text">State: ${escapeHtml(accessSummary.state)}</div>
+                        <div class="user-card__section-text">${escapeHtml(accessSummary.detail)}</div>
                     </section>
 
                     <section class="user-card__section">
                         <span class="user-card__section-label">Billing</span>
-                        <div class="user-card__section-text">Subscription: ${user.razorpay_subscription_status || 'Pending/Not linked yet'}</div>
-                        <div class="user-card__section-text">Sub ID: ${user.razorpay_subscription_id || 'Pending/Not linked yet'}</div>
-                        <div class="user-card__section-text">Payment ID: ${user.razorpay_payment_id || 'Pending/Not captured yet'}</div>
+                        <div class="user-card__section-text">Subscription: ${escapeHtml(user.razorpay_subscription_status || 'Pending/Not linked yet')}</div>
+                        <div class="user-card__section-text">Sub ID: ${escapeHtml(user.razorpay_subscription_id || 'Pending/Not linked yet')}</div>
+                        <div class="user-card__section-text">Payment ID: ${escapeHtml(user.razorpay_payment_id || 'Pending/Not captured yet')}</div>
                     </section>
                 </div>
 
@@ -306,6 +512,126 @@ function renderUsers(users) {
             </div>
         </article>
     `;
+    }).join('');
+}
+
+function getFleetLastEventSummary(device) {
+    if (!device.last_event) {
+        return 'No events captured yet';
+    }
+
+    const event = `${String(device.last_event.event_type || '').replace(/_/g, ' ')}`.trim() || 'event';
+    const message = device.last_event.message || 'No detail';
+    return `${event}: ${message}`;
+}
+
+function renderFleet(devices, stats, heartbeatWindowSeconds) {
+    updateFleetCounts(stats || deriveFleetStats(devices));
+    if (fleetWindow && heartbeatWindowSeconds) {
+        fleetWindow.textContent = heartbeatWindowSeconds;
+    }
+
+    if (!devices.length) {
+        fleetList.innerHTML = '<div class="user-empty">No registered devices yet. Devices appear here after addon registration and heartbeat.</div>';
+        return;
+    }
+
+    fleetList.innerHTML = devices.map((device) => {
+        const displayName = device.device_name || device.hostname || device.device_uid;
+        const owner = `${device.owner?.email || 'Unknown owner'}${device.owner?.domain ? ` (${device.owner.domain})` : ''}`;
+        const localIps = (device.local_ips && device.local_ips.length > 0) ? device.local_ips.join(', ') : 'Not reported';
+        const endpoint = (device.tunnel_host && device.tunnel_port) ? `${device.tunnel_host}:${device.tunnel_port}` : 'Waiting for tunnel endpoint';
+        const canConnect = Boolean(device.online && device.connect_ready);
+
+        let connectHint = 'Ready';
+        if (!device.account_enabled) {
+            connectHint = 'Owner account is not active';
+        } else if (!device.online) {
+            connectHint = 'Device heartbeat is stale';
+        } else if (!device.connect_ready) {
+            connectHint = 'Tunnel endpoint unavailable';
+        }
+
+        return `
+        <article class="user-card fleet-card" data-fleet-card>
+            <div class="user-card__summary" data-fleet-card-toggle role="button" tabindex="0" aria-expanded="false">
+                <div class="user-card__identity">
+                    <div class="user-card__name">${escapeHtml(displayName)}</div>
+                    <div class="user-card__meta">${escapeHtml(owner)}</div>
+                </div>
+                <div class="user-card__summary-right">
+                    ${deviceOnlineBadge(device)}
+                    ${statusBadge(device.owner?.status)}
+                    <span class="user-card__chevron" aria-hidden="true">v</span>
+                </div>
+            </div>
+
+            <div class="user-card__details">
+                <div class="user-card__meta">Last heartbeat ${formatSince(device.last_seen_at)} (${formatDate(device.last_seen_at)})</div>
+
+                <div class="user-card__sections">
+                    <section class="user-card__section">
+                        <span class="user-card__section-label">Connectivity</span>
+                        <div class="user-card__section-text">SSH endpoint: ${escapeHtml(endpoint)}</div>
+                        <div class="user-card__section-text">Local IP(s): ${escapeHtml(localIps)}</div>
+                        <div class="user-card__section-text">Remote user: ${escapeHtml(device.remote_user || 'root')} | SSH port: ${escapeHtml(String(device.ssh_port || 22))}</div>
+                    </section>
+
+                    <section class="user-card__section">
+                        <span class="user-card__section-label">Agent</span>
+                        <div class="user-card__section-text">UID: ${escapeHtml(device.device_uid || '-')}</div>
+                        <div class="user-card__section-text">State: ${escapeHtml(device.agent_state || 'unknown')} | Version: ${escapeHtml(device.addon_version || 'unknown')}</div>
+                        <div class="user-card__section-text">Last event: ${escapeHtml(getFleetLastEventSummary(device))}</div>
+                    </section>
+                </div>
+
+                <div class="action-row">
+                    <button class="button button-secondary button-small fleet-logs-action" data-device-id="${device.id}">View Logs</button>
+                    <button class="button button-primary button-small fleet-connect-action" data-device-id="${device.id}" ${canConnect ? '' : 'disabled'}>${canConnect ? 'Connect SSH' : `Connect blocked: ${escapeHtml(connectHint)}`}</button>
+                </div>
+            </div>
+        </article>
+    `;
+    }).join('');
+}
+
+function renderLogItems(targetElement, items, mode) {
+    if (!items || items.length === 0) {
+        targetElement.innerHTML = '<div class="user-empty">No activity captured yet.</div>';
+        return;
+    }
+
+    targetElement.innerHTML = items.map((entry) => {
+        const payloadString = entry.payload
+            ? escapeHtml(typeof entry.payload === 'string' ? entry.payload : JSON.stringify(entry.payload, null, 2))
+            : '';
+        const detailsString = entry.details
+            ? escapeHtml(typeof entry.details === 'string' ? entry.details : JSON.stringify(entry.details, null, 2))
+            : '';
+
+        if (mode === 'admin') {
+            return `
+            <article class="fleet-log-item">
+                <div class="fleet-log-item__head">
+                    <span class="fleet-log-item__event">${escapeHtml(entry.action || 'admin action')}</span>
+                    <span class="fleet-log-item__time">${formatDate(entry.created_at)}</span>
+                </div>
+                <div class="fleet-log-item__meta">${escapeHtml(entry.admin_email || 'Unknown admin')}</div>
+                ${detailsString ? `<pre class="fleet-log-item__payload">${detailsString}</pre>` : ''}
+            </article>
+        `;
+        }
+
+        return `
+            <article class="fleet-log-item">
+                <div class="fleet-log-item__head">
+                    <span class="fleet-log-item__event">${escapeHtml(entry.event_type || 'event')}</span>
+                    <span class="fleet-log-item__time">${formatDate(entry.created_at)}</span>
+                </div>
+                <div class="fleet-log-item__meta">${escapeHtml((entry.level || 'info').toUpperCase())} | ${escapeHtml(entry.message || '-')}</div>
+                ${payloadString ? `<pre class="fleet-log-item__payload">${payloadString}</pre>` : ''}
+            </article>
+        `;
     }).join('');
 }
 
@@ -348,6 +674,12 @@ async function loadUsers() {
     renderUsers(data.users);
 }
 
+async function loadFleet() {
+    const data = await api('/api/admin/fleet');
+    fleetDevices = Array.isArray(data.devices) ? data.devices : [];
+    renderFleet(fleetDevices, data.stats || deriveFleetStats(fleetDevices), data.heartbeat_window_seconds || 45);
+}
+
 async function applyStatus(userId, status, trialDays) {
     const response = await api(`/api/admin/users/${userId}/status`, {
         method: 'POST',
@@ -362,76 +694,9 @@ async function applyStatus(userId, status, trialDays) {
     showAlert('User updated successfully.', false);
 }
 
-async function restoreAdminSession() {
-    const token = getAdminToken();
-    if (!token) return;
-
-    try {
-        const me = await api('/api/admin/me');
-        loginPanel.classList.add('hidden');
-        dashboard.classList.remove('hidden');
-        adminIdentity.textContent = me.email;
-        adminIdentity.classList.remove('hidden');
-        logoutBtn.classList.remove('hidden');
-        syncAdminMasthead();
-        await loadUsers();
-    } catch (error) {
-        localStorage.removeItem(ADMIN_TOKEN_KEY);
-        syncAdminMasthead();
-    }
+function getDeviceById(deviceId) {
+    return fleetDevices.find((device) => Number(device.id) === Number(deviceId)) || null;
 }
-
-document.getElementById('loginForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const btn = document.getElementById('loginBtn');
-    btn.disabled = true;
-    btn.textContent = 'Signing In...';
-    hideAlert();
-
-    try {
-        const data = await api('/api/admin/login', {
-            method: 'POST',
-            body: {
-                email: document.getElementById('adminEmail').value,
-                password: document.getElementById('adminPassword').value
-            }
-        });
-        localStorage.setItem(ADMIN_TOKEN_KEY, data.token);
-        loginPanel.classList.add('hidden');
-        dashboard.classList.remove('hidden');
-        adminIdentity.textContent = data.email;
-        adminIdentity.classList.remove('hidden');
-        logoutBtn.classList.remove('hidden');
-        syncAdminMasthead();
-        await loadUsers();
-        showAlert('Admin login successful.', false);
-    } catch (error) {
-        showAlert(error.message);
-    } finally {
-        btn.disabled = false;
-        btn.textContent = 'Sign In';
-    }
-});
-
-document.getElementById('refreshBtn').addEventListener('click', async () => {
-    try {
-        await loadUsers();
-        hideAlert();
-    } catch (error) {
-        showAlert(error.message);
-    }
-});
-
-logoutBtn.addEventListener('click', () => {
-    localStorage.removeItem(ADMIN_TOKEN_KEY);
-    dashboard.classList.add('hidden');
-    adminIdentity.classList.add('hidden');
-    adminIdentity.textContent = '';
-    logoutBtn.classList.add('hidden');
-    loginPanel.classList.remove('hidden');
-    syncAdminMasthead();
-    hideAlert();
-});
 
 function closeTokenModal() {
     tokenModal.classList.add('hidden');
@@ -443,10 +708,272 @@ function openTokenModal(email, token) {
     tokenModal.classList.remove('hidden');
 }
 
+function closeFleetLogsModal() {
+    fleetLogsModal.classList.add('hidden');
+    fleetLogsBody.innerHTML = '';
+    fleetAdminLogsBody.innerHTML = '';
+}
+
+async function openFleetLogsModal(deviceId) {
+    const device = getDeviceById(deviceId);
+    fleetLogsModalSubtitle.textContent = device
+        ? `${device.device_name || device.hostname || device.device_uid} | ${device.owner?.email || 'Unknown owner'}`
+        : 'Recent device and admin activity.';
+
+    fleetLogsBody.innerHTML = '<div class="user-empty">Loading device logs...</div>';
+    fleetAdminLogsBody.innerHTML = '<div class="user-empty">Loading admin actions...</div>';
+    fleetLogsModal.classList.remove('hidden');
+
+    try {
+        const response = await api(`/api/admin/fleet/${Number(deviceId)}/logs?limit=80`);
+        renderLogItems(fleetLogsBody, response.logs || [], 'device');
+        renderLogItems(fleetAdminLogsBody, response.admin_actions || [], 'admin');
+    } catch (error) {
+        renderLogItems(fleetLogsBody, [], 'device');
+        renderLogItems(fleetAdminLogsBody, [], 'admin');
+        showAlert(normalizeErrorMessage(error, 'Unable to load fleet logs'));
+    }
+}
+
+function closeConnectModal() {
+    selectedConnectDeviceId = null;
+    latestConnectCommand = '';
+    connectReason.value = '';
+    connectRemoteUser.value = '';
+    connectTarget.textContent = 'Select a device to generate a connect command.';
+    connectCommand.textContent = 'Generate a command to begin remote SSH access.';
+    connectToken.textContent = '-';
+    connectExpiry.textContent = '-';
+    copyConnectBtn.disabled = true;
+    connectModal.classList.add('hidden');
+}
+
+function openConnectModal(deviceId) {
+    const device = getDeviceById(deviceId);
+    if (!device) {
+        showAlert('Device not found in current fleet cache');
+        return;
+    }
+
+    selectedConnectDeviceId = Number(deviceId);
+    latestConnectCommand = '';
+    connectReason.value = '';
+    connectRemoteUser.value = '';
+    connectTarget.textContent = `Generate admin SSH command for ${device.device_name || device.hostname || device.device_uid} (${device.owner?.email || 'unknown owner'})`;
+    connectCommand.textContent = 'Generate a command to begin remote SSH access.';
+    connectToken.textContent = '-';
+    connectExpiry.textContent = '-';
+    copyConnectBtn.disabled = true;
+    connectModal.classList.remove('hidden');
+}
+
+async function copyToClipboard(value) {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(value);
+        return;
+    }
+
+    const temp = document.createElement('textarea');
+    temp.value = value;
+    temp.setAttribute('readonly', '');
+    temp.style.position = 'absolute';
+    temp.style.left = '-9999px';
+    document.body.appendChild(temp);
+    temp.select();
+    document.execCommand('copy');
+    document.body.removeChild(temp);
+}
+
+function startFleetAutoRefresh() {
+    stopFleetAutoRefresh();
+    fleetRefreshTimer = window.setInterval(async () => {
+        if (dashboard.classList.contains('hidden')) {
+            return;
+        }
+
+        try {
+            await loadFleet();
+        } catch (error) {
+            // Silent refresh failures should not interrupt active workflows.
+        }
+    }, FLEET_REFRESH_MS);
+}
+
+function stopFleetAutoRefresh() {
+    if (fleetRefreshTimer) {
+        window.clearInterval(fleetRefreshTimer);
+        fleetRefreshTimer = null;
+    }
+}
+
+async function loadDashboardData() {
+    await loadUsers();
+    await loadFleet();
+}
+
+async function restoreAdminSession() {
+    const token = getAdminToken();
+    if (!token) {
+        return;
+    }
+
+    try {
+        const me = await api('/api/admin/me');
+        loginPanel.classList.add('hidden');
+        dashboard.classList.remove('hidden');
+        adminIdentity.textContent = me.email;
+        adminIdentity.classList.remove('hidden');
+        logoutBtn.classList.remove('hidden');
+        syncAdminMasthead();
+        await loadDashboardData();
+        startFleetAutoRefresh();
+    } catch (error) {
+        localStorage.removeItem(ADMIN_TOKEN_KEY);
+        syncAdminMasthead();
+    }
+}
+
+document.getElementById('loginForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    loginBtn.disabled = true;
+    loginBtn.textContent = 'Signing In...';
+    hideAlert();
+
+    try {
+        const data = await api('/api/admin/login', {
+            method: 'POST',
+            body: {
+                email: document.getElementById('adminEmail').value,
+                password: document.getElementById('adminPassword').value
+            }
+        });
+
+        localStorage.setItem(ADMIN_TOKEN_KEY, data.token);
+        loginPanel.classList.add('hidden');
+        dashboard.classList.remove('hidden');
+        adminIdentity.textContent = data.email;
+        adminIdentity.classList.remove('hidden');
+        logoutBtn.classList.remove('hidden');
+        syncAdminMasthead();
+        await loadDashboardData();
+        startFleetAutoRefresh();
+        showAlert('Admin login successful.', false);
+    } catch (error) {
+        showAlert(normalizeErrorMessage(error, 'Unable to sign in'));
+    } finally {
+        loginBtn.disabled = false;
+        loginBtn.textContent = 'Sign In';
+    }
+});
+
+refreshBtn.addEventListener('click', async () => {
+    try {
+        await loadUsers();
+        hideAlert();
+    } catch (error) {
+        showAlert(normalizeErrorMessage(error, 'Unable to refresh user list'));
+    }
+});
+
+refreshFleetBtn.addEventListener('click', async () => {
+    refreshFleetBtn.disabled = true;
+    const originalLabel = refreshFleetBtn.textContent;
+    refreshFleetBtn.textContent = 'Refreshing...';
+
+    try {
+        await loadFleet();
+        hideAlert();
+    } catch (error) {
+        showAlert(normalizeErrorMessage(error, 'Unable to refresh fleet'));
+    } finally {
+        refreshFleetBtn.disabled = false;
+        refreshFleetBtn.textContent = originalLabel;
+    }
+});
+
+logoutBtn.addEventListener('click', () => {
+    localStorage.removeItem(ADMIN_TOKEN_KEY);
+    stopFleetAutoRefresh();
+    dashboard.classList.add('hidden');
+    adminIdentity.classList.add('hidden');
+    adminIdentity.textContent = '';
+    logoutBtn.classList.add('hidden');
+    loginPanel.classList.remove('hidden');
+    usersTableBody.innerHTML = '';
+    fleetList.innerHTML = '';
+    updateFleetCounts({ total: 0, online: 0, offline: 0, blocked: 0 });
+    closeTokenModal();
+    closeFleetLogsModal();
+    closeConnectModal();
+    syncAdminMasthead();
+    hideAlert();
+});
+
+generateConnectBtn.addEventListener('click', async () => {
+    if (!selectedConnectDeviceId) {
+        showAlert('Select a fleet device first');
+        return;
+    }
+
+    const originalLabel = generateConnectBtn.textContent;
+    generateConnectBtn.disabled = true;
+    generateConnectBtn.textContent = 'Generating...';
+
+    try {
+        const response = await api(`/api/admin/fleet/${selectedConnectDeviceId}/connect`, {
+            method: 'POST',
+            body: {
+                reason: connectReason.value.trim() || undefined,
+                remote_user: connectRemoteUser.value.trim() || undefined
+            }
+        });
+
+        latestConnectCommand = response.connect?.command || '';
+        connectCommand.textContent = latestConnectCommand || 'Connect command was not returned.';
+        connectToken.textContent = response.connect?.token || '-';
+        connectExpiry.textContent = formatDate(response.connect?.expires_at);
+        copyConnectBtn.disabled = !latestConnectCommand;
+        await loadFleet();
+        showAlert('SSH command generated for admin access.', false);
+    } catch (error) {
+        showAlert(normalizeErrorMessage(error, 'Unable to generate SSH command'));
+    } finally {
+        generateConnectBtn.disabled = false;
+        generateConnectBtn.textContent = originalLabel;
+    }
+});
+
+copyConnectBtn.addEventListener('click', async () => {
+    if (!latestConnectCommand) {
+        return;
+    }
+
+    try {
+        await copyToClipboard(latestConnectCommand);
+        showAlert('SSH command copied to clipboard.', false);
+    } catch (error) {
+        showAlert('Unable to copy command automatically. Copy it manually.');
+    }
+});
+
 tokenModalClose.addEventListener('click', closeTokenModal);
 tokenModal.addEventListener('click', (event) => {
     if (event.target.dataset.closeModal === 'true') {
         closeTokenModal();
+    }
+});
+
+fleetLogsModalClose.addEventListener('click', closeFleetLogsModal);
+fleetLogsModal.addEventListener('click', (event) => {
+    if (event.target.dataset.closeFleetLogsModal === 'true') {
+        closeFleetLogsModal();
+    }
+});
+
+connectModalClose.addEventListener('click', closeConnectModal);
+connectModal.addEventListener('click', (event) => {
+    if (event.target.dataset.closeConnectModal === 'true') {
+        closeConnectModal();
     }
 });
 
@@ -470,19 +997,21 @@ usersTableBody.addEventListener('click', async (event) => {
     }
 
     const button = event.target.closest('.admin-action');
-    if (!button) return;
+    if (!button) {
+        return;
+    }
 
-    const original = button.textContent;
+    const originalLabel = button.textContent;
     button.disabled = true;
     button.textContent = 'Updating...';
 
     try {
         await applyStatus(button.dataset.userId, button.dataset.status, button.dataset.trialDays);
     } catch (error) {
-        showAlert(error.message);
+        showAlert(normalizeErrorMessage(error, 'Unable to update user'));
     } finally {
         button.disabled = false;
-        button.textContent = original;
+        button.textContent = originalLabel;
     }
 });
 
@@ -497,6 +1026,43 @@ usersTableBody.addEventListener('keydown', (event) => {
     card.classList.toggle('is-expanded');
     toggle.setAttribute('aria-expanded', card.classList.contains('is-expanded') ? 'true' : 'false');
 });
+
+fleetList.addEventListener('click', async (event) => {
+    const toggle = event.target.closest('[data-fleet-card-toggle]');
+    if (toggle) {
+        const card = toggle.closest('[data-fleet-card]');
+        if (card) {
+            card.classList.toggle('is-expanded');
+            toggle.setAttribute('aria-expanded', card.classList.contains('is-expanded') ? 'true' : 'false');
+        }
+        return;
+    }
+
+    const logsAction = event.target.closest('.fleet-logs-action');
+    if (logsAction) {
+        await openFleetLogsModal(logsAction.dataset.deviceId);
+        return;
+    }
+
+    const connectAction = event.target.closest('.fleet-connect-action');
+    if (connectAction) {
+        openConnectModal(connectAction.dataset.deviceId);
+    }
+});
+
+fleetList.addEventListener('keydown', (event) => {
+    const toggle = event.target.closest('[data-fleet-card-toggle]');
+    if (!toggle) return;
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+
+    event.preventDefault();
+    const card = toggle.closest('[data-fleet-card]');
+    if (!card) return;
+    card.classList.toggle('is-expanded');
+    toggle.setAttribute('aria-expanded', card.classList.contains('is-expanded') ? 'true' : 'false');
+});
+
+window.addEventListener('beforeunload', stopFleetAutoRefresh);
 
 syncAdminMasthead();
 restoreAdminSession();
