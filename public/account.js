@@ -60,6 +60,11 @@
     }
 
     function normalizeSignedInUrl() {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('google_oauth') === '1') {
+            return;
+        }
+
         if (window.location.pathname !== '/') {
             window.history.replaceState({}, '', '/');
         }
@@ -251,6 +256,9 @@
 
             localStorage.setItem('apex_user', JSON.stringify(data.data));
             renderDashboard(data.data, { scroll: false });
+            if (enabled) {
+                appendGoogleOAuthPortalToken(data.data);
+            }
             showAlert(data.message, false);
         } catch (error) {
             showAlert(error.message);
@@ -429,6 +437,7 @@
 
             localStorage.setItem('apex_user', JSON.stringify(data.data));
             renderDashboard(data.data, { scroll: false });
+            appendGoogleOAuthPortalToken(data.data);
         } catch (err) {
             if (!silent) {
                 showAlert(err.message);
