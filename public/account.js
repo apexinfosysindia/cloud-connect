@@ -194,6 +194,24 @@
             .replaceAll("'", '&#39;');
     }
 
+    function isWellFormedPortalToken(token) {
+        if (typeof token !== 'string') {
+            return false;
+        }
+
+        const normalized = token.trim();
+        if (!normalized.includes('.')) {
+            return false;
+        }
+
+        const parts = normalized.split('.');
+        if (parts.length !== 2) {
+            return false;
+        }
+
+        return parts[0].length > 10 && parts[1].length >= 32;
+    }
+
     async function loadGoogleHomeEntities(userData) {
         if (!googleHomeEntities || !userData?.portal_session_token) {
             return;
@@ -467,11 +485,23 @@
             });
 
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Unable to refresh account status');
+            if (!res.ok) {
+                const refreshError = new Error(data.error || 'Unable to refresh account status');
+                refreshError.status = res.status;
+                throw refreshError;
+            }
 
             localStorage.setItem('apex_user', JSON.stringify(data.data));
             renderDashboard(data.data, { scroll: false });
         } catch (err) {
+            if (err?.status === 401 || err?.status === 404) {
+                clearSessionAndShowAuth();
+                if (googleOAuthMode) {
+                    showAlert('Session expired. Sign in again to continue Google linking.');
+                }
+                return;
+            }
+
             if (!silent) {
                 showAlert(err.message);
             }
@@ -792,15 +822,34 @@
 
     const storedUser = localStorage.getItem('apex_user');
     if (storedUser) {
-        const parsedUser = JSON.parse(storedUser);
-        renderDashboard(parsedUser);
-        refreshAccountState({ silent: true });
+        let parsedUser = null;
+        try {
+            parsedUser = JSON.parse(storedUser);
+        } catch (error) {
+            parsedUser = null;
+        }
 
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible') {
-                refreshAccountState({ silent: true });
+        if (!parsedUser || !isWellFormedPortalToken(parsedUser.portal_session_token)) {
+            localStorage.removeItem('apex_user');
+            if (pageMode === 'signup') {
+                showSignupView();
+            } else {
+                showLoginView();
             }
-        });
+
+            if (googleOAuthMode) {
+                showAlert('Your session needs refresh. Please sign in again to continue Google linking.', false);
+            }
+        } else {
+            renderDashboard(parsedUser);
+            refreshAccountState({ silent: true });
+
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') {
+                    refreshAccountState({ silent: true });
+                }
+            });
+        }
     } else if (pageMode === 'signup') {
         showSignupView();
     } else {
