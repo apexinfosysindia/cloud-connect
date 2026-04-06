@@ -17,6 +17,11 @@
     const dashSubdomain = document.getElementById('dashSubdomain');
     const saveSubdomainBtn = document.getElementById('saveSubdomainBtn');
     const dashUrlHelp = document.getElementById('dashUrlHelp');
+    const googleHomeCard = document.getElementById('googleHomeCard');
+    const googleHomeStatus = document.getElementById('googleHomeStatus');
+    const googleHomeEnableBtn = document.getElementById('googleHomeEnableBtn');
+    const googleHomeDisableBtn = document.getElementById('googleHomeDisableBtn');
+    const googleHomeEntities = document.getElementById('googleHomeEntities');
     const portalBrandTitle = 'ApexOS Cloud Connect Oasis';
     const loginTitle = `Sign In | ${portalBrandTitle}`;
     const signupTitle = `Create Account | ${portalBrandTitle}`;
@@ -166,6 +171,97 @@
         };
     }
 
+    function escapeHtml(value) {
+        return String(value || '')
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#39;');
+    }
+
+    async function loadGoogleHomeEntities(userData) {
+        if (!googleHomeEntities || !userData?.portal_session_token) {
+            return;
+        }
+
+        if (!userData.google_home_enabled) {
+            googleHomeEntities.innerHTML = '<p class="detail-copy">Enable Google Home to manage exposed entities.</p>';
+            return;
+        }
+
+        googleHomeEntities.innerHTML = '<p class="detail-copy">Loading entities...</p>';
+
+        try {
+            const res = await fetch('/api/account/google-home/entities', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ portal_session_token: userData.portal_session_token })
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                const message = data.error || 'Unable to load Google entities';
+                throw new Error(message);
+            }
+
+            const entities = Array.isArray(data.entities) ? data.entities : [];
+            if (entities.length === 0) {
+                googleHomeEntities.innerHTML = '<p class="detail-copy">No entities synced yet. Keep addon online and wait for next sync.</p>';
+                return;
+            }
+
+            googleHomeEntities.innerHTML = entities.map((entity) => `
+                <label class="google-entity-row">
+                    <input type="checkbox" class="google-entity-toggle" data-entity-id="${escapeHtml(entity.entity_id)}" ${entity.exposed ? 'checked' : ''}>
+                    <span class="google-entity-name">${escapeHtml(entity.display_name || entity.entity_id)}</span>
+                    <span class="google-entity-meta">${escapeHtml(entity.entity_type || 'switch')} | ${entity.online ? 'online' : 'offline'}</span>
+                </label>
+            `).join('');
+        } catch (error) {
+            googleHomeEntities.innerHTML = `<p class="detail-copy">${escapeHtml(error.message || 'Unable to load Google Home entities right now.')}</p>`;
+        }
+    }
+
+    async function setGoogleHomeEnabled(userData, enabled, triggerButton) {
+        if (!userData?.portal_session_token) {
+            showAlert('Please log in again to continue.');
+            return;
+        }
+
+        const originalLabel = triggerButton ? triggerButton.textContent : '';
+        if (triggerButton) {
+            triggerButton.disabled = true;
+            triggerButton.textContent = enabled ? 'Enabling...' : 'Disabling...';
+        }
+
+        try {
+            const res = await fetch('/api/account/google-home/enable', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    portal_session_token: userData.portal_session_token,
+                    enabled
+                })
+            });
+
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || 'Unable to update Google Home setting');
+            }
+
+            localStorage.setItem('apex_user', JSON.stringify(data.data));
+            renderDashboard(data.data, { scroll: false });
+            showAlert(data.message, false);
+        } catch (error) {
+            showAlert(error.message);
+        } finally {
+            if (triggerButton) {
+                triggerButton.disabled = false;
+                triggerButton.textContent = originalLabel;
+            }
+        }
+    }
+
     function renderDashboard(userData, options = {}) {
         const shouldScroll = options.scroll !== false;
         if (loginForm) loginForm.classList.add('hidden');
@@ -200,6 +296,31 @@
         }
 
         document.getElementById('dashToken').textContent = userData.access_token || 'Issued when service is enabled';
+
+        if (googleHomeCard) {
+            const showGoogleCard = accessEnabled;
+            googleHomeCard.classList.toggle('hidden', !showGoogleCard);
+        if (showGoogleCard) {
+            const enabled = Boolean(userData.google_home_enabled);
+            const linked = Boolean(userData.google_home_linked);
+                if (googleHomeStatus) {
+                    googleHomeStatus.textContent = enabled
+                        ? (linked ? 'Enabled and linked to Google' : 'Enabled (not linked yet)')
+                        : 'Disabled';
+                }
+                if (googleHomeEnableBtn) {
+                    googleHomeEnableBtn.classList.toggle('hidden', enabled);
+                }
+                if (googleHomeDisableBtn) {
+                    googleHomeDisableBtn.classList.toggle('hidden', !enabled);
+                }
+                if (!enabled && googleHomeEntities) {
+                    googleHomeEntities.innerHTML = '<p class="detail-copy">Enable Google Home to manage exposed entities.</p>';
+                } else {
+                    void loadGoogleHomeEntities(userData);
+                }
+            }
+        }
 
         const dashUrl = document.getElementById('dashUrl');
         const dashUrlLabel = document.getElementById('dashUrlLabel');
@@ -238,6 +359,42 @@
         }
 
         startAccountAutoRefresh();
+    }
+
+    function appendGoogleOAuthPortalToken(userData) {
+        if (!userData?.portal_session_token) {
+            return;
+        }
+
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('google_oauth') !== '1') {
+            return;
+        }
+
+        const redirectUri = params.get('redirect_uri');
+        const state = params.get('state') || '';
+        if (!redirectUri) {
+            return;
+        }
+
+        const clientId = params.get('client_id');
+        if (!clientId) {
+            return;
+        }
+
+        if (userData.google_home_enabled !== true) {
+            showAlert('Enable Google Home integration in dashboard first.');
+            return;
+        }
+
+        const authorizeUrl = new URL('/api/google/home/oauth', window.location.origin);
+        authorizeUrl.searchParams.set('client_id', clientId);
+        authorizeUrl.searchParams.set('redirect_uri', redirectUri);
+        authorizeUrl.searchParams.set('response_type', 'code');
+        authorizeUrl.searchParams.set('state', state);
+        authorizeUrl.searchParams.set('portal_session_token', userData.portal_session_token);
+
+        window.location.replace(authorizeUrl.toString());
     }
 
     function stopAccountAutoRefresh() {
@@ -453,6 +610,62 @@
         });
     }
 
+    if (googleHomeEnableBtn) {
+        googleHomeEnableBtn.addEventListener('click', async () => {
+            const userData = JSON.parse(localStorage.getItem('apex_user') || 'null');
+            await setGoogleHomeEnabled(userData, true, googleHomeEnableBtn);
+        });
+    }
+
+    if (googleHomeDisableBtn) {
+        googleHomeDisableBtn.addEventListener('click', async () => {
+            const userData = JSON.parse(localStorage.getItem('apex_user') || 'null');
+            await setGoogleHomeEnabled(userData, false, googleHomeDisableBtn);
+        });
+    }
+
+    if (googleHomeEntities) {
+        googleHomeEntities.addEventListener('change', async (event) => {
+            const toggle = event.target.closest('.google-entity-toggle');
+            if (!toggle) {
+                return;
+            }
+
+            const userData = JSON.parse(localStorage.getItem('apex_user') || 'null');
+            if (!userData?.portal_session_token) {
+                showAlert('Please log in again to continue.');
+                return;
+            }
+
+            const entityId = toggle.dataset.entityId;
+            const exposed = toggle.checked;
+
+            toggle.disabled = true;
+            try {
+                const res = await fetch(`/api/account/google-home/entities/${encodeURIComponent(entityId)}/expose`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        portal_session_token: userData.portal_session_token,
+                        exposed
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data.error || 'Unable to update entity exposure');
+                }
+                showAlert(data.message, false);
+                const refreshedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
+                await loadGoogleHomeEntities(refreshedUser || userData);
+            } catch (error) {
+                toggle.checked = !exposed;
+                showAlert(error.message);
+            } finally {
+                toggle.disabled = false;
+            }
+        });
+    }
+
     if (loginForm) {
         loginForm.addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -476,6 +689,7 @@
 
                 localStorage.setItem('apex_user', JSON.stringify(data.data));
                 renderDashboard(data.data);
+                appendGoogleOAuthPortalToken(data.data);
                 if (!hasSubdomain(data.data)) {
                     showAlert('Set your desired cloud address to continue setup.', false);
                 } else if (data.data.status === 'payment_pending') {
@@ -523,6 +737,7 @@
 
                 localStorage.setItem('apex_user', JSON.stringify(data.data));
                 renderDashboard(data.data);
+                appendGoogleOAuthPortalToken(data.data);
                 showAlert(data.message, false);
                 if (data.checkout) {
                     openCheckout(data.checkout, btn, defaultText);
@@ -537,7 +752,9 @@
 
     const storedUser = localStorage.getItem('apex_user');
     if (storedUser) {
-        renderDashboard(JSON.parse(storedUser));
+        const parsedUser = JSON.parse(storedUser);
+        renderDashboard(parsedUser);
+        appendGoogleOAuthPortalToken(parsedUser);
         refreshAccountState({ silent: true });
 
         document.addEventListener('visibilitychange', () => {

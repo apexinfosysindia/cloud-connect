@@ -1003,6 +1003,10 @@ code {
     gap: 18px;
 }
 
+.stack--tight {
+    gap: 8px;
+}
+
 .field {
     display: flex;
     flex-direction: column;
@@ -1275,6 +1279,41 @@ code {
 .domain-link--disabled {
     color: var(--text-soft);
     pointer-events: none;
+}
+
+.google-entities-list {
+    margin-top: 10px;
+    display: grid;
+    gap: 8px;
+    max-height: 220px;
+    overflow: auto;
+    padding-right: 4px;
+}
+
+.google-entity-row {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px 10px;
+    align-items: start;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    padding: 8px 10px;
+}
+
+.google-entity-row input[type="checkbox"] {
+    margin-top: 2px;
+}
+
+.google-entity-name {
+    font-weight: 600;
+    color: var(--text);
+}
+
+.google-entity-meta {
+    grid-column: 2;
+    color: var(--text-soft);
+    font-size: 0.82rem;
 }
 
 .admin-dashboard {
