@@ -29,6 +29,7 @@
     const ACCOUNT_REFRESH_MS = 2000;
     let accountRefreshTimer = null;
     let accountRefreshInFlight = false;
+    let googleOAuthRedirectInFlight = false;
 
     function scrollToAccountShell() {
         accountShell.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -92,6 +93,7 @@
 
     function clearSessionAndShowAuth() {
         stopAccountAutoRefresh();
+        googleOAuthRedirectInFlight = false;
         localStorage.removeItem('apex_user');
         setHeaderState(null);
 
@@ -104,6 +106,7 @@
 
     function showLoginView() {
         stopAccountAutoRefresh();
+        googleOAuthRedirectInFlight = false;
         if (signupForm) signupForm.classList.add('hidden');
         if (loginForm) loginForm.classList.remove('hidden');
         if (dashboard) dashboard.classList.add('hidden');
@@ -117,6 +120,7 @@
 
     function showSignupView() {
         stopAccountAutoRefresh();
+        googleOAuthRedirectInFlight = false;
         if (loginForm) loginForm.classList.add('hidden');
         if (signupForm) signupForm.classList.remove('hidden');
         if (dashboard) dashboard.classList.add('hidden');
@@ -367,26 +371,41 @@
         }
 
         startAccountAutoRefresh();
+        appendGoogleOAuthPortalToken(userData);
     }
 
     function appendGoogleOAuthPortalToken(userData) {
+        if (googleOAuthRedirectInFlight) {
+            return;
+        }
+
         if (!userData?.portal_session_token) {
             return;
         }
 
         const params = new URLSearchParams(window.location.search);
         if (params.get('google_oauth') !== '1') {
+            googleOAuthRedirectInFlight = false;
+            return;
+        }
+
+        const oauthError = params.get('error');
+        if (oauthError) {
+            googleOAuthRedirectInFlight = false;
+            showAlert(`Google link failed: ${oauthError}`);
             return;
         }
 
         const redirectUri = params.get('redirect_uri');
         const state = params.get('state') || '';
         if (!redirectUri) {
+            googleOAuthRedirectInFlight = false;
             return;
         }
 
         const clientId = params.get('client_id');
         if (!clientId) {
+            googleOAuthRedirectInFlight = false;
             return;
         }
 
@@ -402,7 +421,11 @@
         authorizeUrl.searchParams.set('state', state);
         authorizeUrl.searchParams.set('portal_session_token', userData.portal_session_token);
 
-        window.location.replace(authorizeUrl.toString());
+        googleOAuthRedirectInFlight = true;
+        window.setTimeout(() => {
+            googleOAuthRedirectInFlight = false;
+        }, 4000);
+        window.location.assign(authorizeUrl.toString());
     }
 
     function stopAccountAutoRefresh() {
@@ -437,7 +460,6 @@
 
             localStorage.setItem('apex_user', JSON.stringify(data.data));
             renderDashboard(data.data, { scroll: false });
-            appendGoogleOAuthPortalToken(data.data);
         } catch (err) {
             if (!silent) {
                 showAlert(err.message);
@@ -698,7 +720,6 @@
 
                 localStorage.setItem('apex_user', JSON.stringify(data.data));
                 renderDashboard(data.data);
-                appendGoogleOAuthPortalToken(data.data);
                 if (!hasSubdomain(data.data)) {
                     showAlert('Set your desired cloud address to continue setup.', false);
                 } else if (data.data.status === 'payment_pending') {
@@ -746,7 +767,6 @@
 
                 localStorage.setItem('apex_user', JSON.stringify(data.data));
                 renderDashboard(data.data);
-                appendGoogleOAuthPortalToken(data.data);
                 showAlert(data.message, false);
                 if (data.checkout) {
                     openCheckout(data.checkout, btn, defaultText);
@@ -763,7 +783,6 @@
     if (storedUser) {
         const parsedUser = JSON.parse(storedUser);
         renderDashboard(parsedUser);
-        appendGoogleOAuthPortalToken(parsedUser);
         refreshAccountState({ silent: true });
 
         document.addEventListener('visibilitychange', () => {

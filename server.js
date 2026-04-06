@@ -2306,6 +2306,16 @@ app.get('/api/google/home/oauth', async (req, res) => {
     }
 
     try {
+        if (req.query?.debug === '1') {
+            return res.status(200).json({
+                ok: true,
+                stage: 'authorized',
+                email: session.email,
+                redirect_uri: redirectUri,
+                state
+            });
+        }
+
         const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [session.email]);
         if (!user) {
             return res.status(404).send('Account not found');
@@ -2362,6 +2372,50 @@ app.get('/api/google/home/oauth', async (req, res) => {
         console.error('GOOGLE OAUTH AUTHORIZE ERROR:', error);
         return res.status(500).send('Unable to authorize Google integration');
     }
+});
+
+app.get('/api/google/home/oauth-debug', async (req, res) => {
+    const clientId = sanitizeString(req.query?.client_id, 255);
+    const redirectUri = sanitizeString(req.query?.redirect_uri, 1000);
+    const state = sanitizeString(req.query?.state, 1000) || '';
+    const portalToken = sanitizeString(req.query?.portal_session_token, 1200);
+
+    if (!clientId || !redirectUri) {
+        return res.status(400).json({ ok: false, error: 'missing_oauth_params' });
+    }
+
+    const payload = {
+        ok: true,
+        has_google_client_id: Boolean(GOOGLE_HOME_CLIENT_ID),
+        has_google_client_secret: Boolean(GOOGLE_HOME_CLIENT_SECRET),
+        client_id_matches: clientId === GOOGLE_HOME_CLIENT_ID,
+        redirect_uri: redirectUri,
+        state,
+        has_portal_token: Boolean(portalToken)
+    };
+
+    if (!portalToken) {
+        return res.status(200).json(payload);
+    }
+
+    const session = verifyPortalSessionToken(portalToken);
+    if (!session) {
+        return res.status(200).json({ ...payload, portal_session_valid: false });
+    }
+
+    const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [session.email]);
+    if (!user) {
+        return res.status(200).json({ ...payload, portal_session_valid: true, user_found: false });
+    }
+
+    return res.status(200).json({
+        ...payload,
+        portal_session_valid: true,
+        user_found: true,
+        user_email: user.email,
+        user_status: user.status,
+        google_home_enabled: Boolean(user.google_home_enabled)
+    });
 });
 
 app.post('/api/google/home/token', async (req, res) => {
