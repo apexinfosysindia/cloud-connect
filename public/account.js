@@ -284,7 +284,7 @@
             localStorage.setItem('apex_user', JSON.stringify(data.data));
             renderDashboard(data.data, { scroll: false });
             if (enabled) {
-                appendGoogleOAuthPortalToken(data.data);
+                void appendGoogleOAuthPortalToken(data.data);
             }
             showAlert(data.message, false);
         } catch (error) {
@@ -394,10 +394,10 @@
         }
 
         startAccountAutoRefresh();
-        appendGoogleOAuthPortalToken(userData);
+        void appendGoogleOAuthPortalToken(userData);
     }
 
-    function appendGoogleOAuthPortalToken(userData) {
+    async function appendGoogleOAuthPortalToken(userData) {
         if (googleOAuthRedirectInFlight) {
             return;
         }
@@ -443,18 +443,29 @@
             return;
         }
 
-        const authorizeUrl = new URL('/api/google/home/oauth', window.location.origin);
-        authorizeUrl.searchParams.set('client_id', clientId);
-        authorizeUrl.searchParams.set('redirect_uri', redirectUri);
-        authorizeUrl.searchParams.set('response_type', 'code');
-        authorizeUrl.searchParams.set('state', state);
-        authorizeUrl.searchParams.set('portal_session_token', portalToken);
-
         googleOAuthRedirectInFlight = true;
-        window.setTimeout(() => {
+        try {
+            const response = await fetch('/api/google/home/oauth/continue', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    client_id: clientId,
+                    redirect_uri: redirectUri,
+                    state,
+                    portal_session_token: portalToken
+                })
+            });
+
+            const data = await response.json();
+            if (!response.ok || !data?.redirect_url) {
+                throw new Error(data?.error || 'Unable to continue Google linking');
+            }
+
+            window.location.assign(data.redirect_url);
+        } catch (error) {
             googleOAuthRedirectInFlight = false;
-        }, 4000);
-        window.location.assign(authorizeUrl.toString());
+            showAlert(error.message || 'Unable to continue Google linking');
+        }
     }
 
     function stopAccountAutoRefresh() {

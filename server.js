@@ -2375,6 +2375,56 @@ app.get('/api/google/home/oauth', async (req, res) => {
     }
 });
 
+app.post('/api/google/home/oauth/continue', async (req, res) => {
+    const clientId = sanitizeString(req.body?.client_id, 255);
+    const redirectUri = sanitizeString(req.body?.redirect_uri, 1000);
+    const state = sanitizeString(req.body?.state, 1000) || '';
+    const portalTokenRaw = req.body?.portal_session_token;
+    const portalToken = typeof portalTokenRaw === 'string' ? portalTokenRaw.trim() : '';
+
+    if (!clientId || !redirectUri || !portalToken) {
+        return res.status(400).json({ error: 'missing_oauth_parameters' });
+    }
+
+    if (!GOOGLE_HOME_CLIENT_ID || !GOOGLE_HOME_CLIENT_SECRET) {
+        return res.status(503).json({ error: 'google_oauth_not_configured' });
+    }
+
+    if (clientId !== GOOGLE_HOME_CLIENT_ID) {
+        return res.status(401).json({ error: 'invalid_client_id' });
+    }
+
+    const session = verifyPortalSessionToken(portalToken);
+    if (!session) {
+        return res.status(401).json({ error: 'invalid_portal_session' });
+    }
+
+    const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [session.email]);
+    if (!user) {
+        return res.status(404).json({ error: 'account_not_found' });
+    }
+
+    if (!isAccessEnabled(user.status)) {
+        return res.status(403).json({ error: 'account_not_active' });
+    }
+
+    if (!user.google_home_enabled) {
+        return res.status(403).json({ error: 'google_home_not_enabled' });
+    }
+
+    const authorizeUrl = new URL('/api/google/home/oauth', `${req.protocol}://${req.get('host')}`);
+    authorizeUrl.searchParams.set('client_id', clientId);
+    authorizeUrl.searchParams.set('redirect_uri', redirectUri);
+    authorizeUrl.searchParams.set('response_type', 'code');
+    authorizeUrl.searchParams.set('state', state);
+    authorizeUrl.searchParams.set('portal_session_token', portalToken);
+
+    return res.status(200).json({
+        ok: true,
+        redirect_url: authorizeUrl.toString()
+    });
+});
+
 app.get('/api/google/home/oauth-debug', async (req, res) => {
     const clientId = sanitizeString(req.query?.client_id, 255);
     const redirectUri = sanitizeString(req.query?.redirect_uri, 1000);
@@ -2395,7 +2445,9 @@ app.get('/api/google/home/oauth-debug', async (req, res) => {
         state,
         has_portal_token: Boolean(portalToken),
         portal_token_has_dot: portalToken.includes('.'),
-        portal_token_parts: portalToken ? portalToken.split('.').length : 0
+        portal_token_parts: portalToken ? portalToken.split('.').length : 0,
+        portal_token_preview: portalToken ? `${portalToken.slice(0, 24)}...` : null,
+        portal_token_length: portalToken ? portalToken.length : 0
     };
 
     if (!portalToken) {
