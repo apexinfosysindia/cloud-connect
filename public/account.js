@@ -41,6 +41,36 @@
     const googleOAuthRedirectUri = oauthParams.get('redirect_uri') || '';
     const googleOAuthState = oauthParams.get('state') || '';
     const googleOAuthError = oauthParams.get('error') || '';
+    const googleOAuthCookieProbeKey = [
+        'apx_google_oauth_cookie_probe',
+        googleOAuthClientId,
+        googleOAuthRedirectUri,
+        googleOAuthState
+    ].join('|');
+
+    function hasTriedGoogleOAuthCookieProbe() {
+        if (!googleOAuthMode) {
+            return false;
+        }
+
+        try {
+            return window.sessionStorage.getItem(googleOAuthCookieProbeKey) === '1';
+        } catch (_error) {
+            return false;
+        }
+    }
+
+    function markGoogleOAuthCookieProbeTried() {
+        if (!googleOAuthMode) {
+            return;
+        }
+
+        try {
+            window.sessionStorage.setItem(googleOAuthCookieProbeKey, '1');
+        } catch (_error) {
+            // ignore sessionStorage failures
+        }
+    }
 
     function scrollToAccountShell() {
         accountShell.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -86,11 +116,16 @@
             return;
         }
 
+        if (hasTriedGoogleOAuthCookieProbe()) {
+            return;
+        }
+
         if (!googleOAuthClientId || !googleOAuthRedirectUri) {
             return;
         }
 
         googleOAuthRedirectInFlight = true;
+        markGoogleOAuthCookieProbeTried();
         const continueUrl = new URL('/api/google/home/oauth', window.location.origin);
         continueUrl.searchParams.set('client_id', googleOAuthClientId);
         continueUrl.searchParams.set('redirect_uri', googleOAuthRedirectUri);
