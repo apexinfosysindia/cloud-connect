@@ -101,6 +101,19 @@
                         <a id="dashUrl" href="#" class="domain-link domain-link--disabled"></a>
                         <p id="dashUrlHelp" class="detail-copy">This address becomes available as soon as the account is enabled.</p>
                     </article>
+
+                    <article id="googleHomeCard" class="detail-card hidden">
+                        <span class="detail-label">Google Home Integration</span>
+                        <p id="googleHomeStatus" class="detail-copy">Disabled</p>
+                        <div class="stack stack--tight">
+                            <button id="googleHomeEnableBtn" class="button button-primary button-full">Enable Google Home</button>
+                            <button id="googleHomeDisableBtn" class="button button-secondary button-full hidden">Disable Google Home</button>
+                        </div>
+                        <div id="googleHomeEntities" class="google-entities-list">
+                            <p class="detail-copy">Enable Google Home to manage exposed entities.</p>
+                        </div>
+                        <p class="detail-copy">After enabling, link account in Google Home app and expose only entities you want voice control for.</p>
+                    </article>
                 </div>
 
                 <button id="logoutBtn" class="button button-secondary button-full">Log Out</button>

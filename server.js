@@ -16,6 +16,11 @@ const ADMIN_SSH_JUMP_HOST = 'cloud.apexinfosys.in';
 const ADMIN_SSH_JUMP_USER = 'fleetadmin';
 const ADMIN_SSH_JUMP_PORT = 22;
 const ADMIN_SSH_TARGET_HOST = '127.0.0.1';
+const GOOGLE_HOME_CLIENT_ID = process.env.GOOGLE_HOME_CLIENT_ID || '';
+const GOOGLE_HOME_CLIENT_SECRET = process.env.GOOGLE_HOME_CLIENT_SECRET || '';
+const GOOGLE_HOME_AUTH_CODE_TTL_SECONDS = Number(process.env.GOOGLE_HOME_AUTH_CODE_TTL_SECONDS || 600);
+const GOOGLE_HOME_ACCESS_TOKEN_TTL_SECONDS = Number(process.env.GOOGLE_HOME_ACCESS_TOKEN_TTL_SECONDS || 3600);
+const GOOGLE_HOME_COMMAND_TTL_SECONDS = Number(process.env.GOOGLE_HOME_COMMAND_TTL_SECONDS || 45);
 const DEVICE_HEARTBEAT_TIMEOUT_SECONDS = Number(process.env.DEVICE_HEARTBEAT_TIMEOUT_SECONDS || 45);
 const DEVICE_HEARTBEAT_INTERVAL_SECONDS = Number(process.env.DEVICE_HEARTBEAT_INTERVAL_SECONDS || 20);
 const ADMIN_CONNECT_TOKEN_TTL_MINUTES = Number(process.env.ADMIN_CONNECT_TOKEN_TTL_MINUTES || 10);
@@ -32,6 +37,7 @@ app.use(express.json({
         }
     }
 }));
+app.use(express.urlencoded({ extended: false }));
 app.use(cors());
 
 app.get(['/login', '/login.html', '/signup', '/signup.html'], (req, res, next) => {
@@ -162,6 +168,33 @@ function sanitizeEventType(value) {
     return /^[a-z0-9._-]+$/i.test(normalized) ? normalized.toLowerCase() : null;
 }
 
+function sanitizeEntityId(value) {
+    const normalized = sanitizeString(value, 200);
+    if (!normalized) {
+        return null;
+    }
+
+    return /^[a-zA-Z0-9._:-]+$/.test(normalized) ? normalized : null;
+}
+
+function sanitizeActionName(value) {
+    const normalized = sanitizeString(value, 120);
+    if (!normalized) {
+        return null;
+    }
+
+    return /^[a-zA-Z0-9_.:-]+$/.test(normalized) ? normalized : null;
+}
+
+function sanitizeGoogleRequestId(value) {
+    const normalized = sanitizeString(value, 128);
+    if (!normalized) {
+        return null;
+    }
+
+    return /^[a-zA-Z0-9._:-]+$/.test(normalized) ? normalized : null;
+}
+
 function sanitizePort(value) {
     if (value === null || value === undefined || value === '') {
         return null;
@@ -256,6 +289,30 @@ function getAdminConnectTokenTtlMinutes() {
     return Math.max(3, Math.min(60, Math.round(ADMIN_CONNECT_TOKEN_TTL_MINUTES)));
 }
 
+function getGoogleAuthCodeTtlSeconds() {
+    if (!Number.isFinite(GOOGLE_HOME_AUTH_CODE_TTL_SECONDS)) {
+        return 600;
+    }
+
+    return Math.max(120, Math.min(1800, Math.round(GOOGLE_HOME_AUTH_CODE_TTL_SECONDS)));
+}
+
+function getGoogleAccessTokenTtlSeconds() {
+    if (!Number.isFinite(GOOGLE_HOME_ACCESS_TOKEN_TTL_SECONDS)) {
+        return 3600;
+    }
+
+    return Math.max(300, Math.min(7200, Math.round(GOOGLE_HOME_ACCESS_TOKEN_TTL_SECONDS)));
+}
+
+function getGoogleCommandTtlSeconds() {
+    if (!Number.isFinite(GOOGLE_HOME_COMMAND_TTL_SECONDS)) {
+        return 45;
+    }
+
+    return Math.max(10, Math.min(180, Math.round(GOOGLE_HOME_COMMAND_TTL_SECONDS)));
+}
+
 function getDeviceTunnelPortRange() {
     let min = Number.isFinite(DEVICE_TUNNEL_PORT_MIN) ? Math.round(DEVICE_TUNNEL_PORT_MIN) : 22000;
     let max = Number.isFinite(DEVICE_TUNNEL_PORT_MAX) ? Math.round(DEVICE_TUNNEL_PORT_MAX) : 22999;
@@ -297,6 +354,18 @@ function getAdminSshRoute() {
         target_host: targetHost,
         target_user: 'root'
     };
+}
+
+function generateGoogleOAuthCode() {
+    return 'gac_' + crypto.randomBytes(24).toString('hex');
+}
+
+function generateGoogleAccessToken() {
+    return 'gat_' + crypto.randomBytes(24).toString('hex');
+}
+
+function generateGoogleRefreshToken() {
+    return 'grt_' + crypto.randomBytes(24).toString('hex');
 }
 
 async function allocateDeviceTunnelPort(excludedDeviceId = null) {
@@ -433,6 +502,379 @@ async function findDeviceByToken(deviceToken) {
     );
 }
 
+async function findUserByGoogleAccessToken(accessToken) {
+    if (!accessToken) {
+        return null;
+    }
+
+    const tokenHash = hashSecret(accessToken);
+    return dbGet(
+        `
+            SELECT u.*
+            FROM users u
+            INNER JOIN google_home_tokens ght ON ght.user_id = u.id
+            WHERE ght.access_token_hash = ?
+              AND ght.expires_at > ?
+        `,
+        [tokenHash, new Date().toISOString()]
+    );
+}
+
+async function findGoogleRefreshTokenRow(refreshToken) {
+    if (!refreshToken) {
+        return null;
+    }
+
+    const tokenHash = hashSecret(refreshToken);
+    return dbGet(
+        `
+            SELECT *
+            FROM google_home_tokens
+            WHERE refresh_token_hash = ?
+            LIMIT 1
+        `,
+        [tokenHash]
+    );
+}
+
+async function findUserByGoogleAuthCode(authCode, redirectUri) {
+    if (!authCode) {
+        return null;
+    }
+
+    const codeHash = hashSecret(authCode);
+    return dbGet(
+        `
+            SELECT
+                u.*,
+                ghac.id AS oauth_code_id,
+                ghac.redirect_uri AS oauth_redirect_uri
+            FROM google_home_auth_codes ghac
+            INNER JOIN users u ON u.id = ghac.user_id
+            WHERE ghac.code_hash = ?
+              AND ghac.expires_at > ?
+              AND ghac.consumed_at IS NULL
+              AND ghac.redirect_uri = ?
+            LIMIT 1
+        `,
+        [codeHash, new Date().toISOString(), redirectUri]
+    );
+}
+
+async function issueGoogleTokensForUser(userId, existingRefreshToken = null) {
+    const accessToken = generateGoogleAccessToken();
+    const refreshToken = existingRefreshToken || generateGoogleRefreshToken();
+    const accessTokenHash = hashSecret(accessToken);
+    const refreshTokenHash = hashSecret(refreshToken);
+    const expiresAt = new Date(Date.now() + getGoogleAccessTokenTtlSeconds() * 1000).toISOString();
+    const nowIso = new Date().toISOString();
+
+    await dbRun(
+        `
+            INSERT INTO google_home_tokens (
+                user_id,
+                access_token_hash,
+                refresh_token_hash,
+                expires_at,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                access_token_hash = excluded.access_token_hash,
+                refresh_token_hash = excluded.refresh_token_hash,
+                expires_at = excluded.expires_at,
+                updated_at = excluded.updated_at
+        `,
+        [userId, accessTokenHash, refreshTokenHash, expiresAt, nowIso, nowIso]
+    );
+
+    return {
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        expires_in: getGoogleAccessTokenTtlSeconds(),
+        token_type: 'Bearer'
+    };
+}
+
+function normalizeGoogleEntityType(entityType) {
+    const normalized = sanitizeString(entityType, 64);
+    if (!normalized) {
+        return 'switch';
+    }
+
+    return normalized.toLowerCase();
+}
+
+function mapGoogleEntityTypeToTraits(entityType) {
+    if (entityType === 'light') {
+        return {
+            type: 'action.devices.types.LIGHT',
+            traits: [
+                'action.devices.traits.OnOff',
+                'action.devices.traits.Brightness'
+            ]
+        };
+    }
+
+    if (entityType === 'sensor_temperature') {
+        return {
+            type: 'action.devices.types.SENSOR',
+            traits: [
+                'action.devices.traits.SensorState'
+            ]
+        };
+    }
+
+    return {
+        type: 'action.devices.types.SWITCH',
+        traits: [
+            'action.devices.traits.OnOff'
+        ]
+    };
+}
+
+function buildGoogleDeviceObject(entity) {
+    const mapped = mapGoogleEntityTypeToTraits(entity.entity_type);
+    const roomHint = sanitizeString(entity.room_hint, 120);
+
+    return {
+        id: entity.entity_id,
+        type: mapped.type,
+        traits: mapped.traits,
+        name: {
+            name: entity.display_name || entity.entity_id
+        },
+        roomHint: roomHint || undefined,
+        willReportState: false,
+        customData: {
+            entity_id: entity.entity_id,
+            device_id: entity.device_id
+        },
+        deviceInfo: {
+            manufacturer: 'Apex Infosys',
+            model: entity.entity_type || 'generic',
+            hwVersion: entity.addon_version || 'apex-cloud-link'
+        },
+        attributes: entity.entity_type === 'light'
+            ? { commandOnlyBrightness: false }
+            : entity.entity_type === 'sensor_temperature'
+                ? {
+                    sensorStatesSupported: [
+                        {
+                            name: 'TemperatureAmbient',
+                            numericCapabilities: {
+                                rawValueUnit: 'CELSIUS',
+                                rawValueRange: {
+                                    minValue: -40,
+                                    maxValue: 130
+                                }
+                            }
+                        }
+                    ]
+                }
+                : {}
+    };
+}
+
+function parseGoogleEntityState(entity) {
+    const statePayload = parseJsonSafe(entity.state_json, {}) || {};
+
+    if (entity.entity_type === 'light') {
+        return {
+            online: entity.online !== 0,
+            on: Boolean(statePayload.on),
+            brightness: Number.isFinite(Number(statePayload.brightness))
+                ? Math.max(0, Math.min(100, Math.round(Number(statePayload.brightness))))
+                : 0
+        };
+    }
+
+    if (entity.entity_type === 'sensor_temperature') {
+        const temperature = Number(statePayload.temperature);
+        return {
+            online: entity.online !== 0,
+            currentSensorStateData: [
+                {
+                    name: 'TemperatureAmbient',
+                    currentSensorState: Number.isFinite(temperature) ? temperature : 0
+                }
+            ]
+        };
+    }
+
+    return {
+        online: entity.online !== 0,
+        on: Boolean(statePayload.on)
+    };
+}
+
+async function getGoogleEntitiesForUser(userId, options = {}) {
+    const includeDisabled = Boolean(options.includeDisabled);
+    const rows = includeDisabled
+        ? await dbAll(
+            `
+                SELECT
+                    ge.*,
+                    d.addon_version,
+                    d.last_seen_at
+                FROM google_home_entities ge
+                INNER JOIN devices d ON d.id = ge.device_id
+                WHERE ge.user_id = ?
+                ORDER BY ge.updated_at DESC
+            `,
+            [userId]
+        )
+        : await dbAll(
+            `
+                SELECT
+                    ge.*,
+                    d.addon_version,
+                    d.last_seen_at
+                FROM google_home_entities ge
+                INNER JOIN devices d ON d.id = ge.device_id
+                WHERE ge.user_id = ?
+                  AND ge.exposed = 1
+                ORDER BY ge.updated_at DESC
+            `,
+            [userId]
+        );
+
+    return rows || [];
+}
+
+async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
+    const entityId = sanitizeEntityId(payload?.entity_id);
+    if (!entityId) {
+        return null;
+    }
+
+    const displayName = sanitizeString(payload?.display_name, 120) || entityId;
+    const entityType = normalizeGoogleEntityType(payload?.entity_type);
+    const roomHint = sanitizeString(payload?.room_hint, 120);
+    const online = payload?.online === false ? 0 : 1;
+    const stateJson = JSON.stringify(payload?.state || {}).slice(0, 2500);
+    const nowIso = new Date().toISOString();
+
+    const existing = await dbGet(
+        `
+            SELECT id, exposed
+            FROM google_home_entities
+            WHERE user_id = ? AND entity_id = ?
+            LIMIT 1
+        `,
+        [userId, entityId]
+    );
+
+    if (existing) {
+        await dbRun(
+            `
+                UPDATE google_home_entities
+                SET device_id = ?,
+                    display_name = ?,
+                    entity_type = ?,
+                    room_hint = ?,
+                    online = ?,
+                    state_json = ?,
+                    updated_at = ?
+                WHERE id = ?
+            `,
+            [deviceId, displayName, entityType, roomHint, online, stateJson, nowIso, existing.id]
+        );
+    } else {
+        await dbRun(
+            `
+                INSERT INTO google_home_entities (
+                    user_id,
+                    device_id,
+                    entity_id,
+                    display_name,
+                    entity_type,
+                    room_hint,
+                    exposed,
+                    online,
+                    state_json,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+            `,
+            [userId, deviceId, entityId, displayName, entityType, roomHint, online, stateJson, nowIso, nowIso]
+        );
+    }
+
+    return dbGet(
+        `
+            SELECT *
+            FROM google_home_entities
+            WHERE user_id = ? AND entity_id = ?
+            LIMIT 1
+        `,
+        [userId, entityId]
+    );
+}
+
+async function queueGoogleCommandForEntity(userId, deviceId, entityId, action, payload) {
+    const nowIso = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + getGoogleCommandTtlSeconds() * 1000).toISOString();
+    const normalizedAction = sanitizeActionName(action) || 'set';
+    const normalizedEntityId = sanitizeEntityId(entityId);
+
+    if (!normalizedEntityId) {
+        return null;
+    }
+
+    const insertResult = await dbRun(
+        `
+            INSERT INTO google_home_command_queue (
+                user_id,
+                device_id,
+                entity_id,
+                action,
+                payload_json,
+                status,
+                expires_at,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+        `,
+        [
+            userId,
+            deviceId,
+            normalizedEntityId,
+            normalizedAction,
+            JSON.stringify(payload || {}).slice(0, 2000),
+            expiresAt,
+            nowIso,
+            nowIso
+        ]
+    );
+
+    return dbGet(
+        `
+            SELECT *
+            FROM google_home_command_queue
+            WHERE id = ?
+            LIMIT 1
+        `,
+        [insertResult.lastID]
+    );
+}
+
+async function cleanupGoogleAuthDataForUser(userId) {
+    await dbRun(`DELETE FROM google_home_auth_codes WHERE user_id = ?`, [userId]);
+    await dbRun(`DELETE FROM google_home_tokens WHERE user_id = ?`, [userId]);
+    await dbRun(
+        `
+            UPDATE users
+            SET google_home_linked = 0
+            WHERE id = ?
+        `,
+        [userId]
+    );
+}
+
 function dbGet(query, params = []) {
     return new Promise((resolve, reject) => {
         db.get(query, params, (err, row) => {
@@ -523,12 +965,15 @@ function serializeUser(user) {
     const accessEnabled = isAccessEnabled(user.status);
     const hasSubdomain = Boolean(user.subdomain);
     return {
+        id: user.id,
         email: user.email,
         subdomain: user.subdomain,
         access_token: accessEnabled ? user.access_token : null,
         portal_session_token: createPortalSessionToken(user.email),
         status: user.status,
         domain: hasSubdomain ? `${user.subdomain}.${CLOUD_BASE_DOMAIN}` : null,
+        google_home_enabled: Boolean(user.google_home_enabled),
+        google_home_linked: Boolean(user.google_home_linked),
         trial_ends_at: user.trial_ends_at,
         trial_approved_at: user.trial_approved_at,
         activated_at: user.activated_at,
@@ -674,6 +1119,65 @@ async function requireDeviceAuth(req, res, next) {
     } catch (error) {
         console.error('DEVICE AUTH ERROR:', error);
         return res.status(500).json({ error: 'Unable to authenticate device' });
+    }
+}
+
+async function requirePortalUser(req, res, next) {
+    try {
+        const authHeader = req.get('authorization') || '';
+        const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+        const portalToken = req.body?.portal_session_token || req.query?.portal_session_token || bearerToken;
+
+        if (!portalToken) {
+            return res.status(401).json({ error: 'Portal session token is required' });
+        }
+
+        const session = verifyPortalSessionToken(portalToken);
+        if (!session) {
+            return res.status(401).json({ error: 'Invalid portal session. Please log in again.' });
+        }
+
+        const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [session.email]);
+        if (!user) {
+            return res.status(404).json({ error: 'Account not found' });
+        }
+
+        req.portalSession = session;
+        req.portalUser = user;
+        return next();
+    } catch (error) {
+        console.error('PORTAL AUTH ERROR:', error);
+        return res.status(500).json({ error: 'Unable to authenticate account session' });
+    }
+}
+
+async function requireGoogleBearer(req, res, next) {
+    try {
+        const authHeader = req.get('authorization') || '';
+        if (!authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ error: 'Missing bearer token' });
+        }
+
+        const token = authHeader.slice(7).trim();
+        const user = await findUserByGoogleAccessToken(token);
+        if (!user) {
+            return res.status(401).json({ error: 'Invalid or expired access token' });
+        }
+
+        if (!user.google_home_enabled) {
+            return res.status(403).json({ error: 'Google Home integration is disabled for this account' });
+        }
+
+        if (!isAccessEnabled(user.status)) {
+            return res.status(403).json({ error: 'Account is not active for Google integration' });
+        }
+
+        req.googleUser = user;
+        req.googleAccessToken = token;
+        return next();
+    } catch (error) {
+        console.error('GOOGLE AUTH ERROR:', error);
+        return res.status(500).json({ error: 'Unable to authenticate Google request' });
     }
 }
 
@@ -1654,6 +2158,649 @@ app.post('/api/account/me', async (req, res) => {
     } catch (error) {
         console.error('ACCOUNT ME ERROR:', error);
         return res.status(500).json({ error: 'Unable to load account details right now.' });
+    }
+});
+
+app.post('/api/account/google-home/enable', requirePortalUser, async (req, res) => {
+    const enable = req.body?.enabled !== false;
+
+    try {
+        if (!enable) {
+            await cleanupGoogleAuthDataForUser(req.portalUser.id);
+        }
+
+        await dbRun(
+            `
+                UPDATE users
+                SET google_home_enabled = ?
+                WHERE id = ?
+            `,
+            [enable ? 1 : 0, req.portalUser.id]
+        );
+
+        const updatedUser = await dbGet(`SELECT * FROM users WHERE id = ?`, [req.portalUser.id]);
+        return res.status(200).json({
+            message: enable ? 'Google Home integration enabled' : 'Google Home integration disabled',
+            data: serializeUser(updatedUser)
+        });
+    } catch (error) {
+        console.error('ACCOUNT GOOGLE HOME ENABLE ERROR:', error);
+        return res.status(500).json({ error: 'Unable to update Google Home setting' });
+    }
+});
+
+app.post('/api/account/google-home/entities', requirePortalUser, async (req, res) => {
+    try {
+        if (!req.portalUser.google_home_enabled) {
+            return res.status(200).json({ entities: [] });
+        }
+
+        const entities = await getGoogleEntitiesForUser(req.portalUser.id, { includeDisabled: true });
+        return res.status(200).json({
+            entities: entities.map((entity) => ({
+                id: entity.id,
+                entity_id: entity.entity_id,
+                display_name: entity.display_name,
+                entity_type: entity.entity_type,
+                room_hint: entity.room_hint,
+                exposed: Boolean(entity.exposed),
+                online: Boolean(entity.online),
+                state: parseJsonSafe(entity.state_json, {}),
+                device_id: entity.device_id,
+                updated_at: entity.updated_at
+            }))
+        });
+    } catch (error) {
+        console.error('ACCOUNT GOOGLE HOME ENTITIES ERROR:', error);
+        return res.status(500).json({ error: 'Unable to load Google Home entities' });
+    }
+});
+
+app.post('/api/account/google-home/entities/:entityId/expose', requirePortalUser, async (req, res) => {
+    const entityId = sanitizeEntityId(req.params.entityId);
+    if (!entityId) {
+        return res.status(400).json({ error: 'Invalid entity id' });
+    }
+
+    if (!req.portalUser.google_home_enabled) {
+        return res.status(403).json({ error: 'Google Home integration is disabled for this account' });
+    }
+
+    const exposed = req.body?.exposed !== false;
+
+    try {
+        const entity = await dbGet(
+            `
+                SELECT *
+                FROM google_home_entities
+                WHERE user_id = ? AND entity_id = ?
+                LIMIT 1
+            `,
+            [req.portalUser.id, entityId]
+        );
+
+        if (!entity) {
+            return res.status(404).json({ error: 'Entity not found' });
+        }
+
+        await dbRun(
+            `
+                UPDATE google_home_entities
+                SET exposed = ?,
+                    updated_at = ?
+                WHERE id = ?
+            `,
+            [exposed ? 1 : 0, new Date().toISOString(), entity.id]
+        );
+
+        return res.status(200).json({
+            message: exposed ? 'Entity exposed to Google Home' : 'Entity hidden from Google Home'
+        });
+    } catch (error) {
+        console.error('ACCOUNT GOOGLE HOME ENTITY TOGGLE ERROR:', error);
+        return res.status(500).json({ error: 'Unable to update entity exposure' });
+    }
+});
+
+app.get('/api/google/home/oauth', async (req, res) => {
+    const clientId = sanitizeString(req.query?.client_id, 255);
+    const redirectUri = sanitizeString(req.query?.redirect_uri, 1000);
+    const state = sanitizeString(req.query?.state, 1000) || '';
+    const portalToken = sanitizeString(req.query?.portal_session_token, 1200);
+
+    if (!clientId || !redirectUri) {
+        return res.status(400).send('Missing OAuth parameters');
+    }
+
+    if (!GOOGLE_HOME_CLIENT_ID || !GOOGLE_HOME_CLIENT_SECRET) {
+        return res.status(503).send('Google Home OAuth is not configured');
+    }
+
+    if (clientId !== GOOGLE_HOME_CLIENT_ID) {
+        return res.status(401).send('Invalid client_id');
+    }
+
+    if (!portalToken) {
+        const loginRedirect = `/login.html?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
+        return res.redirect(loginRedirect);
+    }
+
+    const session = verifyPortalSessionToken(portalToken);
+    if (!session) {
+        const loginRedirect = `/login.html?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
+        return res.redirect(loginRedirect);
+    }
+
+    const callbackUrl = new URL(redirectUri);
+
+    if (req.query?.error) {
+        callbackUrl.searchParams.set('error', sanitizeString(req.query.error, 120) || 'access_denied');
+        callbackUrl.searchParams.set('state', state);
+        return res.redirect(callbackUrl.toString());
+    }
+
+    if (req.query?.deny === '1') {
+        callbackUrl.searchParams.set('error', 'access_denied');
+        callbackUrl.searchParams.set('state', state);
+        return res.redirect(callbackUrl.toString());
+    }
+
+    try {
+        const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [session.email]);
+        if (!user) {
+            return res.status(404).send('Account not found');
+        }
+
+        if (!isAccessEnabled(user.status)) {
+            return res.status(403).send('Account is not active for Google Home');
+        }
+
+        if (!user.google_home_enabled) {
+            return res.status(403).send('Google Home integration is disabled for this account');
+        }
+
+        const authCode = generateGoogleOAuthCode();
+        const nowIso = new Date().toISOString();
+        const expiresAt = new Date(Date.now() + getGoogleAuthCodeTtlSeconds() * 1000).toISOString();
+
+        await dbRun(
+            `
+                INSERT INTO google_home_auth_codes (
+                    user_id,
+                    code_hash,
+                    redirect_uri,
+                    scopes,
+                    expires_at,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+            `,
+            [
+                user.id,
+                hashSecret(authCode),
+                redirectUri,
+                'google_assistant',
+                expiresAt,
+                nowIso
+            ]
+        );
+
+        await dbRun(
+            `
+                UPDATE users
+                SET google_home_linked = 1,
+                    google_home_linked_at = COALESCE(google_home_linked_at, ?)
+                WHERE id = ?
+            `,
+            [nowIso, user.id]
+        );
+
+        callbackUrl.searchParams.set('code', authCode);
+        callbackUrl.searchParams.set('state', state);
+        return res.redirect(callbackUrl.toString());
+    } catch (error) {
+        console.error('GOOGLE OAUTH AUTHORIZE ERROR:', error);
+        return res.status(500).send('Unable to authorize Google integration');
+    }
+});
+
+app.post('/api/google/home/token', async (req, res) => {
+    const grantType = sanitizeString(req.body?.grant_type, 64);
+    const clientId = sanitizeString(req.body?.client_id, 255);
+    const clientSecret = sanitizeString(req.body?.client_secret, 255);
+
+    if (!GOOGLE_HOME_CLIENT_ID || !GOOGLE_HOME_CLIENT_SECRET) {
+        return res.status(503).json({ error: 'google_oauth_not_configured' });
+    }
+
+    if (clientId !== GOOGLE_HOME_CLIENT_ID || clientSecret !== GOOGLE_HOME_CLIENT_SECRET) {
+        return res.status(401).json({ error: 'invalid_client' });
+    }
+
+    try {
+        if (grantType === 'authorization_code') {
+            const code = sanitizeString(req.body?.code, 255);
+            const redirectUri = sanitizeString(req.body?.redirect_uri, 1000);
+            if (!code || !redirectUri) {
+                return res.status(400).json({ error: 'invalid_request' });
+            }
+
+            const linkedUser = await findUserByGoogleAuthCode(code, redirectUri);
+            if (!linkedUser) {
+                return res.status(400).json({ error: 'invalid_grant' });
+            }
+
+            if (!linkedUser.google_home_enabled || !isAccessEnabled(linkedUser.status)) {
+                return res.status(403).json({ error: 'access_denied' });
+            }
+
+            await dbRun(
+                `
+                    UPDATE google_home_auth_codes
+                    SET consumed_at = ?
+                    WHERE id = ?
+                `,
+                [new Date().toISOString(), linkedUser.oauth_code_id]
+            );
+
+            const tokenResponse = await issueGoogleTokensForUser(linkedUser.id);
+            return res.status(200).json(tokenResponse);
+        }
+
+        if (grantType === 'refresh_token') {
+            const refreshToken = sanitizeString(req.body?.refresh_token, 255);
+            if (!refreshToken) {
+                return res.status(400).json({ error: 'invalid_request' });
+            }
+
+            const refreshRow = await findGoogleRefreshTokenRow(refreshToken);
+            if (!refreshRow) {
+                return res.status(400).json({ error: 'invalid_grant' });
+            }
+
+            const user = await dbGet(`SELECT * FROM users WHERE id = ?`, [refreshRow.user_id]);
+            if (!user || !user.google_home_enabled || !isAccessEnabled(user.status)) {
+                return res.status(403).json({ error: 'access_denied' });
+            }
+
+            const tokenResponse = await issueGoogleTokensForUser(user.id, refreshToken);
+            return res.status(200).json(tokenResponse);
+        }
+
+        return res.status(400).json({ error: 'unsupported_grant_type' });
+    } catch (error) {
+        console.error('GOOGLE TOKEN ERROR:', error);
+        return res.status(500).json({ error: 'server_error' });
+    }
+});
+
+app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) => {
+    const requestId = sanitizeGoogleRequestId(req.body?.requestId) || `req_${Date.now()}`;
+    const inputs = Array.isArray(req.body?.inputs) ? req.body.inputs : [];
+    const input = inputs[0] || {};
+    const intent = sanitizeString(input.intent, 120) || '';
+
+    try {
+        if (intent === 'action.devices.SYNC') {
+            const entities = await getGoogleEntitiesForUser(req.googleUser.id, { includeDisabled: false });
+            const devices = entities.map((entity) => buildGoogleDeviceObject(entity));
+
+            return res.status(200).json({
+                requestId,
+                payload: {
+                    agentUserId: String(req.googleUser.id),
+                    devices
+                }
+            });
+        }
+
+        if (intent === 'action.devices.QUERY') {
+            const queryPayload = input.payload || {};
+            const requestedDevices = Array.isArray(queryPayload.devices) ? queryPayload.devices : [];
+            const requestedIds = requestedDevices
+                .map((item) => sanitizeEntityId(item?.id))
+                .filter(Boolean);
+
+            const entities = await getGoogleEntitiesForUser(req.googleUser.id, { includeDisabled: false });
+            const entitiesMap = new Map(entities.map((entity) => [entity.entity_id, entity]));
+            const devicesState = {};
+
+            for (const entityId of requestedIds) {
+                const entity = entitiesMap.get(entityId);
+                if (!entity) {
+                    devicesState[entityId] = {
+                        online: false,
+                        status: 'ERROR',
+                        errorCode: 'deviceOffline'
+                    };
+                    continue;
+                }
+
+                devicesState[entityId] = parseGoogleEntityState(entity);
+            }
+
+            return res.status(200).json({
+                requestId,
+                payload: {
+                    devices: devicesState
+                }
+            });
+        }
+
+        if (intent === 'action.devices.EXECUTE') {
+            const executePayload = input.payload || {};
+            const commands = Array.isArray(executePayload.commands) ? executePayload.commands : [];
+            const entities = await getGoogleEntitiesForUser(req.googleUser.id, { includeDisabled: false });
+            const entitiesMap = new Map(entities.map((entity) => [entity.entity_id, entity]));
+            const commandResults = [];
+
+            for (const commandEntry of commands) {
+                const targetDevices = Array.isArray(commandEntry.devices) ? commandEntry.devices : [];
+                const executions = Array.isArray(commandEntry.execution) ? commandEntry.execution : [];
+
+                for (const target of targetDevices) {
+                    const entityId = sanitizeEntityId(target?.id);
+                    if (!entityId) {
+                        continue;
+                    }
+
+                    const entity = entitiesMap.get(entityId);
+                    if (!entity) {
+                        commandResults.push({
+                            ids: [entityId],
+                            status: 'ERROR',
+                            errorCode: 'deviceOffline'
+                        });
+                        continue;
+                    }
+
+                    for (const execution of executions) {
+                        const commandName = sanitizeActionName(execution?.command);
+                        const params = execution?.params || {};
+
+                        let action = null;
+                        let payload = {};
+                        if (commandName === 'action.devices.commands.OnOff') {
+                            action = 'set_on';
+                            payload = { on: Boolean(params?.on) };
+                        } else if (commandName === 'action.devices.commands.BrightnessAbsolute') {
+                            action = 'set_brightness';
+                            payload = { brightness: Math.max(0, Math.min(100, Number(params?.brightness || 0))) };
+                        } else {
+                            commandResults.push({
+                                ids: [entityId],
+                                status: 'ERROR',
+                                errorCode: 'notSupported'
+                            });
+                            continue;
+                        }
+
+                        await queueGoogleCommandForEntity(req.googleUser.id, entity.device_id, entity.entity_id, action, payload);
+                        commandResults.push({
+                            ids: [entityId],
+                            status: 'SUCCESS',
+                            states: {
+                                online: true,
+                                ...(payload.on !== undefined ? { on: payload.on } : {}),
+                                ...(payload.brightness !== undefined ? { brightness: payload.brightness } : {})
+                            }
+                        });
+                    }
+                }
+            }
+
+            return res.status(200).json({
+                requestId,
+                payload: {
+                    commands: commandResults
+                }
+            });
+        }
+
+        if (intent === 'action.devices.DISCONNECT') {
+            await cleanupGoogleAuthDataForUser(req.googleUser.id);
+            return res.status(200).json({ requestId, payload: {} });
+        }
+
+        return res.status(400).json({ error: 'Unsupported intent' });
+    } catch (error) {
+        console.error('GOOGLE FULFILLMENT ERROR:', error);
+        return res.status(500).json({ error: 'Unable to process Google fulfillment request' });
+    }
+});
+
+app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async (req, res) => {
+    try {
+        const device = req.device;
+        const user = await dbGet(`SELECT * FROM users WHERE id = ?`, [device.user_id]);
+        const nowIso = new Date().toISOString();
+        if (!user || !user.google_home_enabled) {
+            await dbRun(
+                `
+                    UPDATE google_home_entities
+                    SET online = 0,
+                        updated_at = ?
+                    WHERE user_id = ?
+                      AND device_id = ?
+                `,
+                [nowIso, device.user_id, device.id]
+            );
+
+            return res.status(200).json({
+                message: 'Google Home integration is disabled for this account',
+                synced_count: 0,
+                synced_entities: []
+            });
+        }
+
+        const entitiesPayload = Array.isArray(req.body?.entities) ? req.body.entities : [];
+        const synced = [];
+        const incomingEntityIds = [];
+
+        for (const entityPayload of entitiesPayload) {
+            const normalizedEntityId = sanitizeEntityId(entityPayload?.entity_id);
+            if (normalizedEntityId) {
+                incomingEntityIds.push(normalizedEntityId);
+            }
+
+            const upserted = await upsertGoogleEntityFromDevice(device.user_id, device.id, entityPayload);
+            if (upserted) {
+                synced.push(upserted.entity_id);
+            }
+        }
+
+        if (incomingEntityIds.length > 0) {
+            const placeholders = incomingEntityIds.map(() => '?').join(',');
+            await dbRun(
+                `
+                    UPDATE google_home_entities
+                    SET online = 0,
+                        updated_at = ?
+                    WHERE user_id = ?
+                      AND device_id = ?
+                      AND entity_id NOT IN (${placeholders})
+                `,
+                [nowIso, device.user_id, device.id, ...incomingEntityIds]
+            );
+        } else {
+            await dbRun(
+                `
+                    UPDATE google_home_entities
+                    SET online = 0,
+                        updated_at = ?
+                    WHERE user_id = ?
+                      AND device_id = ?
+                `,
+                [nowIso, device.user_id, device.id]
+            );
+        }
+
+        return res.status(200).json({
+            message: 'Entities synced',
+            synced_count: synced.length,
+            synced_entities: synced
+        });
+    } catch (error) {
+        console.error('DEVICE GOOGLE ENTITIES SYNC ERROR:', error);
+        return res.status(500).json({ error: 'Unable to sync Google entities' });
+    }
+});
+
+app.post('/api/internal/devices/google-home/commands', requireDeviceAuth, async (req, res) => {
+    try {
+        const device = req.device;
+        const user = await dbGet(`SELECT * FROM users WHERE id = ?`, [device.user_id]);
+        if (!user || !user.google_home_enabled) {
+            return res.status(200).json({ commands: [] });
+        }
+
+        const nowIso = new Date().toISOString();
+        await dbRun(
+            `
+                UPDATE google_home_command_queue
+                SET status = 'expired',
+                    updated_at = ?
+                WHERE device_id = ?
+                  AND status IN ('pending', 'dispatched')
+                  AND expires_at <= ?
+            `,
+            [nowIso, device.id, nowIso]
+        );
+
+        const rows = await dbAll(
+            `
+                SELECT *
+                FROM google_home_command_queue
+                WHERE device_id = ?
+                  AND status = 'pending'
+                  AND expires_at > ?
+                ORDER BY id ASC
+                LIMIT 20
+            `,
+            [device.id, nowIso]
+        );
+
+        const commandIds = (rows || []).map((row) => row.id);
+        if (commandIds.length > 0) {
+            const placeholders = commandIds.map(() => '?').join(',');
+            await dbRun(
+                `
+                    UPDATE google_home_command_queue
+                    SET status = 'dispatched',
+                        updated_at = ?
+                    WHERE id IN (${placeholders})
+                `,
+                [nowIso, ...commandIds]
+            );
+        }
+
+        return res.status(200).json({
+            commands: (rows || []).map((row) => ({
+                id: row.id,
+                entity_id: row.entity_id,
+                action: row.action,
+                payload: parseJsonSafe(row.payload_json, {})
+            }))
+        });
+    } catch (error) {
+        console.error('DEVICE GOOGLE COMMAND POLL ERROR:', error);
+        return res.status(500).json({ error: 'Unable to load Google commands' });
+    }
+});
+
+app.post('/api/internal/devices/google-home/commands/cleanup', requireDeviceAuth, async (req, res) => {
+    try {
+        const device = req.device;
+        const nowIso = new Date().toISOString();
+        await dbRun(
+            `
+                UPDATE google_home_command_queue
+                SET status = 'expired',
+                    updated_at = ?
+                WHERE device_id = ?
+                  AND status IN ('pending', 'dispatched')
+                  AND expires_at <= ?
+            `,
+            [nowIso, device.id, nowIso]
+        );
+
+        return res.status(200).json({ message: 'Command queue cleaned' });
+    } catch (error) {
+        console.error('DEVICE GOOGLE COMMAND CLEANUP ERROR:', error);
+        return res.status(500).json({ error: 'Unable to cleanup Google commands' });
+    }
+});
+
+app.post('/api/internal/devices/google-home/commands/:id/result', requireDeviceAuth, async (req, res) => {
+    const commandId = parsePositiveInt(req.params.id);
+    if (!commandId) {
+        return res.status(400).json({ error: 'Invalid command id' });
+    }
+
+    try {
+        const device = req.device;
+        const command = await dbGet(
+            `
+                SELECT *
+                FROM google_home_command_queue
+                WHERE id = ? AND device_id = ?
+                LIMIT 1
+            `,
+            [commandId, device.id]
+        );
+
+        if (!command) {
+            return res.status(404).json({ error: 'Command not found' });
+        }
+
+        const success = req.body?.success !== false;
+        const errorMessage = sanitizeString(req.body?.error, 240);
+        const nowIso = new Date().toISOString();
+        await dbRun(
+            `
+                UPDATE google_home_command_queue
+                SET status = ?,
+                    result_json = ?,
+                    updated_at = ?
+                WHERE id = ?
+            `,
+            [
+                success ? 'completed' : 'failed',
+                JSON.stringify({
+                    success,
+                    error: errorMessage || null,
+                    state: req.body?.state || null
+                }).slice(0, 2500),
+                nowIso,
+                command.id
+            ]
+        );
+
+        if (success && req.body?.state) {
+            await dbRun(
+                `
+                    UPDATE google_home_entities
+                    SET state_json = ?,
+                        online = 1,
+                        updated_at = ?
+                    WHERE user_id = ?
+                      AND device_id = ?
+                      AND entity_id = ?
+                `,
+                [
+                    JSON.stringify(req.body.state).slice(0, 2500),
+                    nowIso,
+                    command.user_id,
+                    device.id,
+                    command.entity_id
+                ]
+            );
+        }
+
+        return res.status(200).json({ message: 'Command result recorded' });
+    } catch (error) {
+        console.error('DEVICE GOOGLE COMMAND RESULT ERROR:', error);
+        return res.status(500).json({ error: 'Unable to store command result' });
     }
 });
 

@@ -91,6 +91,8 @@ ADMIN_EMAIL=
 ADMIN_PASSWORD=
 ADMIN_SESSION_SECRET=
 PORTAL_SESSION_SECRET=
+GOOGLE_HOME_CLIENT_ID=
+GOOGLE_HOME_CLIENT_SECRET=
 DEVICE_HEARTBEAT_TIMEOUT_SECONDS=45
 DEVICE_HEARTBEAT_INTERVAL_SECONDS=20
 ADMIN_CONNECT_TOKEN_TTL_MINUTES=10
@@ -159,6 +161,23 @@ Production requirements:
 - Create a restricted jump user on VPS (example: `fleetadmin`)
 - Open only jump-host SSH port (`22` or `443`) in cloud firewall/NSG
 - Keep FRP assigned port range closed from public internet
+
+## Google Home (MVP)
+Cloud Connect now includes a private Google Home Cloud-to-Cloud MVP:
+- OAuth authorize endpoint: `GET /api/google/home/oauth`
+- OAuth token endpoint: `POST /api/google/home/token`
+- Fulfillment endpoint: `POST /api/google/home/fulfillment`
+- Account controls: enable/disable Google Home and entity exposure from customer dashboard
+
+Addon integration:
+- Addon syncs entities via `POST /api/internal/devices/google-home/entities`
+- Addon polls queued commands via `POST /api/internal/devices/google-home/commands`
+- Addon posts command results via `POST /api/internal/devices/google-home/commands/:id/result`
+
+MVP entity support:
+- `switch.*` -> On/Off
+- `light.*` -> On/Off + Brightness
+- `sensor.*` -> ambient temperature (read-only style state in QUERY)
 
 Automatic addon behavior:
 - Fleet reporting is always on

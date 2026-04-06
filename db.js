@@ -11,6 +11,9 @@ const USERS_TABLE_SCHEMA = `
         subdomain TEXT UNIQUE,
         access_token TEXT UNIQUE,
         status TEXT NOT NULL CHECK(status IN ('payment_pending', 'active', 'trial', 'expired', 'suspended')),
+        google_home_enabled INTEGER NOT NULL DEFAULT 0,
+        google_home_linked INTEGER NOT NULL DEFAULT 0,
+        google_home_linked_at DATETIME,
         razorpay_customer_id TEXT,
         razorpay_subscription_id TEXT,
         razorpay_payment_id TEXT,
@@ -84,17 +87,93 @@ const ADMIN_ACCESS_LOGS_TABLE_SCHEMA = `
     )
 `;
 
+const GOOGLE_HOME_AUTH_CODES_TABLE_SCHEMA = `
+    CREATE TABLE IF NOT EXISTS google_home_auth_codes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        code_hash TEXT NOT NULL UNIQUE,
+        redirect_uri TEXT NOT NULL,
+        scopes TEXT,
+        expires_at DATETIME NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        consumed_at DATETIME,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+`;
+
+const GOOGLE_HOME_TOKENS_TABLE_SCHEMA = `
+    CREATE TABLE IF NOT EXISTS google_home_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL UNIQUE,
+        access_token_hash TEXT NOT NULL UNIQUE,
+        refresh_token_hash TEXT NOT NULL UNIQUE,
+        expires_at DATETIME NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+`;
+
+const GOOGLE_HOME_ENTITIES_TABLE_SCHEMA = `
+    CREATE TABLE IF NOT EXISTS google_home_entities (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        device_id INTEGER NOT NULL,
+        entity_id TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        room_hint TEXT,
+        exposed INTEGER NOT NULL DEFAULT 1,
+        online INTEGER NOT NULL DEFAULT 1,
+        state_json TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, entity_id),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+    )
+`;
+
+const GOOGLE_HOME_COMMAND_QUEUE_TABLE_SCHEMA = `
+    CREATE TABLE IF NOT EXISTS google_home_command_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        device_id INTEGER NOT NULL,
+        entity_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        payload_json TEXT,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'dispatched', 'completed', 'failed', 'expired')),
+        result_json TEXT,
+        expires_at DATETIME NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+    )
+`;
+
 const DEVICE_SCHEMA_STATEMENTS = [
     DEVICES_TABLE_SCHEMA,
     DEVICE_LOGS_TABLE_SCHEMA,
     ADMIN_CONNECT_SESSIONS_TABLE_SCHEMA,
     ADMIN_ACCESS_LOGS_TABLE_SCHEMA,
+    GOOGLE_HOME_AUTH_CODES_TABLE_SCHEMA,
+    GOOGLE_HOME_TOKENS_TABLE_SCHEMA,
+    GOOGLE_HOME_ENTITIES_TABLE_SCHEMA,
+    GOOGLE_HOME_COMMAND_QUEUE_TABLE_SCHEMA,
     'CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id)',
     'CREATE INDEX IF NOT EXISTS idx_devices_last_seen ON devices(last_seen_at)',
     'CREATE INDEX IF NOT EXISTS idx_device_logs_device_created ON device_logs(device_id, created_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_admin_connect_sessions_expiry ON admin_connect_sessions(expires_at)',
     'CREATE INDEX IF NOT EXISTS idx_admin_access_logs_device_created ON admin_access_logs(device_id, created_at DESC)',
-    'ALTER TABLE devices ADD COLUMN admin_name_override INTEGER NOT NULL DEFAULT 0'
+    'CREATE INDEX IF NOT EXISTS idx_google_home_auth_codes_expiry ON google_home_auth_codes(expires_at)',
+    'CREATE INDEX IF NOT EXISTS idx_google_home_entities_user_exposed ON google_home_entities(user_id, exposed)',
+    'CREATE INDEX IF NOT EXISTS idx_google_home_command_queue_device_status_expiry ON google_home_command_queue(device_id, status, expires_at)',
+    'CREATE INDEX IF NOT EXISTS idx_google_home_command_queue_user_status ON google_home_command_queue(user_id, status)',
+    'ALTER TABLE devices ADD COLUMN admin_name_override INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE users ADD COLUMN google_home_enabled INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE users ADD COLUMN google_home_linked INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE users ADD COLUMN google_home_linked_at DATETIME'
 ];
 
 const USERS_REBUILD_COLUMNS = [
@@ -104,6 +183,9 @@ const USERS_REBUILD_COLUMNS = [
     'subdomain',
     'access_token',
     'status',
+    'google_home_enabled',
+    'google_home_linked',
+    'google_home_linked_at',
     'razorpay_customer_id',
     'razorpay_subscription_id',
     'razorpay_payment_id',
@@ -121,6 +203,10 @@ function selectExpressionForColumn(columnName, existingColumnsSet) {
 
     if (columnName === 'status') {
         return `'payment_pending' AS ${columnName}`;
+    }
+
+    if (columnName === 'google_home_enabled' || columnName === 'google_home_linked') {
+        return `0 AS ${columnName}`;
     }
 
     if (columnName === 'created_at') {
@@ -146,6 +232,9 @@ function buildUsersTableRebuildSql(existingColumns = []) {
         subdomain TEXT UNIQUE,
         access_token TEXT UNIQUE,
         status TEXT NOT NULL CHECK(status IN ('payment_pending', 'active', 'trial', 'expired', 'suspended')),
+        google_home_enabled INTEGER NOT NULL DEFAULT 0,
+        google_home_linked INTEGER NOT NULL DEFAULT 0,
+        google_home_linked_at DATETIME,
         razorpay_customer_id TEXT,
         razorpay_subscription_id TEXT,
         razorpay_payment_id TEXT,
