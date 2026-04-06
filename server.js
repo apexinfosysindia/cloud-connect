@@ -2517,6 +2517,7 @@ app.get('/api/google/home/oauth-debug', async (req, res) => {
         ok: true,
         host: req.get('host') || null,
         origin: req.get('origin') || null,
+        from_cookie: req.query?.from_cookie === '1',
         has_cookie_header: Boolean(req.get('cookie')),
         has_google_client_id: Boolean(GOOGLE_HOME_CLIENT_ID),
         has_google_client_secret: Boolean(GOOGLE_HOME_CLIENT_SECRET),
