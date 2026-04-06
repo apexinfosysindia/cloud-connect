@@ -21,6 +21,9 @@ const GOOGLE_HOME_CLIENT_SECRET = process.env.GOOGLE_HOME_CLIENT_SECRET || '';
 const GOOGLE_HOME_AUTH_CODE_TTL_SECONDS = Number(process.env.GOOGLE_HOME_AUTH_CODE_TTL_SECONDS || 600);
 const GOOGLE_HOME_ACCESS_TOKEN_TTL_SECONDS = Number(process.env.GOOGLE_HOME_ACCESS_TOKEN_TTL_SECONDS || 3600);
 const GOOGLE_HOME_COMMAND_TTL_SECONDS = Number(process.env.GOOGLE_HOME_COMMAND_TTL_SECONDS || 45);
+const PORTAL_SESSION_COOKIE_NAME = 'apx_portal_session';
+const PORTAL_SESSION_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const PORTAL_SESSION_COOKIE_SECURE = process.env.PORTAL_COOKIE_SECURE === '0' ? false : true;
 const DEVICE_HEARTBEAT_TIMEOUT_SECONDS = Number(process.env.DEVICE_HEARTBEAT_TIMEOUT_SECONDS || 45);
 const DEVICE_HEARTBEAT_INTERVAL_SECONDS = Number(process.env.DEVICE_HEARTBEAT_INTERVAL_SECONDS || 20);
 const ADMIN_CONNECT_TOKEN_TTL_MINUTES = Number(process.env.ADMIN_CONNECT_TOKEN_TTL_MINUTES || 10);
@@ -961,6 +964,29 @@ function verifyPortalSessionToken(token) {
     }
 }
 
+function setPortalSessionCookie(res, token) {
+    if (!token) {
+        return;
+    }
+
+    res.cookie(PORTAL_SESSION_COOKIE_NAME, token, {
+        httpOnly: true,
+        secure: PORTAL_SESSION_COOKIE_SECURE,
+        sameSite: 'lax',
+        path: '/',
+        maxAge: PORTAL_SESSION_COOKIE_MAX_AGE_MS
+    });
+}
+
+function clearPortalSessionCookie(res) {
+    res.clearCookie(PORTAL_SESSION_COOKIE_NAME, {
+        path: '/',
+        sameSite: 'lax',
+        secure: PORTAL_SESSION_COOKIE_SECURE,
+        httpOnly: true
+    });
+}
+
 function serializeUser(user) {
     const accessEnabled = isAccessEnabled(user.status);
     const hasSubdomain = Boolean(user.subdomain);
@@ -970,6 +996,26 @@ function serializeUser(user) {
         subdomain: user.subdomain,
         access_token: accessEnabled ? user.access_token : null,
         portal_session_token: createPortalSessionToken(user.email),
+        status: user.status,
+        domain: hasSubdomain ? `${user.subdomain}.${CLOUD_BASE_DOMAIN}` : null,
+        google_home_enabled: Boolean(user.google_home_enabled),
+        google_home_linked: Boolean(user.google_home_linked),
+        trial_ends_at: user.trial_ends_at,
+        trial_approved_at: user.trial_approved_at,
+        activated_at: user.activated_at,
+        payment_pending: user.status === 'payment_pending'
+    };
+}
+
+function serializeUserWithPortalSession(user, portalSessionToken) {
+    const accessEnabled = isAccessEnabled(user.status);
+    const hasSubdomain = Boolean(user.subdomain);
+    return {
+        id: user.id,
+        email: user.email,
+        subdomain: user.subdomain,
+        access_token: accessEnabled ? user.access_token : null,
+        portal_session_token: portalSessionToken,
         status: user.status,
         domain: hasSubdomain ? `${user.subdomain}.${CLOUD_BASE_DOMAIN}` : null,
         google_home_enabled: Boolean(user.google_home_enabled),
@@ -1126,7 +1172,8 @@ async function requirePortalUser(req, res, next) {
     try {
         const authHeader = req.get('authorization') || '';
         const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-        const portalToken = req.body?.portal_session_token || req.query?.portal_session_token || bearerToken;
+        const cookieToken = req.cookies?.[PORTAL_SESSION_COOKIE_NAME] || '';
+        const portalToken = cookieToken || req.body?.portal_session_token || req.query?.portal_session_token || bearerToken;
 
         if (!portalToken) {
             return res.status(401).json({ error: 'Portal session token is required' });
@@ -2047,9 +2094,12 @@ app.post('/api/auth/signup', async (req, res) => {
             }
         }
 
+        const portalSessionToken = createPortalSessionToken(user.email);
+        setPortalSessionCookie(res, portalSessionToken);
+
         res.status(201).json({
             message,
-            data: serializeUser(user),
+            data: serializeUserWithPortalSession(user, portalSessionToken),
             checkout
         });
     } catch (error) {
@@ -2076,9 +2126,12 @@ app.post('/api/auth/login', async (req, res) => {
             return res.status(401).json({ error: 'Invalid email or password' });
         }
 
+        const portalSessionToken = createPortalSessionToken(user.email);
+        setPortalSessionCookie(res, portalSessionToken);
+
         res.status(200).json({
             message: 'Login successful',
-            data: serializeUser(user)
+            data: serializeUserWithPortalSession(user, portalSessionToken)
         });
     } catch (error) {
         console.error('LOGIN ERROR:', error);
@@ -2088,8 +2141,10 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.post('/api/account/subdomain', async (req, res) => {
     const { portal_session_token, subdomain } = req.body;
+    const cookieToken = req.cookies?.[PORTAL_SESSION_COOKIE_NAME] || '';
+    const sessionToken = cookieToken || portal_session_token;
 
-    if (!portal_session_token) {
+    if (!sessionToken) {
         return res.status(400).json({ error: 'Portal session token is required' });
     }
 
@@ -2099,7 +2154,7 @@ app.post('/api/account/subdomain', async (req, res) => {
     }
 
     try {
-        const session = verifyPortalSessionToken(portal_session_token);
+        const session = verifyPortalSessionToken(sessionToken);
         if (!session) {
             return res.status(401).json({ error: 'Invalid portal session. Please log in again.' });
         }
@@ -2136,13 +2191,15 @@ app.post('/api/account/subdomain', async (req, res) => {
 
 app.post('/api/account/me', async (req, res) => {
     const { portal_session_token } = req.body;
+    const cookieToken = req.cookies?.[PORTAL_SESSION_COOKIE_NAME] || '';
+    const sessionToken = cookieToken || portal_session_token;
 
-    if (!portal_session_token) {
+    if (!sessionToken) {
         return res.status(400).json({ error: 'Portal session token is required' });
     }
 
     try {
-        const session = verifyPortalSessionToken(portal_session_token);
+        const session = verifyPortalSessionToken(sessionToken);
         if (!session) {
             return res.status(401).json({ error: 'Invalid portal session. Please log in again.' });
         }
@@ -2267,7 +2324,9 @@ app.get('/api/google/home/oauth', async (req, res) => {
     const redirectUri = sanitizeString(req.query?.redirect_uri, 1000);
     const state = sanitizeString(req.query?.state, 1000) || '';
     const portalTokenRaw = req.query?.portal_session_token;
-    const portalToken = typeof portalTokenRaw === 'string' ? portalTokenRaw.trim() : '';
+    const queryPortalToken = typeof portalTokenRaw === 'string' ? portalTokenRaw.trim() : '';
+    const cookiePortalToken = req.cookies?.[PORTAL_SESSION_COOKIE_NAME] || '';
+    const portalToken = cookiePortalToken || queryPortalToken;
 
     if (!clientId || !redirectUri) {
         return res.status(400).send('Missing OAuth parameters');
@@ -2380,7 +2439,9 @@ app.post('/api/google/home/oauth/continue', async (req, res) => {
     const redirectUri = sanitizeString(req.body?.redirect_uri, 1000);
     const state = sanitizeString(req.body?.state, 1000) || '';
     const portalTokenRaw = req.body?.portal_session_token;
-    const portalToken = typeof portalTokenRaw === 'string' ? portalTokenRaw.trim() : '';
+    const bodyPortalToken = typeof portalTokenRaw === 'string' ? portalTokenRaw.trim() : '';
+    const cookiePortalToken = req.cookies?.[PORTAL_SESSION_COOKIE_NAME] || '';
+    const portalToken = cookiePortalToken || bodyPortalToken;
 
     if (!clientId || !redirectUri || !portalToken) {
         return res.status(400).json({ error: 'missing_oauth_parameters' });
@@ -2398,6 +2459,8 @@ app.post('/api/google/home/oauth/continue', async (req, res) => {
     if (!session) {
         return res.status(401).json({ error: 'invalid_portal_session' });
     }
+
+    setPortalSessionCookie(res, portalToken);
 
     const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [session.email]);
     if (!user) {
@@ -2425,12 +2488,19 @@ app.post('/api/google/home/oauth/continue', async (req, res) => {
     });
 });
 
+app.post('/api/account/logout', async (_req, res) => {
+    clearPortalSessionCookie(res);
+    return res.status(200).json({ message: 'Logged out' });
+});
+
 app.get('/api/google/home/oauth-debug', async (req, res) => {
     const clientId = sanitizeString(req.query?.client_id, 255);
     const redirectUri = sanitizeString(req.query?.redirect_uri, 1000);
     const state = sanitizeString(req.query?.state, 1000) || '';
     const portalTokenRaw = req.query?.portal_session_token;
-    const portalToken = typeof portalTokenRaw === 'string' ? portalTokenRaw.trim() : '';
+    const queryPortalToken = typeof portalTokenRaw === 'string' ? portalTokenRaw.trim() : '';
+    const cookiePortalToken = req.cookies?.[PORTAL_SESSION_COOKIE_NAME] || '';
+    const portalToken = cookiePortalToken || queryPortalToken;
 
     if (!clientId || !redirectUri) {
         return res.status(400).json({ ok: false, error: 'missing_oauth_params' });
@@ -2444,10 +2514,13 @@ app.get('/api/google/home/oauth-debug', async (req, res) => {
         redirect_uri: redirectUri,
         state,
         has_portal_token: Boolean(portalToken),
+        has_cookie_portal_token: Boolean(cookiePortalToken),
+        has_query_portal_token: Boolean(queryPortalToken),
         portal_token_has_dot: portalToken.includes('.'),
         portal_token_parts: portalToken ? portalToken.split('.').length : 0,
         portal_token_preview: portalToken ? `${portalToken.slice(0, 24)}...` : null,
-        portal_token_length: portalToken ? portalToken.length : 0
+        portal_token_length: portalToken ? portalToken.length : 0,
+        cookie_name: PORTAL_SESSION_COOKIE_NAME
     };
 
     if (!portalToken) {
@@ -2916,8 +2989,10 @@ app.post('/api/internal/devices/google-home/commands/:id/result', requireDeviceA
 
 app.post('/api/billing/create-checkout', async (req, res) => {
     const { access_token, portal_session_token } = req.body;
+    const cookieToken = req.cookies?.[PORTAL_SESSION_COOKIE_NAME] || '';
+    const sessionToken = cookieToken || portal_session_token;
 
-    if (!access_token && !portal_session_token) {
+    if (!access_token && !sessionToken) {
         return res.status(400).json({ error: 'Portal session token is required' });
     }
 
@@ -2927,8 +3002,8 @@ app.post('/api/billing/create-checkout', async (req, res) => {
             user = await dbGet(`SELECT * FROM users WHERE access_token = ?`, [access_token]);
         }
 
-        if (!user && portal_session_token) {
-            const session = verifyPortalSessionToken(portal_session_token);
+        if (!user && sessionToken) {
+            const session = verifyPortalSessionToken(sessionToken);
             if (!session) {
                 return res.status(401).json({ error: 'Invalid portal session. Please log in again.' });
             }
