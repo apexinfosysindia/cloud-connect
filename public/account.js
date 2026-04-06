@@ -388,6 +388,13 @@
             return;
         }
 
+        const portalToken = String(userData.portal_session_token || '');
+        if (!portalToken.includes('.') || portalToken.split('.').length !== 2) {
+            googleOAuthRedirectInFlight = false;
+            showAlert('Session token is invalid. Please log out and sign in again.');
+            return;
+        }
+
         if (!googleOAuthMode) {
             googleOAuthRedirectInFlight = false;
             return;
@@ -423,7 +430,7 @@
         authorizeUrl.searchParams.set('redirect_uri', redirectUri);
         authorizeUrl.searchParams.set('response_type', 'code');
         authorizeUrl.searchParams.set('state', state);
-        authorizeUrl.searchParams.set('portal_session_token', userData.portal_session_token);
+        authorizeUrl.searchParams.set('portal_session_token', portalToken);
 
         googleOAuthRedirectInFlight = true;
         window.setTimeout(() => {

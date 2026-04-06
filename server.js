@@ -2266,7 +2266,8 @@ app.get('/api/google/home/oauth', async (req, res) => {
     const clientId = sanitizeString(req.query?.client_id, 255);
     const redirectUri = sanitizeString(req.query?.redirect_uri, 1000);
     const state = sanitizeString(req.query?.state, 1000) || '';
-    const portalToken = sanitizeString(req.query?.portal_session_token, 1200);
+    const portalTokenRaw = req.query?.portal_session_token;
+    const portalToken = typeof portalTokenRaw === 'string' ? portalTokenRaw.trim() : '';
 
     if (!clientId || !redirectUri) {
         return res.status(400).send('Missing OAuth parameters');
@@ -2378,7 +2379,8 @@ app.get('/api/google/home/oauth-debug', async (req, res) => {
     const clientId = sanitizeString(req.query?.client_id, 255);
     const redirectUri = sanitizeString(req.query?.redirect_uri, 1000);
     const state = sanitizeString(req.query?.state, 1000) || '';
-    const portalToken = sanitizeString(req.query?.portal_session_token, 1200);
+    const portalTokenRaw = req.query?.portal_session_token;
+    const portalToken = typeof portalTokenRaw === 'string' ? portalTokenRaw.trim() : '';
 
     if (!clientId || !redirectUri) {
         return res.status(400).json({ ok: false, error: 'missing_oauth_params' });
@@ -2391,7 +2393,9 @@ app.get('/api/google/home/oauth-debug', async (req, res) => {
         client_id_matches: clientId === GOOGLE_HOME_CLIENT_ID,
         redirect_uri: redirectUri,
         state,
-        has_portal_token: Boolean(portalToken)
+        has_portal_token: Boolean(portalToken),
+        portal_token_has_dot: portalToken.includes('.'),
+        portal_token_parts: portalToken ? portalToken.split('.').length : 0
     };
 
     if (!portalToken) {
