@@ -1,4 +1,5 @@
 const path = require('path');
+const https = require('https');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const cors = require('cors');
@@ -22,6 +23,12 @@ const GOOGLE_HOME_CLIENT_SECRET = process.env.GOOGLE_HOME_CLIENT_SECRET || '';
 const GOOGLE_HOME_AUTH_CODE_TTL_SECONDS = Number(process.env.GOOGLE_HOME_AUTH_CODE_TTL_SECONDS || 600);
 const GOOGLE_HOME_ACCESS_TOKEN_TTL_SECONDS = Number(process.env.GOOGLE_HOME_ACCESS_TOKEN_TTL_SECONDS || 3600);
 const GOOGLE_HOME_COMMAND_TTL_SECONDS = Number(process.env.GOOGLE_HOME_COMMAND_TTL_SECONDS || 45);
+const GOOGLE_HOMEGRAPH_SCOPE = 'https://www.googleapis.com/auth/homegraph';
+const GOOGLE_HOMEGRAPH_DEFAULT_TOKEN_URI = 'https://oauth2.googleapis.com/token';
+const GOOGLE_HOMEGRAPH_API_BASE_URL = 'https://homegraph.googleapis.com/v1';
+const GOOGLE_HOMEGRAPH_REQUEST_SYNC_DEBOUNCE_MS = Number(process.env.GOOGLE_HOMEGRAPH_REQUEST_SYNC_DEBOUNCE_MS || 2500);
+const GOOGLE_HOMEGRAPH_REPORT_STATE_DEBOUNCE_MS = Number(process.env.GOOGLE_HOMEGRAPH_REPORT_STATE_DEBOUNCE_MS || 1200);
+const GOOGLE_HOMEGRAPH_REPORT_STATE_ENABLED = process.env.GOOGLE_HOMEGRAPH_REPORT_STATE_ENABLED === '0' ? false : true;
 const PORTAL_SESSION_COOKIE_NAME = 'apx_portal_session';
 const PORTAL_SESSION_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const PORTAL_SESSION_COOKIE_SECURE = process.env.PORTAL_COOKIE_SECURE === '0' ? false : true;
@@ -33,6 +40,14 @@ const DEVICE_TUNNEL_PORT_MIN = Number(process.env.DEVICE_TUNNEL_PORT_MIN || 2200
 const DEVICE_TUNNEL_PORT_MAX = Number(process.env.DEVICE_TUNNEL_PORT_MAX || 22999);
 const DEVICE_TOKEN_PREFIX = 'dvc_';
 const ADMIN_CONNECT_TOKEN_PREFIX = 'acn_';
+
+let googleHomegraphAccessTokenCache = {
+    token: null,
+    expiresAt: 0
+};
+
+const googleHomegraphRequestSyncQueue = new Map();
+const googleHomegraphReportStateQueue = new Map();
 
 const app = express();
 app.use(cookieParser());
@@ -613,7 +628,101 @@ function normalizeGoogleEntityType(entityType) {
     return normalized.toLowerCase();
 }
 
+function mapGoogleDomainToEntityType(entityId, fallbackType = 'switch') {
+    const normalizedEntityId = sanitizeEntityId(entityId) || '';
+    const domain = normalizedEntityId.includes('.') ? normalizedEntityId.split('.')[0] : '';
+
+    if (domain === 'light') return 'light';
+    if (domain === 'switch' || domain === 'input_boolean' || domain === 'automation' || domain === 'script') return 'switch';
+    if (domain === 'fan') return 'fan';
+    if (domain === 'cover') return 'cover';
+    if (domain === 'lock') return 'lock';
+    if (domain === 'climate') return 'climate';
+    if (domain === 'media_player') return 'media_player';
+    if (domain === 'scene') return 'scene';
+    if (domain === 'button') return 'button';
+    if (domain === 'vacuum') return 'vacuum';
+    if (domain === 'sensor') return 'sensor_temperature';
+
+    return fallbackType;
+}
+
 function mapGoogleEntityTypeToTraits(entityType) {
+    if (entityType === 'fan') {
+        return {
+            type: 'action.devices.types.FAN',
+            traits: [
+                'action.devices.traits.OnOff',
+                'action.devices.traits.FanSpeed'
+            ]
+        };
+    }
+
+    if (entityType === 'cover') {
+        return {
+            type: 'action.devices.types.BLINDS',
+            traits: [
+                'action.devices.traits.OpenClose'
+            ]
+        };
+    }
+
+    if (entityType === 'lock') {
+        return {
+            type: 'action.devices.types.LOCK',
+            traits: [
+                'action.devices.traits.LockUnlock'
+            ]
+        };
+    }
+
+    if (entityType === 'climate') {
+        return {
+            type: 'action.devices.types.THERMOSTAT',
+            traits: [
+                'action.devices.traits.TemperatureSetting'
+            ]
+        };
+    }
+
+    if (entityType === 'media_player') {
+        return {
+            type: 'action.devices.types.TV',
+            traits: [
+                'action.devices.traits.OnOff',
+                'action.devices.traits.Volume'
+            ]
+        };
+    }
+
+    if (entityType === 'scene') {
+        return {
+            type: 'action.devices.types.SCENE',
+            traits: [
+                'action.devices.traits.Scene'
+            ]
+        };
+    }
+
+    if (entityType === 'button') {
+        return {
+            type: 'action.devices.types.SCENE',
+            traits: [
+                'action.devices.traits.Scene'
+            ]
+        };
+    }
+
+    if (entityType === 'vacuum') {
+        return {
+            type: 'action.devices.types.VACUUM',
+            traits: [
+                'action.devices.traits.StartStop',
+                'action.devices.traits.OnOff'
+            ]
+        };
+    }
+
     if (entityType === 'light') {
         return {
             type: 'action.devices.types.LIGHT',
@@ -641,6 +750,75 @@ function mapGoogleEntityTypeToTraits(entityType) {
     };
 }
 
+function normalizeGoogleThermostatMode(mode) {
+    const normalized = sanitizeString(mode, 32).toLowerCase();
+    if (!normalized) return 'off';
+
+    if (normalized === 'heat_cool' || normalized === 'heatcool') return 'heatcool';
+    if (normalized === 'fan_only' || normalized === 'fan-only') return 'fan-only';
+    return normalized;
+}
+
+function getGoogleThermostatModesForEntity(entity) {
+    const statePayload = parseJsonSafe(entity?.state_json, {}) || {};
+    const rawModes = Array.isArray(statePayload.hvac_modes) ? statePayload.hvac_modes : [];
+    const normalizedModes = Array.from(new Set(rawModes
+        .map((mode) => normalizeGoogleThermostatMode(mode))
+        .filter(Boolean)));
+
+    if (normalizedModes.length > 0) {
+        return normalizedModes.join(',');
+    }
+
+    return 'off,heat,cool,heatcool';
+}
+
+function supportsGoogleCommandForEntityType(entityType, commandName) {
+    const allowed = {
+        light: new Set([
+            'action.devices.commands.OnOff',
+            'action.devices.commands.BrightnessAbsolute'
+        ]),
+        switch: new Set([
+            'action.devices.commands.OnOff'
+        ]),
+        fan: new Set([
+            'action.devices.commands.OnOff',
+            'action.devices.commands.SetFanSpeed'
+        ]),
+        cover: new Set([
+            'action.devices.commands.OpenClose'
+        ]),
+        lock: new Set([
+            'action.devices.commands.LockUnlock'
+        ]),
+        climate: new Set([
+            'action.devices.commands.ThermostatSetMode',
+            'action.devices.commands.ThermostatTemperatureSetpoint'
+        ]),
+        media_player: new Set([
+            'action.devices.commands.OnOff',
+            'action.devices.commands.setVolume',
+            'action.devices.commands.mute'
+        ]),
+        scene: new Set([
+            'action.devices.commands.activateScene'
+        ]),
+        button: new Set([
+            'action.devices.commands.activateScene'
+        ]),
+        vacuum: new Set([
+            'action.devices.commands.StartStop',
+            'action.devices.commands.PauseUnpause',
+            'action.devices.commands.OnOff'
+        ]),
+        sensor_temperature: new Set([])
+    };
+
+    const allowedCommands = allowed[normalizeGoogleEntityType(entityType)] || allowed.switch;
+    return allowedCommands.has(commandName);
+}
+
 function buildGoogleDeviceObject(entity) {
     const mapped = mapGoogleEntityTypeToTraits(entity.entity_type);
     const roomHint = sanitizeString(entity.room_hint, 120);
@@ -653,7 +831,7 @@ function buildGoogleDeviceObject(entity) {
             name: entity.display_name || entity.entity_id
         },
         roomHint: roomHint || undefined,
-        willReportState: false,
+        willReportState: GOOGLE_HOMEGRAPH_REPORT_STATE_ENABLED && hasGoogleHomegraphCredentials(),
         customData: {
             entity_id: entity.entity_id,
             device_id: entity.device_id
@@ -665,6 +843,43 @@ function buildGoogleDeviceObject(entity) {
         },
         attributes: entity.entity_type === 'light'
             ? { commandOnlyBrightness: false }
+            : entity.entity_type === 'fan'
+                ? {
+                    availableFanSpeeds: {
+                        speeds: [
+                            { speed_name: '1', speed_values: [{ speed_synonym: ['low', '1'], lang: 'en' }] },
+                            { speed_name: '2', speed_values: [{ speed_synonym: ['medium', '2'], lang: 'en' }] },
+                            { speed_name: '3', speed_values: [{ speed_synonym: ['high', '3'], lang: 'en' }] }
+                        ],
+                        ordered: true
+                    },
+                    reversible: false,
+                    commandOnlyFanSpeed: false
+                }
+                : entity.entity_type === 'cover'
+                    ? {
+                        discreteOnlyOpenClose: false,
+                        queryOnlyOpenClose: false
+                    }
+                    : entity.entity_type === 'climate'
+                        ? {
+                            availableThermostatModes: getGoogleThermostatModesForEntity(entity),
+                            thermostatTemperatureUnit: 'C'
+                        }
+                        : entity.entity_type === 'media_player'
+                            ? {
+                                volumeMaxLevel: 100,
+                                volumeCanMuteAndUnmute: true,
+                                commandOnlyVolume: false
+                            }
+                            : entity.entity_type === 'scene' || entity.entity_type === 'button'
+                                ? {
+                                    sceneReversible: false
+                                }
+                                : entity.entity_type === 'vacuum'
+                                    ? {
+                                        pausable: true
+                                    }
             : entity.entity_type === 'sensor_temperature'
                 ? {
                     sensorStatesSupported: [
@@ -686,6 +901,67 @@ function buildGoogleDeviceObject(entity) {
 
 function parseGoogleEntityState(entity) {
     const statePayload = parseJsonSafe(entity.state_json, {}) || {};
+
+    if (entity.entity_type === 'fan') {
+        const fanOn = Boolean(statePayload.on);
+        const speed = Number(statePayload.speed || 0);
+        return {
+            online: entity.online !== 0,
+            on: fanOn,
+            currentFanSpeedSetting: String(Math.max(1, Math.min(3, Math.round(speed || 1))))
+        };
+    }
+
+    if (entity.entity_type === 'cover') {
+        const openPercent = Number(statePayload.openPercent || 0);
+        return {
+            online: entity.online !== 0,
+            openPercent: Math.max(0, Math.min(100, Math.round(openPercent)))
+        };
+    }
+
+    if (entity.entity_type === 'lock') {
+        return {
+            online: entity.online !== 0,
+            isLocked: Boolean(statePayload.isLocked)
+        };
+    }
+
+    if (entity.entity_type === 'climate') {
+        const ambient = Number(statePayload.ambient_temperature || 0);
+        const target = Number(statePayload.target_temperature || ambient || 22);
+        return {
+            online: entity.online !== 0,
+            thermostatMode: normalizeGoogleThermostatMode(statePayload.mode),
+            thermostatTemperatureAmbient: Number.isFinite(ambient) ? ambient : 0,
+            thermostatTemperatureSetpoint: Number.isFinite(target) ? target : 22
+        };
+    }
+
+    if (entity.entity_type === 'media_player') {
+        const volume = Number(statePayload.volume || 0);
+        return {
+            online: entity.online !== 0,
+            on: Boolean(statePayload.on),
+            currentVolume: Math.max(0, Math.min(100, Math.round(volume))),
+            isMuted: Boolean(statePayload.muted)
+        };
+    }
+
+    if (entity.entity_type === 'scene' || entity.entity_type === 'button') {
+        return {
+            online: entity.online !== 0
+        };
+    }
+
+    if (entity.entity_type === 'vacuum') {
+        return {
+            online: entity.online !== 0,
+            on: Boolean(statePayload.on),
+            isRunning: Boolean(statePayload.isRunning),
+            isPaused: Boolean(statePayload.isPaused)
+        };
+    }
 
     if (entity.entity_type === 'light') {
         return {
@@ -757,21 +1033,33 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
     }
 
     const displayName = sanitizeString(payload?.display_name, 120) || entityId;
-    const entityType = normalizeGoogleEntityType(payload?.entity_type);
+    const entityType = mapGoogleDomainToEntityType(entityId, normalizeGoogleEntityType(payload?.entity_type));
     const roomHint = sanitizeString(payload?.room_hint, 120);
     const online = payload?.online === false ? 0 : 1;
     const stateJson = JSON.stringify(payload?.state || {}).slice(0, 2500);
+    const entityState = parseGoogleEntityState({
+        entity_type: entityType,
+        online,
+        state_json: stateJson
+    });
+    const stateHash = computeGoogleStateHash(entityState);
     const nowIso = new Date().toISOString();
 
     const existing = await dbGet(
         `
-            SELECT id, exposed
+            SELECT id, exposed, device_id, display_name, entity_type, room_hint
             FROM google_home_entities
             WHERE user_id = ? AND entity_id = ?
             LIMIT 1
         `,
         [userId, entityId]
     );
+
+    const syncChanged = !existing
+        || Number(existing.device_id) !== Number(deviceId)
+        || (existing.display_name || '') !== displayName
+        || (existing.entity_type || '') !== entityType
+        || (existing.room_hint || '') !== (roomHint || '');
 
     if (existing) {
         await dbRun(
@@ -783,10 +1071,11 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
                     room_hint = ?,
                     online = ?,
                     state_json = ?,
+                    state_hash = ?,
                     updated_at = ?
                 WHERE id = ?
             `,
-            [deviceId, displayName, entityType, roomHint, online, stateJson, nowIso, existing.id]
+            [deviceId, displayName, entityType, roomHint, online, stateJson, stateHash, nowIso, existing.id]
         );
     } else {
         await dbRun(
@@ -801,16 +1090,17 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
                     exposed,
                     online,
                     state_json,
+                    state_hash,
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
             `,
-            [userId, deviceId, entityId, displayName, entityType, roomHint, online, stateJson, nowIso, nowIso]
+            [userId, deviceId, entityId, displayName, entityType, roomHint, online, stateJson, stateHash, nowIso, nowIso]
         );
     }
 
-    return dbGet(
+    const entity = await dbGet(
         `
             SELECT *
             FROM google_home_entities
@@ -819,6 +1109,11 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
         `,
         [userId, entityId]
     );
+
+    return {
+        entity,
+        syncChanged
+    };
 }
 
 async function queueGoogleCommandForEntity(userId, deviceId, entityId, action, payload) {
@@ -880,6 +1175,19 @@ async function cleanupGoogleAuthDataForUser(userId) {
         `,
         [userId]
     );
+
+    const normalizedUserId = Number(userId);
+    const requestSyncEntry = googleHomegraphRequestSyncQueue.get(normalizedUserId);
+    if (requestSyncEntry?.timer) {
+        clearTimeout(requestSyncEntry.timer);
+    }
+    googleHomegraphRequestSyncQueue.delete(normalizedUserId);
+
+    const reportStateEntry = googleHomegraphReportStateQueue.get(normalizedUserId);
+    if (reportStateEntry?.timer) {
+        clearTimeout(reportStateEntry.timer);
+    }
+    googleHomegraphReportStateQueue.delete(normalizedUserId);
 }
 
 function dbGet(query, params = []) {
@@ -1445,6 +1753,487 @@ function parsePositiveInt(value) {
     }
 
     return parsed;
+}
+
+function getGoogleHomegraphDebounceMs(value, fallback, min, max) {
+    if (!Number.isFinite(value)) {
+        return fallback;
+    }
+
+    return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function getGoogleHomegraphRequestSyncDebounceMs() {
+    return getGoogleHomegraphDebounceMs(GOOGLE_HOMEGRAPH_REQUEST_SYNC_DEBOUNCE_MS, 2500, 250, 30000);
+}
+
+function getGoogleHomegraphReportStateDebounceMs() {
+    return getGoogleHomegraphDebounceMs(GOOGLE_HOMEGRAPH_REPORT_STATE_DEBOUNCE_MS, 1200, 250, 10000);
+}
+
+function getGoogleServiceAccountClientEmail() {
+    return sanitizeString(process.env.GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL || process.env.GOOGLE_HOMEGRAPH_CLIENT_EMAIL || '', 320);
+}
+
+function getGoogleServiceAccountPrivateKey() {
+    const direct = sanitizeString(process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || process.env.GOOGLE_HOMEGRAPH_PRIVATE_KEY || '', 8192);
+    if (direct) {
+        return direct.replace(/\\n/g, '\n');
+    }
+
+    const base64Value = sanitizeString(process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY_B64 || process.env.GOOGLE_HOMEGRAPH_PRIVATE_KEY_B64 || '', 12000);
+    if (!base64Value) {
+        return null;
+    }
+
+    try {
+        return Buffer.from(base64Value, 'base64').toString('utf8').replace(/\\n/g, '\n');
+    } catch (error) {
+        return null;
+    }
+}
+
+function getGoogleHomegraphTokenUri() {
+    const configured = sanitizeString(process.env.GOOGLE_HOMEGRAPH_TOKEN_URI || '', 800);
+    return configured || GOOGLE_HOMEGRAPH_DEFAULT_TOKEN_URI;
+}
+
+function getGoogleHomegraphApiBaseUrl() {
+    const configured = sanitizeString(process.env.GOOGLE_HOMEGRAPH_API_BASE_URL || '', 800);
+    return configured || GOOGLE_HOMEGRAPH_API_BASE_URL;
+}
+
+function hasGoogleHomegraphCredentials() {
+    return Boolean(getGoogleServiceAccountClientEmail() && getGoogleServiceAccountPrivateKey());
+}
+
+function getGoogleHomegraphJwtLifetimeSeconds() {
+    return 3600;
+}
+
+function base64UrlEncodeJson(value) {
+    return Buffer.from(JSON.stringify(value)).toString('base64url');
+}
+
+function generateGoogleServiceJwtAssertion() {
+    const clientEmail = getGoogleServiceAccountClientEmail();
+    const privateKey = getGoogleServiceAccountPrivateKey();
+    if (!clientEmail || !privateKey) {
+        return null;
+    }
+
+    const tokenUri = getGoogleHomegraphTokenUri();
+    const now = Math.floor(Date.now() / 1000);
+    const iat = now - 5;
+    const exp = iat + getGoogleHomegraphJwtLifetimeSeconds();
+
+    const header = {
+        alg: 'RS256',
+        typ: 'JWT'
+    };
+
+    const payload = {
+        iss: clientEmail,
+        scope: GOOGLE_HOMEGRAPH_SCOPE,
+        aud: tokenUri,
+        iat,
+        exp
+    };
+
+    const encodedHeader = base64UrlEncodeJson(header);
+    const encodedPayload = base64UrlEncodeJson(payload);
+    const signingInput = `${encodedHeader}.${encodedPayload}`;
+    const signer = crypto.createSign('RSA-SHA256');
+    signer.update(signingInput);
+    signer.end();
+    const signature = signer.sign(privateKey, 'base64url');
+    return `${signingInput}.${signature}`;
+}
+
+function normalizeJsonForHash(value) {
+    if (value === null || value === undefined) {
+        return value;
+    }
+
+    if (Array.isArray(value)) {
+        return value.map((item) => normalizeJsonForHash(item));
+    }
+
+    if (typeof value === 'object') {
+        const sorted = {};
+        const keys = Object.keys(value).sort();
+        for (const key of keys) {
+            sorted[key] = normalizeJsonForHash(value[key]);
+        }
+        return sorted;
+    }
+
+    return value;
+}
+
+function computeGoogleStateHash(value) {
+    const normalized = normalizeJsonForHash(value || {});
+    return crypto.createHash('sha1').update(JSON.stringify(normalized)).digest('hex');
+}
+
+async function fetchGoogleAccessTokenForHomegraph() {
+    const now = Date.now();
+    if (googleHomegraphAccessTokenCache.token && googleHomegraphAccessTokenCache.expiresAt > (now + 60 * 1000)) {
+        return googleHomegraphAccessTokenCache.token;
+    }
+
+    const assertion = generateGoogleServiceJwtAssertion();
+    if (!assertion) {
+        return null;
+    }
+
+    const tokenUri = new URL(getGoogleHomegraphTokenUri());
+    const postBody = new URLSearchParams({
+        grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+        assertion
+    }).toString();
+
+    const tokenPayload = await new Promise((resolve, reject) => {
+        const request = https.request(
+            {
+                protocol: tokenUri.protocol,
+                hostname: tokenUri.hostname,
+                port: tokenUri.port || (tokenUri.protocol === 'https:' ? 443 : 80),
+                path: `${tokenUri.pathname}${tokenUri.search || ''}`,
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Content-Length': Buffer.byteLength(postBody),
+                    'Accept': 'application/json'
+                },
+                timeout: 10000
+            },
+            (response) => {
+                const chunks = [];
+                response.on('data', (chunk) => chunks.push(chunk));
+                response.on('end', () => {
+                    const raw = Buffer.concat(chunks).toString('utf8');
+                    const parsed = parseJsonSafe(raw, null);
+                    const isSuccess = response.statusCode >= 200 && response.statusCode < 300;
+                    if (!isSuccess) {
+                        const errorText = parsed?.error_description || parsed?.error || `status_${response.statusCode || 0}`;
+                        reject(new Error(`HOMEGRAPH TOKEN ERROR: ${errorText}`));
+                        return;
+                    }
+
+                    resolve(parsed || {});
+                });
+            }
+        );
+
+        request.on('error', reject);
+        request.on('timeout', () => request.destroy(new Error('HOMEGRAPH TOKEN REQUEST TIMEOUT')));
+        request.write(postBody);
+        request.end();
+    });
+
+    const accessToken = sanitizeString(tokenPayload?.access_token, 4000);
+    if (!accessToken) {
+        return null;
+    }
+
+    const expiresIn = Number(tokenPayload?.expires_in);
+    const ttlMs = Number.isFinite(expiresIn) ? Math.max(60, Math.min(3600, Math.round(expiresIn))) * 1000 : 3300 * 1000;
+    googleHomegraphAccessTokenCache = {
+        token: accessToken,
+        expiresAt: Date.now() + ttlMs
+    };
+
+    return accessToken;
+}
+
+async function postToGoogleHomegraph(pathname, payload) {
+    if (!hasGoogleHomegraphCredentials()) {
+        return { ok: false, skipped: true, reason: 'missing_credentials' };
+    }
+
+    const accessToken = await fetchGoogleAccessTokenForHomegraph();
+    if (!accessToken) {
+        return { ok: false, skipped: true, reason: 'missing_access_token' };
+    }
+
+    const baseUrl = new URL(getGoogleHomegraphApiBaseUrl());
+    const endpoint = new URL(pathname, `${baseUrl.origin}/`);
+    endpoint.search = baseUrl.search;
+    const bodyText = JSON.stringify(payload || {});
+
+    return new Promise((resolve, reject) => {
+        const request = https.request(
+            {
+                protocol: endpoint.protocol,
+                hostname: endpoint.hostname,
+                port: endpoint.port || (endpoint.protocol === 'https:' ? 443 : 80),
+                path: `${endpoint.pathname}${endpoint.search || ''}`,
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(bodyText),
+                    'Authorization': `Bearer ${accessToken}`,
+                    'Accept': 'application/json'
+                },
+                timeout: 10000
+            },
+            (response) => {
+                const chunks = [];
+                response.on('data', (chunk) => chunks.push(chunk));
+                response.on('end', () => {
+                    const raw = Buffer.concat(chunks).toString('utf8');
+                    const parsed = parseJsonSafe(raw, null);
+                    const isSuccess = response.statusCode >= 200 && response.statusCode < 300;
+
+                    if (!isSuccess && response.statusCode === 401) {
+                        googleHomegraphAccessTokenCache = { token: null, expiresAt: 0 };
+                    }
+
+                    if (!isSuccess) {
+                        const apiError = parsed?.error?.message || parsed?.error_description || parsed?.error || `status_${response.statusCode || 0}`;
+                        resolve({ ok: false, statusCode: response.statusCode, error: apiError });
+                        return;
+                    }
+
+                    resolve({ ok: true, statusCode: response.statusCode, payload: parsed || {} });
+                });
+            }
+        );
+
+        request.on('error', reject);
+        request.on('timeout', () => request.destroy(new Error('HOMEGRAPH API REQUEST TIMEOUT')));
+        request.write(bodyText);
+        request.end();
+    });
+}
+
+async function sendGoogleRequestSync(agentUserId) {
+    const normalized = sanitizeString(agentUserId, 120);
+    if (!normalized) {
+        return { ok: false, skipped: true, reason: 'invalid_agent_user_id' };
+    }
+
+    return postToGoogleHomegraph('/v1/devices:requestSync', {
+        agentUserId: normalized,
+        async: true
+    });
+}
+
+async function sendGoogleReportState(agentUserId, statesByEntityId, requestId = null) {
+    const normalized = sanitizeString(agentUserId, 120);
+    if (!normalized) {
+        return { ok: false, skipped: true, reason: 'invalid_agent_user_id' };
+    }
+
+    const payload = {
+        requestId: sanitizeGoogleRequestId(requestId) || `rs_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+        agentUserId: normalized,
+        payload: {
+            devices: {
+                states: statesByEntityId || {}
+            }
+        }
+    };
+
+    return postToGoogleHomegraph('/v1/devices:reportStateAndNotification', payload);
+}
+
+function scheduleGoogleRequestSyncForUser(userId, reason = 'change') {
+    const normalizedUserId = parsePositiveInt(userId);
+    if (!normalizedUserId || !hasGoogleHomegraphCredentials()) {
+        return;
+    }
+
+    const existing = googleHomegraphRequestSyncQueue.get(normalizedUserId);
+    const now = Date.now();
+    if (existing?.timer) {
+        clearTimeout(existing.timer);
+    }
+
+    const scheduledAt = now;
+    const timer = setTimeout(async () => {
+        googleHomegraphRequestSyncQueue.delete(normalizedUserId);
+
+        try {
+            const user = await dbGet(`SELECT id, google_home_enabled, google_home_linked FROM users WHERE id = ?`, [normalizedUserId]);
+            if (!user || !user.google_home_enabled || !user.google_home_linked) {
+                return;
+            }
+
+            const response = await sendGoogleRequestSync(String(normalizedUserId));
+            if (!response?.ok && !response?.skipped) {
+                console.warn('GOOGLE REQUEST SYNC FAILED:', {
+                    user_id: normalizedUserId,
+                    reason,
+                    error: response.error || null,
+                    status: response.statusCode || null
+                });
+                return;
+            }
+
+            console.log('GOOGLE REQUEST SYNC SENT:', {
+                user_id: normalizedUserId,
+                reason,
+                queued_for_ms: Date.now() - scheduledAt
+            });
+        } catch (error) {
+            console.error('GOOGLE REQUEST SYNC ERROR:', error);
+        }
+    }, getGoogleHomegraphRequestSyncDebounceMs());
+
+    if (typeof timer.unref === 'function') {
+        timer.unref();
+    }
+
+    googleHomegraphRequestSyncQueue.set(normalizedUserId, {
+        reason,
+        timer,
+        queuedAt: scheduledAt
+    });
+}
+
+async function collectGoogleReportableStateChangesForUser(userId, options = {}) {
+    const normalizedUserId = parsePositiveInt(userId);
+    if (!normalizedUserId) {
+        return {
+            states: {},
+            hashes: {}
+        };
+    }
+
+    const force = Boolean(options.force);
+    const rows = await dbAll(
+        `
+            SELECT
+                entity_id,
+                entity_type,
+                online,
+                state_json,
+                last_reported_state_hash,
+                exposed
+            FROM google_home_entities
+            WHERE user_id = ?
+        `,
+        [normalizedUserId]
+    );
+
+    const states = {};
+    const hashes = {};
+    for (const row of rows || []) {
+        const entityId = sanitizeEntityId(row.entity_id);
+        if (!entityId) {
+            continue;
+        }
+
+        const parsedState = {
+            online: row.online !== 0,
+            ...parseGoogleEntityState(row)
+        };
+        const stateHash = computeGoogleStateHash(parsedState);
+        const lastReportedHash = row.last_reported_state_hash || null;
+
+        if (row.exposed === 1 && (force || stateHash !== lastReportedHash)) {
+            states[entityId] = parsedState;
+            hashes[entityId] = stateHash;
+        }
+    }
+
+    return { states, hashes };
+}
+
+async function markGoogleReportedStateHashes(userId, stateHashesByEntityId) {
+    const normalizedUserId = parsePositiveInt(userId);
+    if (!normalizedUserId || !stateHashesByEntityId || typeof stateHashesByEntityId !== 'object') {
+        return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const entries = Object.entries(stateHashesByEntityId)
+        .map(([entityId, hash]) => [sanitizeEntityId(entityId), sanitizeString(hash, 80)])
+        .filter(([entityId, hash]) => Boolean(entityId && hash));
+
+    for (const [entityId, hash] of entries) {
+        await dbRun(
+            `
+                UPDATE google_home_entities
+                SET last_reported_state_hash = ?,
+                    last_reported_at = ?
+                WHERE user_id = ?
+                  AND entity_id = ?
+            `,
+            [hash, nowIso, normalizedUserId, entityId]
+        );
+    }
+}
+
+function scheduleGoogleReportStateForUser(userId, options = {}) {
+    if (!GOOGLE_HOMEGRAPH_REPORT_STATE_ENABLED || !hasGoogleHomegraphCredentials()) {
+        return;
+    }
+
+    const normalizedUserId = parsePositiveInt(userId);
+    if (!normalizedUserId) {
+        return;
+    }
+
+    const force = Boolean(options.force);
+    const existing = googleHomegraphReportStateQueue.get(normalizedUserId);
+
+    if (existing?.timer) {
+        clearTimeout(existing.timer);
+    }
+
+    const timer = setTimeout(async () => {
+        googleHomegraphReportStateQueue.delete(normalizedUserId);
+
+        try {
+            const user = await dbGet(`SELECT id, google_home_enabled, google_home_linked FROM users WHERE id = ?`, [normalizedUserId]);
+            if (!user || !user.google_home_enabled || !user.google_home_linked) {
+                return;
+            }
+
+            const reportable = await collectGoogleReportableStateChangesForUser(normalizedUserId, { force });
+            const entityIds = Object.keys(reportable.states);
+            if (entityIds.length === 0) {
+                return;
+            }
+
+            const response = await sendGoogleReportState(String(normalizedUserId), reportable.states);
+            if (!response?.ok && !response?.skipped) {
+                console.warn('GOOGLE REPORT STATE FAILED:', {
+                    user_id: normalizedUserId,
+                    entities: entityIds.length,
+                    error: response.error || null,
+                    status: response.statusCode || null
+                });
+                return;
+            }
+
+            if (!response?.ok) {
+                return;
+            }
+
+            await markGoogleReportedStateHashes(normalizedUserId, reportable.hashes);
+            console.log('GOOGLE REPORT STATE SENT:', {
+                user_id: normalizedUserId,
+                entities: entityIds.length,
+                force
+            });
+        } catch (error) {
+            console.error('GOOGLE REPORT STATE ERROR:', error);
+        }
+    }, force ? 200 : getGoogleHomegraphReportStateDebounceMs());
+
+    if (typeof timer.unref === 'function') {
+        timer.unref();
+    }
+
+    googleHomegraphReportStateQueue.set(normalizedUserId, {
+        timer,
+        force,
+        queuedAt: Date.now()
+    });
 }
 
 async function getDeviceWithOwnerById(deviceId) {
@@ -2244,6 +3033,10 @@ app.post('/api/account/google-home/enable', requirePortalUser, async (req, res) 
         );
 
         const updatedUser = await dbGet(`SELECT * FROM users WHERE id = ?`, [req.portalUser.id]);
+        if (enable) {
+            scheduleGoogleRequestSyncForUser(req.portalUser.id, 'google_home_enabled');
+            scheduleGoogleReportStateForUser(req.portalUser.id, { force: true });
+        }
         return res.status(200).json({
             message: enable ? 'Google Home integration enabled' : 'Google Home integration disabled',
             data: serializeUser(updatedUser)
@@ -2317,6 +3110,9 @@ app.post('/api/account/google-home/entities/:entityId/expose', requirePortalUser
             `,
             [exposed ? 1 : 0, new Date().toISOString(), entity.id]
         );
+
+        scheduleGoogleRequestSyncForUser(req.portalUser.id, 'entity_exposure_changed');
+        scheduleGoogleReportStateForUser(req.portalUser.id, { force: true });
 
         return res.status(200).json({
             message: exposed ? 'Entity exposed to Google Home' : 'Entity hidden from Google Home'
@@ -2439,6 +3235,9 @@ app.get('/api/google/home/oauth', async (req, res) => {
             `,
             [nowIso, user.id]
         );
+
+        scheduleGoogleRequestSyncForUser(user.id, 'oauth_linked');
+        scheduleGoogleReportStateForUser(user.id, { force: true });
 
         callbackUrl.searchParams.set('code', authCode);
         callbackUrl.searchParams.set('state', state);
@@ -2741,6 +3540,15 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                         const commandName = sanitizeActionName(execution?.command);
                         const params = execution?.params || {};
 
+                        if (!supportsGoogleCommandForEntityType(entity.entity_type, commandName)) {
+                            commandResults.push({
+                                ids: [entityId],
+                                status: 'ERROR',
+                                errorCode: 'notSupported'
+                            });
+                            continue;
+                        }
+
                         let action = null;
                         let payload = {};
                         if (commandName === 'action.devices.commands.OnOff') {
@@ -2749,6 +3557,59 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                         } else if (commandName === 'action.devices.commands.BrightnessAbsolute') {
                             action = 'set_brightness';
                             payload = { brightness: Math.max(0, Math.min(100, Number(params?.brightness || 0))) };
+                        } else if (commandName === 'action.devices.commands.SetFanSpeed') {
+                            action = 'set_fan_speed';
+                            payload = {
+                                speed: String(params?.fanSpeed || '1')
+                            };
+                        } else if (commandName === 'action.devices.commands.OpenClose') {
+                            action = 'set_open_percent';
+                            payload = {
+                                openPercent: Math.max(0, Math.min(100, Number(params?.openPercent ?? 0)))
+                            };
+                        } else if (commandName === 'action.devices.commands.LockUnlock') {
+                            action = 'set_lock';
+                            payload = {
+                                lock: Boolean(params?.lock)
+                            };
+                        } else if (commandName === 'action.devices.commands.ThermostatSetMode') {
+                            action = 'set_thermostat_mode';
+                            payload = {
+                                mode: normalizeGoogleThermostatMode(params?.thermostatMode)
+                            };
+                        } else if (commandName === 'action.devices.commands.ThermostatTemperatureSetpoint') {
+                            action = 'set_thermostat_setpoint';
+                            payload = {
+                                setpoint: Number(params?.thermostatTemperatureSetpoint || 22)
+                            };
+                        } else if (commandName === 'action.devices.commands.setVolume') {
+                            action = 'set_volume';
+                            payload = {
+                                volume: Math.max(0, Math.min(100, Number(params?.volumeLevel ?? 0)))
+                            };
+                            if (Object.prototype.hasOwnProperty.call(params || {}, 'mute')) {
+                                payload.muted = Boolean(params?.mute);
+                            }
+                        } else if (commandName === 'action.devices.commands.mute') {
+                            action = 'set_mute';
+                            payload = {
+                                muted: Boolean(params?.mute)
+                            };
+                        } else if (commandName === 'action.devices.commands.activateScene') {
+                            action = 'activate_scene';
+                            payload = {
+                                deactivate: Boolean(params?.deactivate)
+                            };
+                        } else if (commandName === 'action.devices.commands.StartStop') {
+                            action = 'set_start_stop';
+                            payload = {
+                                start: Boolean(params?.start)
+                            };
+                        } else if (commandName === 'action.devices.commands.PauseUnpause') {
+                            action = 'set_pause';
+                            payload = {
+                                pause: Boolean(params?.pause)
+                            };
                         } else {
                             commandResults.push({
                                 ids: [entityId],
@@ -2765,7 +3626,15 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                             states: {
                                 online: true,
                                 ...(payload.on !== undefined ? { on: payload.on } : {}),
-                                ...(payload.brightness !== undefined ? { brightness: payload.brightness } : {})
+                                ...(payload.brightness !== undefined ? { brightness: payload.brightness } : {}),
+                                ...(payload.openPercent !== undefined ? { openPercent: payload.openPercent } : {}),
+                                ...(payload.lock !== undefined ? { isLocked: payload.lock } : {}),
+                                ...(payload.mode !== undefined ? { thermostatMode: payload.mode } : {}),
+                                ...(payload.setpoint !== undefined ? { thermostatTemperatureSetpoint: payload.setpoint } : {}),
+                                ...(payload.volume !== undefined ? { currentVolume: payload.volume } : {}),
+                                ...(payload.muted !== undefined ? { isMuted: payload.muted } : {}),
+                                ...(payload.start !== undefined ? { isRunning: payload.start } : {}),
+                                ...(payload.pause !== undefined ? { isPaused: payload.pause } : {})
                             }
                         });
                     }
@@ -2819,6 +3688,7 @@ app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async 
         const entitiesPayload = Array.isArray(req.body?.entities) ? req.body.entities : [];
         const synced = [];
         const incomingEntityIds = [];
+        let shouldRequestSync = false;
 
         for (const entityPayload of entitiesPayload) {
             const normalizedEntityId = sanitizeEntityId(entityPayload?.entity_id);
@@ -2827,10 +3697,25 @@ app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async 
             }
 
             const upserted = await upsertGoogleEntityFromDevice(device.user_id, device.id, entityPayload);
-            if (upserted) {
-                synced.push(upserted.entity_id);
+            if (upserted?.entity) {
+                synced.push(upserted.entity.entity_id);
+                if (upserted.syncChanged) {
+                    shouldRequestSync = true;
+                }
             }
         }
+
+        const beforeRows = await dbAll(
+            `
+                SELECT entity_id
+                FROM google_home_entities
+                WHERE user_id = ?
+                  AND device_id = ?
+                  AND online = 1
+            `,
+            [device.user_id, device.id]
+        );
+        const beforeSet = new Set((beforeRows || []).map((row) => sanitizeEntityId(row.entity_id)).filter(Boolean));
 
         if (incomingEntityIds.length > 0) {
             const placeholders = incomingEntityIds.map(() => '?').join(',');
@@ -2857,6 +3742,35 @@ app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async 
                 [nowIso, device.user_id, device.id]
             );
         }
+
+        const afterRows = await dbAll(
+            `
+                SELECT entity_id
+                FROM google_home_entities
+                WHERE user_id = ?
+                  AND device_id = ?
+                  AND online = 1
+            `,
+            [device.user_id, device.id]
+        );
+        const afterSet = new Set((afterRows || []).map((row) => sanitizeEntityId(row.entity_id)).filter(Boolean));
+        if (!shouldRequestSync && beforeSet.size !== afterSet.size) {
+            shouldRequestSync = true;
+        }
+
+        if (!shouldRequestSync) {
+            for (const id of beforeSet) {
+                if (!afterSet.has(id)) {
+                    shouldRequestSync = true;
+                    break;
+                }
+            }
+        }
+
+        if (shouldRequestSync) {
+            scheduleGoogleRequestSyncForUser(device.user_id, 'entity_inventory_changed');
+        }
+        scheduleGoogleReportStateForUser(device.user_id, { force: false });
 
         return res.status(200).json({
             message: 'Entities synced',
@@ -3000,24 +3914,34 @@ app.post('/api/internal/devices/google-home/commands/:id/result', requireDeviceA
         );
 
         if (success && req.body?.state) {
+            const normalizedState = req.body.state || {};
+            const stateJson = JSON.stringify(normalizedState).slice(0, 2500);
+            const stateHash = computeGoogleStateHash({
+                online: true,
+                ...normalizedState
+            });
             await dbRun(
                 `
                     UPDATE google_home_entities
                     SET state_json = ?,
                         online = 1,
+                        state_hash = ?,
                         updated_at = ?
                     WHERE user_id = ?
                       AND device_id = ?
                       AND entity_id = ?
                 `,
                 [
-                    JSON.stringify(req.body.state).slice(0, 2500),
+                    stateJson,
+                    stateHash,
                     nowIso,
                     command.user_id,
                     device.id,
                     command.entity_id
                 ]
             );
+
+            scheduleGoogleReportStateForUser(command.user_id, { force: false });
         }
 
         return res.status(200).json({ message: 'Command result recorded' });
@@ -3025,6 +3949,111 @@ app.post('/api/internal/devices/google-home/commands/:id/result', requireDeviceA
         console.error('DEVICE GOOGLE COMMAND RESULT ERROR:', error);
         return res.status(500).json({ error: 'Unable to store command result' });
     }
+});
+
+function requireGoogleHomegraphAdmin(req, res, next) {
+    const authHeader = req.get('authorization') || '';
+    const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+    const adminToken = sanitizeString(process.env.GOOGLE_HOMEGRAPH_ADMIN_TOKEN || '', 512) || '';
+
+    if (!adminToken) {
+        return res.status(503).json({ error: 'google_homegraph_admin_token_not_configured' });
+    }
+
+    if (!bearerToken || bearerToken !== adminToken) {
+        return res.status(401).json({ error: 'invalid_homegraph_admin_token' });
+    }
+
+    return next();
+}
+
+app.post('/api/internal/google/homegraph/request-sync', requireGoogleHomegraphAdmin, async (req, res) => {
+    const userId = parsePositiveInt(req.body?.user_id);
+    if (!userId) {
+        return res.status(400).json({ error: 'user_id is required' });
+    }
+
+    try {
+        const user = await dbGet(`SELECT id, google_home_enabled, google_home_linked FROM users WHERE id = ?`, [userId]);
+        if (!user || !user.google_home_enabled || !user.google_home_linked) {
+            return res.status(404).json({ error: 'eligible_google_user_not_found' });
+        }
+
+        const result = await sendGoogleRequestSync(String(userId));
+        if (!result.ok && !result.skipped) {
+            return res.status(502).json({ error: 'request_sync_failed', details: result });
+        }
+
+        return res.status(200).json({
+            message: result.skipped ? 'request_sync_skipped' : 'request_sync_sent',
+            details: result
+        });
+    } catch (error) {
+        console.error('GOOGLE HOMEGRAPH REQUEST SYNC INTERNAL ERROR:', error);
+        return res.status(500).json({ error: 'unable_to_send_request_sync' });
+    }
+});
+
+app.post('/api/internal/google/homegraph/report-state', requireGoogleHomegraphAdmin, async (req, res) => {
+    const userId = parsePositiveInt(req.body?.user_id);
+    if (!userId) {
+        return res.status(400).json({ error: 'user_id is required' });
+    }
+
+    const force = req.body?.force !== false;
+
+    try {
+        const user = await dbGet(`SELECT id, google_home_enabled, google_home_linked FROM users WHERE id = ?`, [userId]);
+        if (!user || !user.google_home_enabled || !user.google_home_linked) {
+            return res.status(404).json({ error: 'eligible_google_user_not_found' });
+        }
+
+        const reportable = await collectGoogleReportableStateChangesForUser(userId, { force });
+        const entityIds = Object.keys(reportable.states);
+        if (entityIds.length === 0) {
+            return res.status(200).json({ message: 'no_state_changes' });
+        }
+
+        const result = await sendGoogleReportState(String(userId), reportable.states);
+        if (!result.ok && !result.skipped) {
+            return res.status(502).json({ error: 'report_state_failed', details: result });
+        }
+
+        if (!result.ok) {
+            return res.status(200).json({ message: 'report_state_skipped', details: result });
+        }
+
+        await markGoogleReportedStateHashes(userId, reportable.hashes);
+        return res.status(200).json({
+            message: result.skipped ? 'report_state_skipped' : 'report_state_sent',
+            entity_count: entityIds.length,
+            details: result
+        });
+    } catch (error) {
+        console.error('GOOGLE HOMEGRAPH REPORT STATE INTERNAL ERROR:', error);
+        return res.status(500).json({ error: 'unable_to_send_report_state' });
+    }
+});
+
+app.get('/api/google/home/homegraph-debug', async (req, res) => {
+    const hasCredentials = hasGoogleHomegraphCredentials();
+    const clientEmail = getGoogleServiceAccountClientEmail();
+    const tokenCacheValid = Boolean(googleHomegraphAccessTokenCache.token && googleHomegraphAccessTokenCache.expiresAt > Date.now());
+
+    return res.status(200).json({
+        ok: true,
+        report_state_enabled: GOOGLE_HOMEGRAPH_REPORT_STATE_ENABLED,
+        has_service_account_email: Boolean(clientEmail),
+        has_service_account_private_key: Boolean(getGoogleServiceAccountPrivateKey()),
+        has_credentials: hasCredentials,
+        token_uri: getGoogleHomegraphTokenUri(),
+        api_base_url: getGoogleHomegraphApiBaseUrl(),
+        request_sync_debounce_ms: getGoogleHomegraphRequestSyncDebounceMs(),
+        report_state_debounce_ms: getGoogleHomegraphReportStateDebounceMs(),
+        token_cache_valid: tokenCacheValid,
+        queued_request_sync_users: Array.from(googleHomegraphRequestSyncQueue.keys()),
+        queued_report_state_users: Array.from(googleHomegraphReportStateQueue.keys())
+    });
 });
 
 app.post('/api/billing/create-checkout', async (req, res) => {

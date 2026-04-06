@@ -93,6 +93,12 @@ ADMIN_SESSION_SECRET=
 PORTAL_SESSION_SECRET=
 GOOGLE_HOME_CLIENT_ID=
 GOOGLE_HOME_CLIENT_SECRET=
+GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL=
+GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY=
+GOOGLE_HOMEGRAPH_ADMIN_TOKEN=
+GOOGLE_HOMEGRAPH_REPORT_STATE_ENABLED=1
+GOOGLE_HOMEGRAPH_REQUEST_SYNC_DEBOUNCE_MS=2500
+GOOGLE_HOMEGRAPH_REPORT_STATE_DEBOUNCE_MS=1200
 DEVICE_HEARTBEAT_TIMEOUT_SECONDS=45
 DEVICE_HEARTBEAT_INTERVAL_SECONDS=20
 ADMIN_CONNECT_TOKEN_TTL_MINUTES=10
@@ -169,15 +175,32 @@ Cloud Connect now includes a private Google Home Cloud-to-Cloud MVP:
 - Fulfillment endpoint: `POST /api/google/home/fulfillment`
 - Account controls: enable/disable Google Home and entity exposure from customer dashboard
 
+Proactive Homegraph updates (new):
+- `requestSync` is triggered on OAuth link, entity inventory changes, and exposure toggles
+- `reportStateAndNotification` is sent for changed entity states (debounced)
+- SYNC device payload now advertises `willReportState: true` when Homegraph credentials are configured
+
+Internal Homegraph debug/ops endpoints:
+- `GET /api/google/home/homegraph-debug`
+- `POST /api/internal/google/homegraph/request-sync` (requires `Authorization: Bearer $GOOGLE_HOMEGRAPH_ADMIN_TOKEN`)
+- `POST /api/internal/google/homegraph/report-state` (requires `Authorization: Bearer $GOOGLE_HOMEGRAPH_ADMIN_TOKEN`)
+
 Addon integration:
 - Addon syncs entities via `POST /api/internal/devices/google-home/entities`
 - Addon polls queued commands via `POST /api/internal/devices/google-home/commands`
 - Addon posts command results via `POST /api/internal/devices/google-home/commands/:id/result`
 
 MVP entity support:
-- `switch.*` -> On/Off
+- `switch.*`, `input_boolean.*`, `automation.*`, `script.*` -> On/Off
 - `light.*` -> On/Off + Brightness
-- `sensor.*` -> ambient temperature (read-only style state in QUERY)
+- `fan.*` -> On/Off + Fan speed
+- `cover.*` -> Open/Close (position)
+- `lock.*` -> Lock/Unlock
+- `climate.*` -> Thermostat mode + setpoint
+- `media_player.*` -> On/Off + Volume/Mute
+- `scene.*` and `button.*` -> Scene activate behavior
+- `vacuum.*` -> Start/Stop + Pause/Resume
+- `sensor.*` (temperature-like) -> ambient temperature state
 
 Automatic addon behavior:
 - Fleet reporting is always on
