@@ -49,16 +49,17 @@ app.use(cors());
 app.get(['/login', '/login.html', '/signup', '/signup.html'], (req, res, next) => {
     const isSignupPath = req.path.startsWith('/signup');
     const targetPath = isSignupPath ? '/signup.html' : '/login.html';
+    const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
 
     if (req.hostname === CUSTOMER_PORTAL_HOST) {
         if (req.path === '/login' || req.path === '/signup') {
-            return res.redirect(targetPath);
+            return res.redirect(`${targetPath}${query}`);
         }
         return next();
     }
 
     if (req.hostname === ADMIN_PORTAL_HOST || req.hostname === CLOUD_BASE_DOMAIN) {
-        return res.redirect(`https://${CUSTOMER_PORTAL_HOST}${targetPath}`);
+        return res.redirect(`https://${CUSTOMER_PORTAL_HOST}${targetPath}${query}`);
     }
 
     return next();
@@ -2347,14 +2348,21 @@ app.get('/api/google/home/oauth', async (req, res) => {
         return res.status(401).send('Invalid client_id');
     }
 
+    const forceCustomerLogin = req.hostname !== CUSTOMER_PORTAL_HOST || req.query?.from_cookie !== '1';
     if (!portalToken) {
         const loginRedirect = `/login.html?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
+        if (forceCustomerLogin) {
+            return res.redirect(`https://${CUSTOMER_PORTAL_HOST}${loginRedirect}`);
+        }
         return res.redirect(loginRedirect);
     }
 
     const session = verifyPortalSessionToken(portalToken);
     if (!session) {
         const loginRedirect = `/login.html?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
+        if (forceCustomerLogin) {
+            return res.redirect(`https://${CUSTOMER_PORTAL_HOST}${loginRedirect}`);
+        }
         return res.redirect(loginRedirect);
     }
 
