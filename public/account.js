@@ -76,6 +76,26 @@
         }
     }
 
+    function maybeContinueGoogleOAuthFromCookie() {
+        if (!googleOAuthMode || googleOAuthRedirectInFlight) {
+            return;
+        }
+
+        if (!googleOAuthClientId || !googleOAuthRedirectUri) {
+            return;
+        }
+
+        googleOAuthRedirectInFlight = true;
+        const continueUrl = new URL('/api/google/home/oauth', window.location.origin);
+        continueUrl.searchParams.set('client_id', googleOAuthClientId);
+        continueUrl.searchParams.set('redirect_uri', googleOAuthRedirectUri);
+        continueUrl.searchParams.set('response_type', 'code');
+        continueUrl.searchParams.set('state', googleOAuthState);
+        continueUrl.searchParams.set('from_cookie', '1');
+
+        window.location.assign(continueUrl.toString());
+    }
+
     function hasSubdomain(userData) {
         return Boolean(userData && typeof userData.subdomain === 'string' && userData.subdomain.trim());
     }
@@ -130,6 +150,12 @@
         headerSubtitle.textContent = 'Manage access, billing and your cloud address from one place.';
         hideAlert();
         scrollToAccountShell();
+
+        if (googleOAuthMode) {
+            window.setTimeout(() => {
+                maybeContinueGoogleOAuthFromCookie();
+            }, 80);
+        }
     }
 
     function showSignupView() {
@@ -144,6 +170,12 @@
         headerSubtitle.textContent = 'Create your account, reserve your cloud address and complete billing.';
         hideAlert();
         scrollToAccountShell();
+
+        if (googleOAuthMode) {
+            window.setTimeout(() => {
+                maybeContinueGoogleOAuthFromCookie();
+            }, 80);
+        }
     }
 
     function getStatusMessage(userData) {
@@ -431,6 +463,11 @@
         if (oauthError) {
             googleOAuthRedirectInFlight = false;
             showAlert(`Google link failed: ${oauthError}`);
+            return;
+        }
+
+        if (userData.google_home_linked === true) {
+            googleOAuthRedirectInFlight = false;
             return;
         }
 
