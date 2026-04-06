@@ -48,6 +48,67 @@ let googleHomegraphAccessTokenCache = {
 
 const googleHomegraphRequestSyncQueue = new Map();
 const googleHomegraphReportStateQueue = new Map();
+const homegraphMetrics = {
+    request_sync: {
+        sent: 0,
+        failed: 0,
+        skipped: 0,
+        last_success_at: null,
+        last_failure_at: null,
+        last_failure_reason: null,
+        last_status: null,
+        last_user_id: null
+    },
+    report_state: {
+        sent: 0,
+        failed: 0,
+        skipped: 0,
+        last_success_at: null,
+        last_failure_at: null,
+        last_failure_reason: null,
+        last_status: null,
+        last_user_id: null
+    }
+};
+
+function markHomegraphMetricSuccess(metricType, userId, statusCode = null) {
+    const metric = homegraphMetrics[metricType];
+    if (!metric) {
+        return;
+    }
+
+    metric.sent += 1;
+    metric.last_success_at = new Date().toISOString();
+    metric.last_status = statusCode;
+    metric.last_user_id = sanitizeString(userId, 120) || null;
+}
+
+function markHomegraphMetricFailure(metricType, userId, statusCode = null, reason = null) {
+    const metric = homegraphMetrics[metricType];
+    if (!metric) {
+        return;
+    }
+
+    metric.failed += 1;
+    metric.last_failure_at = new Date().toISOString();
+    metric.last_status = statusCode;
+    metric.last_failure_reason = sanitizeString(reason, 300) || 'unknown_error';
+    metric.last_user_id = sanitizeString(userId, 120) || null;
+}
+
+function markHomegraphMetricSkipped(metricType, userId, reason = null) {
+    const metric = homegraphMetrics[metricType];
+    if (!metric) {
+        return;
+    }
+
+    metric.skipped += 1;
+    metric.last_status = null;
+    metric.last_user_id = sanitizeString(userId, 120) || null;
+    if (reason) {
+        metric.last_failure_reason = sanitizeString(reason, 300) || metric.last_failure_reason;
+    }
+}
 
 const app = express();
 app.use(cookieParser());
@@ -2063,6 +2124,7 @@ function scheduleGoogleRequestSyncForUser(userId, reason = 'change') {
 
             const response = await sendGoogleRequestSync(String(normalizedUserId));
             if (!response?.ok && !response?.skipped) {
+                markHomegraphMetricFailure('request_sync', String(normalizedUserId), response.statusCode || null, response.error || null);
                 console.warn('GOOGLE REQUEST SYNC FAILED:', {
                     user_id: normalizedUserId,
                     reason,
@@ -2072,12 +2134,20 @@ function scheduleGoogleRequestSyncForUser(userId, reason = 'change') {
                 return;
             }
 
+            if (response?.skipped) {
+                markHomegraphMetricSkipped('request_sync', String(normalizedUserId), response.reason || null);
+                return;
+            }
+
+            markHomegraphMetricSuccess('request_sync', String(normalizedUserId), response?.statusCode || null);
+
             console.log('GOOGLE REQUEST SYNC SENT:', {
                 user_id: normalizedUserId,
                 reason,
                 queued_for_ms: Date.now() - scheduledAt
             });
         } catch (error) {
+            markHomegraphMetricFailure('request_sync', String(normalizedUserId), null, error?.message || null);
             console.error('GOOGLE REQUEST SYNC ERROR:', error);
         }
     }, getGoogleHomegraphRequestSyncDebounceMs());
@@ -2201,6 +2271,7 @@ function scheduleGoogleReportStateForUser(userId, options = {}) {
 
             const response = await sendGoogleReportState(String(normalizedUserId), reportable.states);
             if (!response?.ok && !response?.skipped) {
+                markHomegraphMetricFailure('report_state', String(normalizedUserId), response.statusCode || null, response.error || null);
                 console.warn('GOOGLE REPORT STATE FAILED:', {
                     user_id: normalizedUserId,
                     entities: entityIds.length,
@@ -2211,16 +2282,19 @@ function scheduleGoogleReportStateForUser(userId, options = {}) {
             }
 
             if (!response?.ok) {
+                markHomegraphMetricSkipped('report_state', String(normalizedUserId), response?.reason || null);
                 return;
             }
 
             await markGoogleReportedStateHashes(normalizedUserId, reportable.hashes);
+            markHomegraphMetricSuccess('report_state', String(normalizedUserId), response?.statusCode || null);
             console.log('GOOGLE REPORT STATE SENT:', {
                 user_id: normalizedUserId,
                 entities: entityIds.length,
                 force
             });
         } catch (error) {
+            markHomegraphMetricFailure('report_state', String(normalizedUserId), null, error?.message || null);
             console.error('GOOGLE REPORT STATE ERROR:', error);
         }
     }, force ? 200 : getGoogleHomegraphReportStateDebounceMs());
@@ -3981,7 +4055,14 @@ app.post('/api/internal/google/homegraph/request-sync', requireGoogleHomegraphAd
 
         const result = await sendGoogleRequestSync(String(userId));
         if (!result.ok && !result.skipped) {
+            markHomegraphMetricFailure('request_sync', String(userId), result.statusCode || null, result.error || null);
             return res.status(502).json({ error: 'request_sync_failed', details: result });
+        }
+
+        if (result.skipped) {
+            markHomegraphMetricSkipped('request_sync', String(userId), result.reason || null);
+        } else {
+            markHomegraphMetricSuccess('request_sync', String(userId), result.statusCode || null);
         }
 
         return res.status(200).json({
@@ -4016,14 +4097,17 @@ app.post('/api/internal/google/homegraph/report-state', requireGoogleHomegraphAd
 
         const result = await sendGoogleReportState(String(userId), reportable.states);
         if (!result.ok && !result.skipped) {
+            markHomegraphMetricFailure('report_state', String(userId), result.statusCode || null, result.error || null);
             return res.status(502).json({ error: 'report_state_failed', details: result });
         }
 
         if (!result.ok) {
+            markHomegraphMetricSkipped('report_state', String(userId), result.reason || null);
             return res.status(200).json({ message: 'report_state_skipped', details: result });
         }
 
         await markGoogleReportedStateHashes(userId, reportable.hashes);
+        markHomegraphMetricSuccess('report_state', String(userId), result.statusCode || null);
         return res.status(200).json({
             message: result.skipped ? 'report_state_skipped' : 'report_state_sent',
             entity_count: entityIds.length,
@@ -4052,7 +4136,8 @@ app.get('/api/google/home/homegraph-debug', async (req, res) => {
         report_state_debounce_ms: getGoogleHomegraphReportStateDebounceMs(),
         token_cache_valid: tokenCacheValid,
         queued_request_sync_users: Array.from(googleHomegraphRequestSyncQueue.keys()),
-        queued_report_state_users: Array.from(googleHomegraphReportStateQueue.keys())
+        queued_report_state_users: Array.from(googleHomegraphReportStateQueue.keys()),
+        metrics: homegraphMetrics
     });
 });
 

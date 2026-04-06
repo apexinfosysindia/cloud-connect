@@ -26,10 +26,15 @@
     const loginTitle = `Sign In | ${portalBrandTitle}`;
     const signupTitle = `Create Account | ${portalBrandTitle}`;
     const dashboardTitle = `Account | ${portalBrandTitle}`;
-    const ACCOUNT_REFRESH_MS = 2000;
+    const ACCOUNT_REFRESH_MS = 5000;
+    const GOOGLE_ENTITIES_REFRESH_MS = 15000;
     let accountRefreshTimer = null;
     let accountRefreshInFlight = false;
     let googleOAuthRedirectInFlight = false;
+    let googleEntitiesRefreshTimer = null;
+    let googleEntitiesRefreshInFlight = false;
+    let googleEntitiesRefreshKey = '';
+    let googleEntitiesLastFingerprint = null;
     const oauthParams = new URLSearchParams(window.location.search);
     const googleOAuthMode = oauthParams.get('google_oauth') === '1';
     const googleOAuthClientId = oauthParams.get('client_id') || '';
@@ -118,6 +123,7 @@
 
     async function clearSessionAndShowAuth() {
         stopAccountAutoRefresh();
+        stopGoogleEntitiesAutoRefresh();
         googleOAuthRedirectInFlight = false;
         localStorage.removeItem('apex_user');
         setHeaderState(null);
@@ -140,6 +146,7 @@
 
     function showLoginView() {
         stopAccountAutoRefresh();
+        stopGoogleEntitiesAutoRefresh();
         googleOAuthRedirectInFlight = false;
         if (signupForm) signupForm.classList.add('hidden');
         if (loginForm) loginForm.classList.remove('hidden');
@@ -160,6 +167,7 @@
 
     function showSignupView() {
         stopAccountAutoRefresh();
+        stopGoogleEntitiesAutoRefresh();
         googleOAuthRedirectInFlight = false;
         if (loginForm) loginForm.classList.add('hidden');
         if (signupForm) signupForm.classList.remove('hidden');
@@ -278,6 +286,7 @@
             }
 
             const entities = Array.isArray(data.entities) ? data.entities : [];
+            googleEntitiesLastFingerprint = buildGoogleEntitiesFingerprint(entities);
             if (entities.length === 0) {
                 googleHomeEntities.innerHTML = '<p class="detail-copy">No entities synced yet. Keep addon online and wait for next sync.</p>';
                 return;
@@ -323,6 +332,7 @@
             }
 
             localStorage.setItem('apex_user', JSON.stringify(data.data));
+            googleEntitiesLastFingerprint = null;
             renderDashboard(data.data, { scroll: false });
             if (enabled) {
                 void appendGoogleOAuthPortalToken(data.data);
@@ -376,9 +386,9 @@
         if (googleHomeCard) {
             const showGoogleCard = accessEnabled;
             googleHomeCard.classList.toggle('hidden', !showGoogleCard);
-        if (showGoogleCard) {
-            const enabled = Boolean(userData.google_home_enabled);
-            const linked = Boolean(userData.google_home_linked);
+            if (showGoogleCard) {
+                const enabled = Boolean(userData.google_home_enabled);
+                const linked = Boolean(userData.google_home_linked);
                 if (googleHomeStatus) {
                     googleHomeStatus.textContent = enabled
                         ? (linked ? 'Enabled and linked to Google' : 'Enabled (not linked yet)')
@@ -392,10 +402,20 @@
                 }
                 if (!enabled && googleHomeEntities) {
                     googleHomeEntities.innerHTML = '<p class="detail-copy">Enable Google Home to manage exposed entities.</p>';
+                    googleEntitiesLastFingerprint = null;
+                    stopGoogleEntitiesAutoRefresh();
                 } else {
-                    void loadGoogleHomeEntities(userData);
+                    const nextRefreshKey = getGoogleEntitiesRefreshKey(userData);
+                    if (googleEntitiesRefreshKey !== nextRefreshKey || googleEntitiesLastFingerprint === null) {
+                        void loadGoogleHomeEntities(userData);
+                    }
+                    startGoogleEntitiesAutoRefresh(userData);
                 }
+            } else {
+                stopGoogleEntitiesAutoRefresh();
             }
+        } else {
+            stopGoogleEntitiesAutoRefresh();
         }
 
         const dashUrl = document.getElementById('dashUrl');
@@ -522,6 +542,98 @@
         accountRefreshInFlight = false;
     }
 
+    function buildGoogleEntitiesFingerprint(entities) {
+        const items = Array.isArray(entities) ? entities : [];
+        return items
+            .map((entity) => [
+                entity?.entity_id || '',
+                entity?.display_name || '',
+                entity?.entity_type || '',
+                entity?.exposed ? '1' : '0',
+                entity?.online ? '1' : '0'
+            ].join('|'))
+            .sort()
+            .join('||');
+    }
+
+    function getGoogleEntitiesRefreshKey(userData) {
+        if (!userData?.portal_session_token) {
+            return '';
+        }
+
+        return `${userData.portal_session_token}:${userData.id || userData.email || ''}`;
+    }
+
+    function stopGoogleEntitiesAutoRefresh() {
+        if (googleEntitiesRefreshTimer) {
+            window.clearInterval(googleEntitiesRefreshTimer);
+            googleEntitiesRefreshTimer = null;
+        }
+        googleEntitiesRefreshInFlight = false;
+        googleEntitiesRefreshKey = '';
+        googleEntitiesLastFingerprint = null;
+    }
+
+    async function refreshGoogleHomeEntitiesSilently() {
+        if (googleEntitiesRefreshInFlight) {
+            return;
+        }
+
+        const storedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
+        if (!storedUser?.portal_session_token || !storedUser.google_home_enabled) {
+            stopGoogleEntitiesAutoRefresh();
+            return;
+        }
+
+        const nextRefreshKey = getGoogleEntitiesRefreshKey(storedUser);
+        if (googleEntitiesRefreshKey && googleEntitiesRefreshKey !== nextRefreshKey) {
+            stopGoogleEntitiesAutoRefresh();
+        }
+
+        googleEntitiesRefreshInFlight = true;
+        try {
+            const res = await fetch('/api/account/google-home/entities', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ portal_session_token: storedUser.portal_session_token })
+            });
+
+            const data = await res.json();
+            if (!res.ok) {
+                return;
+            }
+
+            const entities = Array.isArray(data.entities) ? data.entities : [];
+            const fingerprint = buildGoogleEntitiesFingerprint(entities);
+            if (fingerprint !== googleEntitiesLastFingerprint) {
+                googleEntitiesLastFingerprint = fingerprint;
+                await loadGoogleHomeEntities(storedUser);
+            }
+        } catch (_error) {
+            // Keep the existing UI state on background refresh errors.
+        } finally {
+            googleEntitiesRefreshInFlight = false;
+        }
+    }
+
+    function startGoogleEntitiesAutoRefresh(userData) {
+        if (!userData?.portal_session_token || !userData.google_home_enabled) {
+            stopGoogleEntitiesAutoRefresh();
+            return;
+        }
+
+        const nextRefreshKey = getGoogleEntitiesRefreshKey(userData);
+        if (googleEntitiesRefreshTimer && googleEntitiesRefreshKey === nextRefreshKey) {
+            return;
+        }
+
+        stopGoogleEntitiesAutoRefresh();
+        googleEntitiesRefreshKey = nextRefreshKey;
+        googleEntitiesRefreshTimer = window.setInterval(() => {
+            void refreshGoogleHomeEntitiesSilently();
+        }, GOOGLE_ENTITIES_REFRESH_MS);
+    }
+
     async function refreshAccountState({ silent = true } = {}) {
         if (accountRefreshInFlight) {
             return;
@@ -576,6 +688,7 @@
 
     window.addEventListener('beforeunload', () => {
         stopAccountAutoRefresh();
+        stopGoogleEntitiesAutoRefresh();
     });
 
     async function verifyPayment(response, button, fallbackText) {
@@ -788,6 +901,7 @@
                     throw new Error(data.error || 'Unable to update entity exposure');
                 }
                 showAlert(data.message, false);
+                googleEntitiesLastFingerprint = null;
                 const refreshedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
                 await loadGoogleHomeEntities(refreshedUser || userData);
             } catch (error) {
