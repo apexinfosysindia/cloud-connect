@@ -96,11 +96,20 @@
         }
     }
 
-    function clearSessionAndShowAuth() {
+    async function clearSessionAndShowAuth() {
         stopAccountAutoRefresh();
         googleOAuthRedirectInFlight = false;
         localStorage.removeItem('apex_user');
         setHeaderState(null);
+
+        try {
+            await fetch('/api/account/logout', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+        } catch (_error) {
+            // Ignore logout network errors, local state is already cleared.
+        }
 
         if (pageMode === 'signup') {
             showSignupView();
@@ -506,7 +515,7 @@
             renderDashboard(data.data, { scroll: false });
         } catch (err) {
             if (err?.status === 401 || err?.status === 404) {
-                clearSessionAndShowAuth();
+                void clearSessionAndShowAuth();
                 if (googleOAuthMode) {
                     showAlert('Session expired. Sign in again to continue Google linking.');
                 }
@@ -605,11 +614,15 @@
     }
 
     if (logoutBtn) {
-        logoutBtn.addEventListener('click', clearSessionAndShowAuth);
+        logoutBtn.addEventListener('click', () => {
+            void clearSessionAndShowAuth();
+        });
     }
 
     if (headerLogoutBtn) {
-        headerLogoutBtn.addEventListener('click', clearSessionAndShowAuth);
+        headerLogoutBtn.addEventListener('click', () => {
+            void clearSessionAndShowAuth();
+        });
     }
 
     if (payNowBtn) {
@@ -842,6 +855,12 @@
 
         if (!parsedUser || !isWellFormedPortalToken(parsedUser.portal_session_token)) {
             localStorage.removeItem('apex_user');
+            void fetch('/api/account/logout', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            }).catch(() => {
+                // ignore
+            });
             if (pageMode === 'signup') {
                 showSignupView();
             } else {
