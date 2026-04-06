@@ -25,6 +25,7 @@ const GOOGLE_HOME_COMMAND_TTL_SECONDS = Number(process.env.GOOGLE_HOME_COMMAND_T
 const PORTAL_SESSION_COOKIE_NAME = 'apx_portal_session';
 const PORTAL_SESSION_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const PORTAL_SESSION_COOKIE_SECURE = process.env.PORTAL_COOKIE_SECURE === '0' ? false : true;
+const PORTAL_SESSION_COOKIE_DOMAIN = process.env.PORTAL_COOKIE_DOMAIN || '.apexinfosys.in';
 const DEVICE_HEARTBEAT_TIMEOUT_SECONDS = Number(process.env.DEVICE_HEARTBEAT_TIMEOUT_SECONDS || 45);
 const DEVICE_HEARTBEAT_INTERVAL_SECONDS = Number(process.env.DEVICE_HEARTBEAT_INTERVAL_SECONDS || 20);
 const ADMIN_CONNECT_TOKEN_TTL_MINUTES = Number(process.env.ADMIN_CONNECT_TOKEN_TTL_MINUTES || 10);
@@ -975,6 +976,7 @@ function setPortalSessionCookie(res, token) {
         httpOnly: true,
         secure: PORTAL_SESSION_COOKIE_SECURE,
         sameSite: 'lax',
+        domain: PORTAL_SESSION_COOKIE_DOMAIN,
         path: '/',
         maxAge: PORTAL_SESSION_COOKIE_MAX_AGE_MS
     });
@@ -982,6 +984,7 @@ function setPortalSessionCookie(res, token) {
 
 function clearPortalSessionCookie(res) {
     res.clearCookie(PORTAL_SESSION_COOKIE_NAME, {
+        domain: PORTAL_SESSION_COOKIE_DOMAIN,
         path: '/',
         sameSite: 'lax',
         secure: PORTAL_SESSION_COOKIE_SECURE,
@@ -2099,6 +2102,7 @@ app.post('/api/auth/signup', async (req, res) => {
         const portalSessionToken = createPortalSessionToken(user.email);
         setPortalSessionCookie(res, portalSessionToken);
 
+        res.setHeader('Cache-Control', 'no-store');
         res.status(201).json({
             message,
             data: serializeUserWithPortalSession(user, portalSessionToken),
@@ -2131,6 +2135,7 @@ app.post('/api/auth/login', async (req, res) => {
         const portalSessionToken = createPortalSessionToken(user.email);
         setPortalSessionCookie(res, portalSessionToken);
 
+        res.setHeader('Cache-Control', 'no-store');
         res.status(200).json({
             message: 'Login successful',
             data: serializeUserWithPortalSession(user, portalSessionToken)
@@ -2510,6 +2515,9 @@ app.get('/api/google/home/oauth-debug', async (req, res) => {
 
     const payload = {
         ok: true,
+        host: req.get('host') || null,
+        origin: req.get('origin') || null,
+        has_cookie_header: Boolean(req.get('cookie')),
         has_google_client_id: Boolean(GOOGLE_HOME_CLIENT_ID),
         has_google_client_secret: Boolean(GOOGLE_HOME_CLIENT_SECRET),
         client_id_matches: clientId === GOOGLE_HOME_CLIENT_ID,
@@ -2522,7 +2530,9 @@ app.get('/api/google/home/oauth-debug', async (req, res) => {
         portal_token_parts: portalToken ? portalToken.split('.').length : 0,
         portal_token_preview: portalToken ? `${portalToken.slice(0, 24)}...` : null,
         portal_token_length: portalToken ? portalToken.length : 0,
-        cookie_name: PORTAL_SESSION_COOKIE_NAME
+        cookie_name: PORTAL_SESSION_COOKIE_NAME,
+        cookie_secure: PORTAL_SESSION_COOKIE_SECURE,
+        cookie_domain: PORTAL_SESSION_COOKIE_DOMAIN
     };
 
     if (!portalToken) {
@@ -2546,6 +2556,25 @@ app.get('/api/google/home/oauth-debug', async (req, res) => {
         user_email: user.email,
         user_status: user.status,
         google_home_enabled: Boolean(user.google_home_enabled)
+    });
+});
+
+app.post('/api/google/home/oauth-debug-cookie', async (req, res) => {
+    const portalTokenRaw = req.body?.portal_session_token;
+    const portalToken = typeof portalTokenRaw === 'string' ? portalTokenRaw.trim() : '';
+
+    if (!portalToken) {
+        return res.status(400).json({ ok: false, error: 'portal_session_token_required' });
+    }
+
+    setPortalSessionCookie(res, portalToken);
+    return res.status(200).json({
+        ok: true,
+        cookie_name: PORTAL_SESSION_COOKIE_NAME,
+        cookie_domain: PORTAL_SESSION_COOKIE_DOMAIN,
+        cookie_secure: PORTAL_SESSION_COOKIE_SECURE,
+        token_has_dot: portalToken.includes('.'),
+        token_parts: portalToken.split('.').length
     });
 });
 
