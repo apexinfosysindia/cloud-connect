@@ -30,6 +30,12 @@
     let accountRefreshTimer = null;
     let accountRefreshInFlight = false;
     let googleOAuthRedirectInFlight = false;
+    const oauthParams = new URLSearchParams(window.location.search);
+    const googleOAuthMode = oauthParams.get('google_oauth') === '1';
+    const googleOAuthClientId = oauthParams.get('client_id') || '';
+    const googleOAuthRedirectUri = oauthParams.get('redirect_uri') || '';
+    const googleOAuthState = oauthParams.get('state') || '';
+    const googleOAuthError = oauthParams.get('error') || '';
 
     function scrollToAccountShell() {
         accountShell.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -61,8 +67,7 @@
     }
 
     function normalizeSignedInUrl() {
-        const params = new URLSearchParams(window.location.search);
-        if (params.get('google_oauth') === '1') {
+        if (googleOAuthMode) {
             return;
         }
 
@@ -383,27 +388,26 @@
             return;
         }
 
-        const params = new URLSearchParams(window.location.search);
-        if (params.get('google_oauth') !== '1') {
+        if (!googleOAuthMode) {
             googleOAuthRedirectInFlight = false;
             return;
         }
 
-        const oauthError = params.get('error');
+        const oauthError = googleOAuthError;
         if (oauthError) {
             googleOAuthRedirectInFlight = false;
             showAlert(`Google link failed: ${oauthError}`);
             return;
         }
 
-        const redirectUri = params.get('redirect_uri');
-        const state = params.get('state') || '';
+        const redirectUri = googleOAuthRedirectUri;
+        const state = googleOAuthState;
         if (!redirectUri) {
             googleOAuthRedirectInFlight = false;
             return;
         }
 
-        const clientId = params.get('client_id');
+        const clientId = googleOAuthClientId;
         if (!clientId) {
             googleOAuthRedirectInFlight = false;
             return;
@@ -794,5 +798,9 @@
         showSignupView();
     } else {
         showLoginView();
+    }
+
+    if (googleOAuthMode && !storedUser) {
+        showAlert('Sign in to continue Google account linking.', false);
     }
 })();

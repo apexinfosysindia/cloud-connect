@@ -917,7 +917,7 @@ function isAccessEnabled(status) {
 }
 
 function getPortalSecret() {
-    return process.env.PORTAL_SESSION_SECRET || process.env.ADMIN_SESSION_SECRET || process.env.RAZORPAY_KEY_SECRET || 'apex-portal-secret';
+    return process.env.PORTAL_SESSION_SECRET || 'apex-portal-secret';
 }
 
 function signPortalValue(value) {
