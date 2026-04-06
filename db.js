@@ -126,6 +126,9 @@ const GOOGLE_HOME_ENTITIES_TABLE_SCHEMA = `
         exposed INTEGER NOT NULL DEFAULT 1,
         online INTEGER NOT NULL DEFAULT 1,
         state_json TEXT,
+        state_hash TEXT,
+        last_reported_state_hash TEXT,
+        last_reported_at DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(user_id, entity_id),
@@ -168,12 +171,16 @@ const DEVICE_SCHEMA_STATEMENTS = [
     'CREATE INDEX IF NOT EXISTS idx_admin_access_logs_device_created ON admin_access_logs(device_id, created_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_google_home_auth_codes_expiry ON google_home_auth_codes(expires_at)',
     'CREATE INDEX IF NOT EXISTS idx_google_home_entities_user_exposed ON google_home_entities(user_id, exposed)',
+    'CREATE INDEX IF NOT EXISTS idx_google_home_entities_user_reported_hash ON google_home_entities(user_id, last_reported_state_hash)',
     'CREATE INDEX IF NOT EXISTS idx_google_home_command_queue_device_status_expiry ON google_home_command_queue(device_id, status, expires_at)',
     'CREATE INDEX IF NOT EXISTS idx_google_home_command_queue_user_status ON google_home_command_queue(user_id, status)',
     'ALTER TABLE devices ADD COLUMN admin_name_override INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE users ADD COLUMN google_home_enabled INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE users ADD COLUMN google_home_linked INTEGER NOT NULL DEFAULT 0',
-    'ALTER TABLE users ADD COLUMN google_home_linked_at DATETIME'
+    'ALTER TABLE users ADD COLUMN google_home_linked_at DATETIME',
+    'ALTER TABLE google_home_entities ADD COLUMN state_hash TEXT',
+    'ALTER TABLE google_home_entities ADD COLUMN last_reported_state_hash TEXT',
+    'ALTER TABLE google_home_entities ADD COLUMN last_reported_at DATETIME'
 ];
 
 const USERS_REBUILD_COLUMNS = [
