@@ -2,6 +2,7 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
@@ -33,6 +34,7 @@ const DEVICE_TOKEN_PREFIX = 'dvc_';
 const ADMIN_CONNECT_TOKEN_PREFIX = 'acn_';
 
 const app = express();
+app.use(cookieParser());
 app.use(express.json({
     verify: (req, res, buf) => {
         if (buf && buf.length > 0) {
