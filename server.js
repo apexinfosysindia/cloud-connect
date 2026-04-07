@@ -71,6 +71,27 @@ const homegraphMetrics = {
     }
 };
 
+let googleEntityLastSeenColumnSupported = true;
+let googleSyncSnapshotsTableSupported = true;
+let googleSyncSnapshotsUpsertSupported = true;
+
+function sqliteMessage(error) {
+    return String(error?.message || '').toLowerCase();
+}
+
+function isMissingGoogleEntityLastSeenColumnError(error) {
+    return sqliteMessage(error).includes('no such column: entity_last_seen_at');
+}
+
+function isMissingGoogleSyncSnapshotsTableError(error) {
+    return sqliteMessage(error).includes('no such table: google_home_sync_snapshots');
+}
+
+function isGoogleSyncSnapshotsUpsertUnsupportedError(error) {
+    const message = sqliteMessage(error);
+    return message.includes('near "on": syntax error') || message.includes('near "do": syntax error');
+}
+
 function markHomegraphMetricSuccess(metricType, userId, statusCode = null) {
     const metric = homegraphMetrics[metricType];
     if (!metric) {
@@ -1137,7 +1158,15 @@ async function getGoogleEntitiesForUser(userId, options = {}) {
             [userId]
         );
 
-    return (rows || []).map((row) => withEffectiveGoogleOnline(row));
+    return (rows || []).map((row) => {
+        const normalizedRow = {
+            ...row,
+            entity_last_seen_at: googleEntityLastSeenColumnSupported
+                ? row.entity_last_seen_at
+                : row.updated_at
+        };
+        return withEffectiveGoogleOnline(normalizedRow);
+    });
 }
 
 setInterval(() => {
@@ -1182,44 +1211,117 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
         || (existing.room_hint || '') !== (roomHint || '');
 
     if (existing) {
-        await dbRun(
-            `
-                UPDATE google_home_entities
-                SET device_id = ?,
-                    display_name = ?,
-                    entity_type = ?,
-                    room_hint = ?,
-                    online = ?,
-                    entity_last_seen_at = ?,
-                    state_json = ?,
-                    state_hash = ?,
-                    updated_at = ?
-                WHERE id = ?
-            `,
-            [deviceId, displayName, entityType, roomHint, online, nowIso, stateJson, stateHash, nowIso, existing.id]
-        );
+        const updateWithLastSeenSql = `
+            UPDATE google_home_entities
+            SET device_id = ?,
+                display_name = ?,
+                entity_type = ?,
+                room_hint = ?,
+                online = ?,
+                entity_last_seen_at = ?,
+                state_json = ?,
+                state_hash = ?,
+                updated_at = ?
+            WHERE id = ?
+        `;
+
+        const updateFallbackSql = `
+            UPDATE google_home_entities
+            SET device_id = ?,
+                display_name = ?,
+                entity_type = ?,
+                room_hint = ?,
+                online = ?,
+                state_json = ?,
+                state_hash = ?,
+                updated_at = ?
+            WHERE id = ?
+        `;
+
+        try {
+            if (googleEntityLastSeenColumnSupported) {
+                await dbRun(
+                    updateWithLastSeenSql,
+                    [deviceId, displayName, entityType, roomHint, online, nowIso, stateJson, stateHash, nowIso, existing.id]
+                );
+            } else {
+                await dbRun(
+                    updateFallbackSql,
+                    [deviceId, displayName, entityType, roomHint, online, stateJson, stateHash, nowIso, existing.id]
+                );
+            }
+        } catch (error) {
+            if (isMissingGoogleEntityLastSeenColumnError(error)) {
+                googleEntityLastSeenColumnSupported = false;
+                await dbRun(
+                    updateFallbackSql,
+                    [deviceId, displayName, entityType, roomHint, online, stateJson, stateHash, nowIso, existing.id]
+                );
+            } else {
+                throw error;
+            }
+        }
     } else {
-        await dbRun(
-            `
-                INSERT INTO google_home_entities (
-                    user_id,
-                    device_id,
-                    entity_id,
-                    display_name,
-                    entity_type,
-                    room_hint,
-                    exposed,
-                    online,
-                    entity_last_seen_at,
-                    state_json,
-                    state_hash,
-                    created_at,
-                    updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
-            `,
-            [userId, deviceId, entityId, displayName, entityType, roomHint, online, nowIso, stateJson, stateHash, nowIso, nowIso]
-        );
+        const insertWithLastSeenSql = `
+            INSERT INTO google_home_entities (
+                user_id,
+                device_id,
+                entity_id,
+                display_name,
+                entity_type,
+                room_hint,
+                exposed,
+                online,
+                entity_last_seen_at,
+                state_json,
+                state_hash,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+        `;
+
+        const insertFallbackSql = `
+            INSERT INTO google_home_entities (
+                user_id,
+                device_id,
+                entity_id,
+                display_name,
+                entity_type,
+                room_hint,
+                exposed,
+                online,
+                state_json,
+                state_hash,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+        `;
+
+        try {
+            if (googleEntityLastSeenColumnSupported) {
+                await dbRun(
+                    insertWithLastSeenSql,
+                    [userId, deviceId, entityId, displayName, entityType, roomHint, online, nowIso, stateJson, stateHash, nowIso, nowIso]
+                );
+            } else {
+                await dbRun(
+                    insertFallbackSql,
+                    [userId, deviceId, entityId, displayName, entityType, roomHint, online, stateJson, stateHash, nowIso, nowIso]
+                );
+            }
+        } catch (error) {
+            if (isMissingGoogleEntityLastSeenColumnError(error)) {
+                googleEntityLastSeenColumnSupported = false;
+                await dbRun(
+                    insertFallbackSql,
+                    [userId, deviceId, entityId, displayName, entityType, roomHint, online, stateJson, stateHash, nowIso, nowIso]
+                );
+            } else {
+                throw error;
+            }
+        }
     }
 
     const entity = await dbGet(
@@ -1239,6 +1341,10 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
 }
 
 async function saveGoogleDeviceSnapshotEntityIds(userId, deviceId, entityIds = []) {
+    if (!googleSyncSnapshotsTableSupported) {
+        return;
+    }
+
     const normalizedUserId = parsePositiveInt(userId);
     const normalizedDeviceId = parsePositiveInt(deviceId);
     if (!normalizedUserId || !normalizedDeviceId) {
@@ -1251,33 +1357,44 @@ async function saveGoogleDeviceSnapshotEntityIds(userId, deviceId, entityIds = [
 
     const nowIso = new Date().toISOString();
     const payload = JSON.stringify(normalizedEntityIds).slice(0, 120000);
-    await dbRun(
-        `
-            INSERT INTO google_home_sync_snapshots (
-                user_id,
-                device_id,
-                snapshot_entity_ids_json,
-                updated_at
-            )
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(user_id, device_id) DO UPDATE SET
-                snapshot_entity_ids_json = excluded.snapshot_entity_ids_json,
-                updated_at = excluded.updated_at
-        `,
-        [normalizedUserId, normalizedDeviceId, payload, nowIso]
-    );
-}
 
-async function getGoogleDeviceSnapshotEntityIds(userId, deviceId) {
-    const normalizedUserId = parsePositiveInt(userId);
-    const normalizedDeviceId = parsePositiveInt(deviceId);
-    if (!normalizedUserId || !normalizedDeviceId) {
-        return [];
+    try {
+        if (googleSyncSnapshotsUpsertSupported) {
+            await dbRun(
+                `
+                    INSERT INTO google_home_sync_snapshots (
+                        user_id,
+                        device_id,
+                        snapshot_entity_ids_json,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(user_id, device_id) DO UPDATE SET
+                        snapshot_entity_ids_json = excluded.snapshot_entity_ids_json,
+                        updated_at = excluded.updated_at
+                `,
+                [normalizedUserId, normalizedDeviceId, payload, nowIso]
+            );
+            return;
+        }
+    } catch (error) {
+        if (isGoogleSyncSnapshotsUpsertUnsupportedError(error)) {
+            googleSyncSnapshotsUpsertSupported = false;
+        } else if (isMissingGoogleSyncSnapshotsTableError(error)) {
+            googleSyncSnapshotsTableSupported = false;
+            return;
+        } else {
+            throw error;
+        }
     }
 
-    const row = await dbGet(
+    if (!googleSyncSnapshotsTableSupported) {
+        return;
+    }
+
+    const existing = await dbGet(
         `
-            SELECT snapshot_entity_ids_json
+            SELECT id
             FROM google_home_sync_snapshots
             WHERE user_id = ?
               AND device_id = ?
@@ -1285,6 +1402,63 @@ async function getGoogleDeviceSnapshotEntityIds(userId, deviceId) {
         `,
         [normalizedUserId, normalizedDeviceId]
     );
+
+    if (existing) {
+        await dbRun(
+            `
+                UPDATE google_home_sync_snapshots
+                SET snapshot_entity_ids_json = ?,
+                    updated_at = ?
+                WHERE id = ?
+            `,
+            [payload, nowIso, existing.id]
+        );
+    } else {
+        await dbRun(
+            `
+                INSERT INTO google_home_sync_snapshots (
+                    user_id,
+                    device_id,
+                    snapshot_entity_ids_json,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?)
+            `,
+            [normalizedUserId, normalizedDeviceId, payload, nowIso]
+        );
+    }
+}
+
+async function getGoogleDeviceSnapshotEntityIds(userId, deviceId) {
+    if (!googleSyncSnapshotsTableSupported) {
+        return [];
+    }
+
+    const normalizedUserId = parsePositiveInt(userId);
+    const normalizedDeviceId = parsePositiveInt(deviceId);
+    if (!normalizedUserId || !normalizedDeviceId) {
+        return [];
+    }
+
+    let row;
+    try {
+        row = await dbGet(
+            `
+                SELECT snapshot_entity_ids_json
+                FROM google_home_sync_snapshots
+                WHERE user_id = ?
+                  AND device_id = ?
+                LIMIT 1
+            `,
+            [normalizedUserId, normalizedDeviceId]
+        );
+    } catch (error) {
+        if (isMissingGoogleSyncSnapshotsTableError(error)) {
+            googleSyncSnapshotsTableSupported = false;
+            return [];
+        }
+        throw error;
+    }
 
     const parsed = parseJsonSafe(row?.snapshot_entity_ids_json, []);
     return Array.from(new Set((Array.isArray(parsed) ? parsed : [])
@@ -1397,7 +1571,7 @@ let googleRuntimeSchemaReadyPromise = null;
 
 function isIgnorableSqliteMigrationError(error) {
     const message = String(error?.message || '').toLowerCase();
-    return message.includes('duplicate column name') || message.includes('already exists');
+    return message.includes('duplicate column name') || message.includes('already exists') || message.includes('near "on": syntax error') || message.includes('near "do": syntax error');
 }
 
 async function ensureGoogleRuntimeSchemaReady() {
@@ -2404,16 +2578,39 @@ async function markGoogleEntitiesStaleByFreshness() {
     const freshnessThresholdIso = new Date(Date.now() - (getEntityFreshWindowSeconds() * 1000)).toISOString();
     const nowIso = new Date().toISOString();
 
-    await dbRun(
-        `
-            UPDATE google_home_entities
-            SET online = 0,
-                updated_at = ?
-            WHERE online = 1
-              AND (entity_last_seen_at IS NULL OR entity_last_seen_at < ?)
-        `,
-        [nowIso, freshnessThresholdIso]
-    );
+    const staleClause = googleEntityLastSeenColumnSupported
+        ? '(entity_last_seen_at IS NULL OR entity_last_seen_at < ?)'
+        : 'updated_at < ?';
+
+    try {
+        await dbRun(
+            `
+                UPDATE google_home_entities
+                SET online = 0,
+                    updated_at = ?
+                WHERE online = 1
+                  AND ${staleClause}
+            `,
+            [nowIso, freshnessThresholdIso]
+        );
+    } catch (error) {
+        if (isMissingGoogleEntityLastSeenColumnError(error)) {
+            googleEntityLastSeenColumnSupported = false;
+            await dbRun(
+                `
+                    UPDATE google_home_entities
+                    SET online = 0,
+                        updated_at = ?
+                    WHERE online = 1
+                      AND updated_at < ?
+                `,
+                [nowIso, freshnessThresholdIso]
+            );
+            return;
+        }
+
+        throw error;
+    }
 }
 
 function scheduleGoogleReportStateForUser(userId, options = {}) {
@@ -3941,7 +4138,11 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
 
 app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async (req, res) => {
     try {
-        await ensureGoogleRuntimeSchemaReady();
+        try {
+            await ensureGoogleRuntimeSchemaReady();
+        } catch (schemaError) {
+            console.warn('GOOGLE RUNTIME SCHEMA LAZY CHECK FAILED:', schemaError?.message || schemaError);
+        }
         const device = req.device;
         const user = await dbGet(`SELECT * FROM users WHERE id = ?`, [device.user_id]);
         const nowIso = new Date().toISOString();
@@ -3972,6 +4173,11 @@ app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async 
             ? req.body.snapshot_entity_ids
             : null;
 
+        const assignEntityLastSeen = googleEntityLastSeenColumnSupported
+            ? 'entity_last_seen_at = ?,'
+            : '';
+        const assignEntityLastSeenParams = googleEntityLastSeenColumnSupported ? [nowIso] : [];
+
         if (entitiesPayload.length === 0) {
             if (fullSnapshot && snapshotEntityIds) {
                 const normalizedSnapshotIds = Array.from(new Set(snapshotEntityIds
@@ -3980,30 +4186,67 @@ app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async 
                 const placeholders = normalizedSnapshotIds.map(() => '?').join(',');
 
                 if (normalizedSnapshotIds.length > 0) {
-                    await dbRun(
-                        `
-                            UPDATE google_home_entities
-                            SET online = 0,
-                                entity_last_seen_at = ?,
-                                updated_at = ?
-                            WHERE user_id = ?
-                              AND device_id = ?
-                              AND entity_id NOT IN (${placeholders})
-                        `,
-                        [nowIso, nowIso, device.user_id, device.id, ...normalizedSnapshotIds]
-                    );
+                    try {
+                        await dbRun(
+                            `
+                                UPDATE google_home_entities
+                                SET online = 0,
+                                    ${assignEntityLastSeen}
+                                    updated_at = ?
+                                WHERE user_id = ?
+                                  AND device_id = ?
+                                  AND entity_id NOT IN (${placeholders})
+                            `,
+                            [...assignEntityLastSeenParams, nowIso, device.user_id, device.id, ...normalizedSnapshotIds]
+                        );
+                    } catch (error) {
+                        if (isMissingGoogleEntityLastSeenColumnError(error)) {
+                            googleEntityLastSeenColumnSupported = false;
+                            await dbRun(
+                                `
+                                    UPDATE google_home_entities
+                                    SET online = 0,
+                                        updated_at = ?
+                                    WHERE user_id = ?
+                                      AND device_id = ?
+                                      AND entity_id NOT IN (${placeholders})
+                                `,
+                                [nowIso, device.user_id, device.id, ...normalizedSnapshotIds]
+                            );
+                        } else {
+                            throw error;
+                        }
+                    }
                 } else {
-                    await dbRun(
-                        `
-                            UPDATE google_home_entities
-                            SET online = 0,
-                                entity_last_seen_at = ?,
-                                updated_at = ?
-                            WHERE user_id = ?
-                              AND device_id = ?
-                        `,
-                        [nowIso, nowIso, device.user_id, device.id]
-                    );
+                    try {
+                        await dbRun(
+                            `
+                                UPDATE google_home_entities
+                                SET online = 0,
+                                    ${assignEntityLastSeen}
+                                    updated_at = ?
+                                WHERE user_id = ?
+                                  AND device_id = ?
+                            `,
+                            [...assignEntityLastSeenParams, nowIso, device.user_id, device.id]
+                        );
+                    } catch (error) {
+                        if (isMissingGoogleEntityLastSeenColumnError(error)) {
+                            googleEntityLastSeenColumnSupported = false;
+                            await dbRun(
+                                `
+                                    UPDATE google_home_entities
+                                    SET online = 0,
+                                        updated_at = ?
+                                    WHERE user_id = ?
+                                      AND device_id = ?
+                                `,
+                                [nowIso, device.user_id, device.id]
+                            );
+                        } else {
+                            throw error;
+                        }
+                    }
                 }
 
                 await saveGoogleDeviceSnapshotEntityIds(device.user_id, device.id, normalizedSnapshotIds);
@@ -4085,32 +4328,69 @@ app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async 
             }
             const effectiveSnapshotIds = Array.from(snapshotIdsSet);
             const placeholders = effectiveSnapshotIds.map(() => '?').join(',');
-            await dbRun(
-                `
-                    UPDATE google_home_entities
-                    SET online = 0,
-                        entity_last_seen_at = ?,
-                        updated_at = ?
-                    WHERE user_id = ?
-                      AND device_id = ?
-                      AND entity_id NOT IN (${placeholders})
-                `,
-                [nowIso, nowIso, device.user_id, device.id, ...effectiveSnapshotIds]
-            );
+            try {
+                await dbRun(
+                    `
+                        UPDATE google_home_entities
+                        SET online = 0,
+                            ${assignEntityLastSeen}
+                            updated_at = ?
+                        WHERE user_id = ?
+                          AND device_id = ?
+                          AND entity_id NOT IN (${placeholders})
+                    `,
+                    [...assignEntityLastSeenParams, nowIso, device.user_id, device.id, ...effectiveSnapshotIds]
+                );
+            } catch (error) {
+                if (isMissingGoogleEntityLastSeenColumnError(error)) {
+                    googleEntityLastSeenColumnSupported = false;
+                    await dbRun(
+                        `
+                            UPDATE google_home_entities
+                            SET online = 0,
+                                updated_at = ?
+                            WHERE user_id = ?
+                              AND device_id = ?
+                              AND entity_id NOT IN (${placeholders})
+                        `,
+                        [nowIso, device.user_id, device.id, ...effectiveSnapshotIds]
+                    );
+                } else {
+                    throw error;
+                }
+            }
 
             await saveGoogleDeviceSnapshotEntityIds(device.user_id, device.id, effectiveSnapshotIds);
         } else if (fullSnapshot) {
-            await dbRun(
-                `
-                    UPDATE google_home_entities
-                    SET online = 0,
-                        entity_last_seen_at = ?,
-                        updated_at = ?
-                    WHERE user_id = ?
-                      AND device_id = ?
-                `,
-                [nowIso, nowIso, device.user_id, device.id]
-            );
+            try {
+                await dbRun(
+                    `
+                        UPDATE google_home_entities
+                        SET online = 0,
+                            ${assignEntityLastSeen}
+                            updated_at = ?
+                        WHERE user_id = ?
+                          AND device_id = ?
+                    `,
+                    [...assignEntityLastSeenParams, nowIso, device.user_id, device.id]
+                );
+            } catch (error) {
+                if (isMissingGoogleEntityLastSeenColumnError(error)) {
+                    googleEntityLastSeenColumnSupported = false;
+                    await dbRun(
+                        `
+                            UPDATE google_home_entities
+                            SET online = 0,
+                                updated_at = ?
+                            WHERE user_id = ?
+                              AND device_id = ?
+                        `,
+                        [nowIso, device.user_id, device.id]
+                    );
+                } else {
+                    throw error;
+                }
+            }
             await saveGoogleDeviceSnapshotEntityIds(device.user_id, device.id, []);
         }
 
@@ -4291,28 +4571,74 @@ app.post('/api/internal/devices/google-home/commands/:id/result', requireDeviceA
                 online: true,
                 ...normalizedState
             });
-            await dbRun(
-                `
-                    UPDATE google_home_entities
-                    SET state_json = ?,
-                        online = 1,
-                        entity_last_seen_at = ?,
-                        state_hash = ?,
-                        updated_at = ?
-                    WHERE user_id = ?
-                      AND device_id = ?
-                      AND entity_id = ?
-                `,
-                [
-                    stateJson,
-                    nowIso,
-                    stateHash,
-                    nowIso,
-                    command.user_id,
-                    device.id,
-                    command.entity_id
-                ]
-            );
+            const updateWithLastSeenSql = `
+                UPDATE google_home_entities
+                SET state_json = ?,
+                    online = 1,
+                    entity_last_seen_at = ?,
+                    state_hash = ?,
+                    updated_at = ?
+                WHERE user_id = ?
+                  AND device_id = ?
+                  AND entity_id = ?
+            `;
+
+            const updateFallbackSql = `
+                UPDATE google_home_entities
+                SET state_json = ?,
+                    online = 1,
+                    state_hash = ?,
+                    updated_at = ?
+                WHERE user_id = ?
+                  AND device_id = ?
+                  AND entity_id = ?
+            `;
+
+            try {
+                if (googleEntityLastSeenColumnSupported) {
+                    await dbRun(
+                        updateWithLastSeenSql,
+                        [
+                            stateJson,
+                            nowIso,
+                            stateHash,
+                            nowIso,
+                            command.user_id,
+                            device.id,
+                            command.entity_id
+                        ]
+                    );
+                } else {
+                    await dbRun(
+                        updateFallbackSql,
+                        [
+                            stateJson,
+                            stateHash,
+                            nowIso,
+                            command.user_id,
+                            device.id,
+                            command.entity_id
+                        ]
+                    );
+                }
+            } catch (error) {
+                if (isMissingGoogleEntityLastSeenColumnError(error)) {
+                    googleEntityLastSeenColumnSupported = false;
+                    await dbRun(
+                        updateFallbackSql,
+                        [
+                            stateJson,
+                            stateHash,
+                            nowIso,
+                            command.user_id,
+                            device.id,
+                            command.entity_id
+                        ]
+                    );
+                } else {
+                    throw error;
+                }
+            }
 
             scheduleGoogleReportStateForUser(command.user_id, { force: false });
         }
@@ -4451,7 +4777,7 @@ app.get('/api/google/home/entity-debug', async (req, res) => {
     try {
         await ensureGoogleRuntimeSchemaReady();
     } catch (error) {
-        return res.status(500).json({ error: 'runtime_schema_not_ready', details: error?.message || 'unknown_error' });
+        console.warn('GOOGLE ENTITY DEBUG SCHEMA CHECK FAILED:', error?.message || error);
     }
 
     const email = sanitizeString(req.query?.email, 255);
@@ -4472,29 +4798,61 @@ app.get('/api/google/home/entity-debug', async (req, res) => {
 
         await markGoogleEntitiesStaleByFreshness();
 
-        const rows = await dbAll(
-            `
-                SELECT
-                    ge.entity_id,
-                    ge.display_name,
-                    ge.entity_type,
-                    ge.exposed,
-                    ge.online AS stored_entity_online,
-                    ge.entity_last_seen_at,
-                    ge.updated_at,
-                    ge.last_reported_at,
-                    d.id AS device_id,
-                    d.device_uid,
-                    d.last_seen_at,
-                    d.agent_state
-                FROM google_home_entities ge
-                INNER JOIN devices d ON d.id = ge.device_id
-                WHERE ge.user_id = ?
-                ORDER BY ge.updated_at DESC
-                LIMIT 120
-            `,
-            [user.id]
-        );
+        let rows;
+        try {
+            rows = await dbAll(
+                `
+                    SELECT
+                        ge.entity_id,
+                        ge.display_name,
+                        ge.entity_type,
+                        ge.exposed,
+                        ge.online AS stored_entity_online,
+                        ge.entity_last_seen_at,
+                        ge.updated_at,
+                        ge.last_reported_at,
+                        d.id AS device_id,
+                        d.device_uid,
+                        d.last_seen_at,
+                        d.agent_state
+                    FROM google_home_entities ge
+                    INNER JOIN devices d ON d.id = ge.device_id
+                    WHERE ge.user_id = ?
+                    ORDER BY ge.updated_at DESC
+                    LIMIT 120
+                `,
+                [user.id]
+            );
+        } catch (queryError) {
+            if (isMissingGoogleEntityLastSeenColumnError(queryError)) {
+                googleEntityLastSeenColumnSupported = false;
+                rows = await dbAll(
+                    `
+                        SELECT
+                            ge.entity_id,
+                            ge.display_name,
+                            ge.entity_type,
+                            ge.exposed,
+                            ge.online AS stored_entity_online,
+                            NULL AS entity_last_seen_at,
+                            ge.updated_at,
+                            ge.last_reported_at,
+                            d.id AS device_id,
+                            d.device_uid,
+                            d.last_seen_at,
+                            d.agent_state
+                        FROM google_home_entities ge
+                        INNER JOIN devices d ON d.id = ge.device_id
+                        WHERE ge.user_id = ?
+                        ORDER BY ge.updated_at DESC
+                        LIMIT 120
+                    `,
+                    [user.id]
+                );
+            } else {
+                throw queryError;
+            }
+        }
 
         const entities = (rows || []).map((row) => ({
             entity_id: row.entity_id,
