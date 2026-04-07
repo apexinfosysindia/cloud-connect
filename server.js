@@ -74,6 +74,8 @@ const homegraphMetrics = {
 let googleEntityLastSeenColumnSupported = true;
 let googleSyncSnapshotsTableSupported = true;
 let googleSyncSnapshotsUpsertSupported = true;
+let googleStateHashColumnSupported = true;
+let googleLastReportedColumnsSupported = true;
 
 function sqliteMessage(error) {
     return String(error?.message || '').toLowerCase();
@@ -90,6 +92,15 @@ function isMissingGoogleSyncSnapshotsTableError(error) {
 function isGoogleSyncSnapshotsUpsertUnsupportedError(error) {
     const message = sqliteMessage(error);
     return message.includes('near "on": syntax error') || message.includes('near "do": syntax error');
+}
+
+function isMissingGoogleStateHashColumnError(error) {
+    return sqliteMessage(error).includes('no such column: state_hash');
+}
+
+function isMissingGoogleLastReportedColumnsError(error) {
+    const message = sqliteMessage(error);
+    return message.includes('no such column: last_reported_state_hash') || message.includes('no such column: last_reported_at');
 }
 
 function markHomegraphMetricSuccess(metricType, userId, statusCode = null) {
@@ -1220,12 +1231,37 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
                 online = ?,
                 entity_last_seen_at = ?,
                 state_json = ?,
-                state_hash = ?,
                 updated_at = ?
             WHERE id = ?
         `;
 
         const updateFallbackSql = `
+            UPDATE google_home_entities
+            SET device_id = ?,
+                display_name = ?,
+                entity_type = ?,
+                room_hint = ?,
+                online = ?,
+                state_json = ?,
+                updated_at = ?
+            WHERE id = ?
+        `;
+
+        const updateWithLastSeenAndHashSql = `
+            UPDATE google_home_entities
+            SET device_id = ?,
+                display_name = ?,
+                entity_type = ?,
+                room_hint = ?,
+                online = ?,
+                entity_last_seen_at = ?,
+                state_json = ?,
+                state_hash = ?,
+                updated_at = ?
+            WHERE id = ?
+        `;
+
+        const updateFallbackAndHashSql = `
             UPDATE google_home_entities
             SET device_id = ?,
                 display_name = ?,
@@ -1239,30 +1275,61 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
         `;
 
         try {
-            if (googleEntityLastSeenColumnSupported) {
-                await dbRun(
-                    updateWithLastSeenSql,
-                    [deviceId, displayName, entityType, roomHint, online, nowIso, stateJson, stateHash, nowIso, existing.id]
-                );
+            if (googleEntityLastSeenColumnSupported && googleStateHashColumnSupported) {
+                await dbRun(updateWithLastSeenAndHashSql, [deviceId, displayName, entityType, roomHint, online, nowIso, stateJson, stateHash, nowIso, existing.id]);
+            } else if (googleEntityLastSeenColumnSupported && !googleStateHashColumnSupported) {
+                await dbRun(updateWithLastSeenSql, [deviceId, displayName, entityType, roomHint, online, nowIso, stateJson, nowIso, existing.id]);
+            } else if (!googleEntityLastSeenColumnSupported && googleStateHashColumnSupported) {
+                await dbRun(updateFallbackAndHashSql, [deviceId, displayName, entityType, roomHint, online, stateJson, stateHash, nowIso, existing.id]);
             } else {
-                await dbRun(
-                    updateFallbackSql,
-                    [deviceId, displayName, entityType, roomHint, online, stateJson, stateHash, nowIso, existing.id]
-                );
+                await dbRun(updateFallbackSql, [deviceId, displayName, entityType, roomHint, online, stateJson, nowIso, existing.id]);
             }
         } catch (error) {
-            if (isMissingGoogleEntityLastSeenColumnError(error)) {
+            if (isMissingGoogleEntityLastSeenColumnError(error) || isMissingGoogleStateHashColumnError(error)) {
                 googleEntityLastSeenColumnSupported = false;
-                await dbRun(
-                    updateFallbackSql,
-                    [deviceId, displayName, entityType, roomHint, online, stateJson, stateHash, nowIso, existing.id]
-                );
+                googleStateHashColumnSupported = false;
+                await dbRun(updateFallbackSql, [deviceId, displayName, entityType, roomHint, online, stateJson, nowIso, existing.id]);
             } else {
                 throw error;
             }
         }
     } else {
         const insertWithLastSeenSql = `
+            INSERT INTO google_home_entities (
+                user_id,
+                device_id,
+                entity_id,
+                display_name,
+                entity_type,
+                room_hint,
+                exposed,
+                online,
+                entity_last_seen_at,
+                state_json,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+        `;
+
+        const insertFallbackSql = `
+            INSERT INTO google_home_entities (
+                user_id,
+                device_id,
+                entity_id,
+                display_name,
+                entity_type,
+                room_hint,
+                exposed,
+                online,
+                state_json,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+        `;
+
+        const insertWithLastSeenAndHashSql = `
             INSERT INTO google_home_entities (
                 user_id,
                 device_id,
@@ -1281,7 +1348,7 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
             VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
         `;
 
-        const insertFallbackSql = `
+        const insertFallbackAndHashSql = `
             INSERT INTO google_home_entities (
                 user_id,
                 device_id,
@@ -1300,24 +1367,20 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
         `;
 
         try {
-            if (googleEntityLastSeenColumnSupported) {
-                await dbRun(
-                    insertWithLastSeenSql,
-                    [userId, deviceId, entityId, displayName, entityType, roomHint, online, nowIso, stateJson, stateHash, nowIso, nowIso]
-                );
+            if (googleEntityLastSeenColumnSupported && googleStateHashColumnSupported) {
+                await dbRun(insertWithLastSeenAndHashSql, [userId, deviceId, entityId, displayName, entityType, roomHint, online, nowIso, stateJson, stateHash, nowIso, nowIso]);
+            } else if (googleEntityLastSeenColumnSupported && !googleStateHashColumnSupported) {
+                await dbRun(insertWithLastSeenSql, [userId, deviceId, entityId, displayName, entityType, roomHint, online, nowIso, stateJson, nowIso, nowIso]);
+            } else if (!googleEntityLastSeenColumnSupported && googleStateHashColumnSupported) {
+                await dbRun(insertFallbackAndHashSql, [userId, deviceId, entityId, displayName, entityType, roomHint, online, stateJson, stateHash, nowIso, nowIso]);
             } else {
-                await dbRun(
-                    insertFallbackSql,
-                    [userId, deviceId, entityId, displayName, entityType, roomHint, online, stateJson, stateHash, nowIso, nowIso]
-                );
+                await dbRun(insertFallbackSql, [userId, deviceId, entityId, displayName, entityType, roomHint, online, stateJson, nowIso, nowIso]);
             }
         } catch (error) {
-            if (isMissingGoogleEntityLastSeenColumnError(error)) {
+            if (isMissingGoogleEntityLastSeenColumnError(error) || isMissingGoogleStateHashColumnError(error)) {
                 googleEntityLastSeenColumnSupported = false;
-                await dbRun(
-                    insertFallbackSql,
-                    [userId, deviceId, entityId, displayName, entityType, roomHint, online, stateJson, stateHash, nowIso, nowIso]
-                );
+                googleStateHashColumnSupported = false;
+                await dbRun(insertFallbackSql, [userId, deviceId, entityId, displayName, entityType, roomHint, online, stateJson, nowIso, nowIso]);
             } else {
                 throw error;
             }
@@ -1582,6 +1645,9 @@ async function ensureGoogleRuntimeSchemaReady() {
     googleRuntimeSchemaReadyPromise = (async () => {
         const statements = [
             'ALTER TABLE google_home_entities ADD COLUMN entity_last_seen_at DATETIME',
+            'ALTER TABLE google_home_entities ADD COLUMN state_hash TEXT',
+            'ALTER TABLE google_home_entities ADD COLUMN last_reported_state_hash TEXT',
+            'ALTER TABLE google_home_entities ADD COLUMN last_reported_at DATETIME',
             `
                 CREATE TABLE IF NOT EXISTS google_home_sync_snapshots (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2511,20 +2577,43 @@ async function collectGoogleReportableStateChangesForUser(userId, options = {}) 
     }
 
     const force = Boolean(options.force);
-    const rows = await dbAll(
-        `
-            SELECT
-                entity_id,
-                entity_type,
-                online,
-                state_json,
-                last_reported_state_hash,
-                exposed
-            FROM google_home_entities
-            WHERE user_id = ?
-        `,
-        [normalizedUserId]
-    );
+    let rows;
+    try {
+        rows = await dbAll(
+            `
+                SELECT
+                    entity_id,
+                    entity_type,
+                    online,
+                    state_json,
+                    last_reported_state_hash,
+                    exposed
+                FROM google_home_entities
+                WHERE user_id = ?
+            `,
+            [normalizedUserId]
+        );
+    } catch (error) {
+        if (isMissingGoogleLastReportedColumnsError(error)) {
+            googleLastReportedColumnsSupported = false;
+            rows = await dbAll(
+                `
+                    SELECT
+                        entity_id,
+                        entity_type,
+                        online,
+                        state_json,
+                        NULL AS last_reported_state_hash,
+                        exposed
+                    FROM google_home_entities
+                    WHERE user_id = ?
+                `,
+                [normalizedUserId]
+            );
+        } else {
+            throw error;
+        }
+    }
 
     const states = {};
     const hashes = {};
@@ -2551,7 +2640,7 @@ async function collectGoogleReportableStateChangesForUser(userId, options = {}) 
 
 async function markGoogleReportedStateHashes(userId, stateHashesByEntityId) {
     const normalizedUserId = parsePositiveInt(userId);
-    if (!normalizedUserId || !stateHashesByEntityId || typeof stateHashesByEntityId !== 'object') {
+    if (!normalizedUserId || !stateHashesByEntityId || typeof stateHashesByEntityId !== 'object' || !googleLastReportedColumnsSupported) {
         return;
     }
 
@@ -2561,16 +2650,24 @@ async function markGoogleReportedStateHashes(userId, stateHashesByEntityId) {
         .filter(([entityId, hash]) => Boolean(entityId && hash));
 
     for (const [entityId, hash] of entries) {
-        await dbRun(
-            `
-                UPDATE google_home_entities
-                SET last_reported_state_hash = ?,
-                    last_reported_at = ?
-                WHERE user_id = ?
-                  AND entity_id = ?
-            `,
-            [hash, nowIso, normalizedUserId, entityId]
-        );
+        try {
+            await dbRun(
+                `
+                    UPDATE google_home_entities
+                    SET last_reported_state_hash = ?,
+                        last_reported_at = ?
+                    WHERE user_id = ?
+                      AND entity_id = ?
+                `,
+                [hash, nowIso, normalizedUserId, entityId]
+            );
+        } catch (error) {
+            if (isMissingGoogleLastReportedColumnsError(error)) {
+                googleLastReportedColumnsSupported = false;
+                return;
+            }
+            throw error;
+        }
     }
 }
 
@@ -4576,7 +4673,6 @@ app.post('/api/internal/devices/google-home/commands/:id/result', requireDeviceA
                 SET state_json = ?,
                     online = 1,
                     entity_last_seen_at = ?,
-                    state_hash = ?,
                     updated_at = ?
                 WHERE user_id = ?
                   AND device_id = ?
@@ -4584,6 +4680,28 @@ app.post('/api/internal/devices/google-home/commands/:id/result', requireDeviceA
             `;
 
             const updateFallbackSql = `
+                UPDATE google_home_entities
+                SET state_json = ?,
+                    online = 1,
+                    updated_at = ?
+                WHERE user_id = ?
+                  AND device_id = ?
+                  AND entity_id = ?
+            `;
+
+            const updateWithLastSeenAndHashSql = `
+                UPDATE google_home_entities
+                SET state_json = ?,
+                    online = 1,
+                    entity_last_seen_at = ?,
+                    state_hash = ?,
+                    updated_at = ?
+                WHERE user_id = ?
+                  AND device_id = ?
+                  AND entity_id = ?
+            `;
+
+            const updateFallbackAndHashSql = `
                 UPDATE google_home_entities
                 SET state_json = ?,
                     online = 1,
@@ -4595,12 +4713,36 @@ app.post('/api/internal/devices/google-home/commands/:id/result', requireDeviceA
             `;
 
             try {
-                if (googleEntityLastSeenColumnSupported) {
+                if (googleEntityLastSeenColumnSupported && googleStateHashColumnSupported) {
+                    await dbRun(
+                        updateWithLastSeenAndHashSql,
+                        [
+                            stateJson,
+                            nowIso,
+                            stateHash,
+                            nowIso,
+                            command.user_id,
+                            device.id,
+                            command.entity_id
+                        ]
+                    );
+                } else if (googleEntityLastSeenColumnSupported && !googleStateHashColumnSupported) {
                     await dbRun(
                         updateWithLastSeenSql,
                         [
                             stateJson,
                             nowIso,
+                            nowIso,
+                            command.user_id,
+                            device.id,
+                            command.entity_id
+                        ]
+                    );
+                } else if (!googleEntityLastSeenColumnSupported && googleStateHashColumnSupported) {
+                    await dbRun(
+                        updateFallbackAndHashSql,
+                        [
+                            stateJson,
                             stateHash,
                             nowIso,
                             command.user_id,
@@ -4613,7 +4755,6 @@ app.post('/api/internal/devices/google-home/commands/:id/result', requireDeviceA
                         updateFallbackSql,
                         [
                             stateJson,
-                            stateHash,
                             nowIso,
                             command.user_id,
                             device.id,
@@ -4622,13 +4763,13 @@ app.post('/api/internal/devices/google-home/commands/:id/result', requireDeviceA
                     );
                 }
             } catch (error) {
-                if (isMissingGoogleEntityLastSeenColumnError(error)) {
+                if (isMissingGoogleEntityLastSeenColumnError(error) || isMissingGoogleStateHashColumnError(error)) {
                     googleEntityLastSeenColumnSupported = false;
+                    googleStateHashColumnSupported = false;
                     await dbRun(
                         updateFallbackSql,
                         [
                             stateJson,
-                            stateHash,
                             nowIso,
                             command.user_id,
                             device.id,
@@ -4767,6 +4908,13 @@ app.get('/api/google/home/homegraph-debug', async (req, res) => {
         report_state_debounce_ms: getGoogleHomegraphReportStateDebounceMs(),
         entity_fresh_window_seconds: getEntityFreshWindowSeconds(),
         token_cache_valid: tokenCacheValid,
+        runtime_flags: {
+            entity_last_seen_supported: googleEntityLastSeenColumnSupported,
+            state_hash_supported: googleStateHashColumnSupported,
+            last_reported_supported: googleLastReportedColumnsSupported,
+            sync_snapshots_table_supported: googleSyncSnapshotsTableSupported,
+            sync_snapshots_upsert_supported: googleSyncSnapshotsUpsertSupported
+        },
         queued_request_sync_users: Array.from(googleHomegraphRequestSyncQueue.keys()),
         queued_report_state_users: Array.from(googleHomegraphReportStateQueue.keys()),
         metrics: homegraphMetrics
