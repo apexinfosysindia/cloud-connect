@@ -1393,6 +1393,55 @@ function dbAll(query, params = []) {
     });
 }
 
+let googleRuntimeSchemaReadyPromise = null;
+
+function isIgnorableSqliteMigrationError(error) {
+    const message = String(error?.message || '').toLowerCase();
+    return message.includes('duplicate column name') || message.includes('already exists');
+}
+
+async function ensureGoogleRuntimeSchemaReady() {
+    if (googleRuntimeSchemaReadyPromise) {
+        return googleRuntimeSchemaReadyPromise;
+    }
+
+    googleRuntimeSchemaReadyPromise = (async () => {
+        const statements = [
+            'ALTER TABLE google_home_entities ADD COLUMN entity_last_seen_at DATETIME',
+            `
+                CREATE TABLE IF NOT EXISTS google_home_sync_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    device_id INTEGER NOT NULL,
+                    snapshot_entity_ids_json TEXT,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, device_id),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+                )
+            `,
+            'CREATE INDEX IF NOT EXISTS idx_google_home_entities_user_last_seen ON google_home_entities(user_id, entity_last_seen_at)',
+            'CREATE INDEX IF NOT EXISTS idx_google_home_sync_snapshots_user_device ON google_home_sync_snapshots(user_id, device_id)'
+        ];
+
+        for (const statement of statements) {
+            try {
+                await dbRun(statement);
+            } catch (error) {
+                if (isIgnorableSqliteMigrationError(error)) {
+                    continue;
+                }
+                throw error;
+            }
+        }
+    })().catch((error) => {
+        googleRuntimeSchemaReadyPromise = null;
+        throw error;
+    });
+
+    return googleRuntimeSchemaReadyPromise;
+}
+
 async function createUniqueAccessToken() {
     while (true) {
         const candidate = generateToken();
@@ -3892,6 +3941,7 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
 
 app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async (req, res) => {
     try {
+        await ensureGoogleRuntimeSchemaReady();
         const device = req.device;
         const user = await dbGet(`SELECT * FROM users WHERE id = ?`, [device.user_id]);
         const nowIso = new Date().toISOString();
@@ -4369,6 +4419,12 @@ app.post('/api/internal/google/homegraph/report-state', requireGoogleHomegraphAd
 });
 
 app.get('/api/google/home/homegraph-debug', async (req, res) => {
+    try {
+        await ensureGoogleRuntimeSchemaReady();
+    } catch (error) {
+        console.warn('GOOGLE RUNTIME SCHEMA CHECK FAILED:', error?.message || error);
+    }
+
     const hasCredentials = hasGoogleHomegraphCredentials();
     const clientEmail = getGoogleServiceAccountClientEmail();
     const tokenCacheValid = Boolean(googleHomegraphAccessTokenCache.token && googleHomegraphAccessTokenCache.expiresAt > Date.now());
@@ -4392,6 +4448,12 @@ app.get('/api/google/home/homegraph-debug', async (req, res) => {
 });
 
 app.get('/api/google/home/entity-debug', async (req, res) => {
+    try {
+        await ensureGoogleRuntimeSchemaReady();
+    } catch (error) {
+        return res.status(500).json({ error: 'runtime_schema_not_ready', details: error?.message || 'unknown_error' });
+    }
+
     const email = sanitizeString(req.query?.email, 255);
     const userId = parsePositiveInt(req.query?.user_id);
 
@@ -4792,4 +4854,11 @@ app.post('/api/internal/verify-token', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Cloud Portal API is running on http://localhost:${PORT}`);
+    ensureGoogleRuntimeSchemaReady()
+        .then(() => {
+            console.log('Google runtime schema ready.');
+        })
+        .catch((error) => {
+            console.error('Google runtime schema migration failed:', error);
+        });
 });
