@@ -3760,6 +3760,19 @@ app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async 
         }
 
         const entitiesPayload = Array.isArray(req.body?.entities) ? req.body.entities : [];
+        if (entitiesPayload.length === 0) {
+            console.warn('DEVICE GOOGLE ENTITIES SYNC: EMPTY PAYLOAD, SKIPPING INVENTORY UPDATE', {
+                user_id: device.user_id,
+                device_id: device.id
+            });
+
+            return res.status(200).json({
+                message: 'No entities received, inventory update skipped',
+                synced_count: 0,
+                synced_entities: []
+            });
+        }
+
         const synced = [];
         const incomingEntityIds = [];
         let shouldRequestSync = false;
@@ -3779,6 +3792,21 @@ app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async 
             }
         }
 
+        const uniqueIncomingEntityIds = Array.from(new Set(incomingEntityIds));
+        if (uniqueIncomingEntityIds.length === 0) {
+            console.warn('DEVICE GOOGLE ENTITIES SYNC: NO VALID ENTITY IDS, SKIPPING INVENTORY UPDATE', {
+                user_id: device.user_id,
+                device_id: device.id,
+                received_count: entitiesPayload.length
+            });
+
+            return res.status(200).json({
+                message: 'No valid entities in payload, inventory update skipped',
+                synced_count: synced.length,
+                synced_entities: synced
+            });
+        }
+
         const beforeRows = await dbAll(
             `
                 SELECT entity_id
@@ -3791,8 +3819,8 @@ app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async 
         );
         const beforeSet = new Set((beforeRows || []).map((row) => sanitizeEntityId(row.entity_id)).filter(Boolean));
 
-        if (incomingEntityIds.length > 0) {
-            const placeholders = incomingEntityIds.map(() => '?').join(',');
+        if (uniqueIncomingEntityIds.length > 0) {
+            const placeholders = uniqueIncomingEntityIds.map(() => '?').join(',');
             await dbRun(
                 `
                     UPDATE google_home_entities
@@ -3802,7 +3830,7 @@ app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async 
                       AND device_id = ?
                       AND entity_id NOT IN (${placeholders})
                 `,
-                [nowIso, device.user_id, device.id, ...incomingEntityIds]
+                [nowIso, device.user_id, device.id, ...uniqueIncomingEntityIds]
             );
         } else {
             await dbRun(
