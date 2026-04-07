@@ -180,6 +180,12 @@ Proactive Homegraph updates (new):
 - `reportStateAndNotification` is sent for changed entity states (debounced)
 - SYNC device payload now advertises `willReportState: true` when Homegraph credentials are configured
 
+Online model (production-safe hybrid):
+- Effective entity online status uses `device_online && entity_fresh && entity_available`
+- `entity_available` comes from addon state (`state != unavailable`)
+- `entity_fresh` is time-window based (derived from heartbeat window) to prevent stale entity drift
+- Empty or invalid entity sync payloads are ignored (non-destructive)
+
 Internal Homegraph debug/ops endpoints:
 - `GET /api/google/home/homegraph-debug`
 - `POST /api/internal/google/homegraph/request-sync` (requires `Authorization: Bearer $GOOGLE_HOMEGRAPH_ADMIN_TOKEN`)
