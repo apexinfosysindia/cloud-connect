@@ -1649,7 +1649,8 @@ async function cleanupGoogleAuthDataForUser(userId) {
     await dbRun(
         `
             UPDATE users
-            SET google_home_linked = 0
+            SET google_home_linked = 0,
+                google_home_enabled = 0
             WHERE id = ?
         `,
         [userId]
@@ -3693,7 +3694,7 @@ app.post('/api/account/google-home/enable', requirePortalUser, async (req, res) 
 
 app.post('/api/account/google-home/entities', requirePortalUser, async (req, res) => {
     try {
-        if (!req.portalUser.google_home_enabled) {
+        if (!req.portalUser.google_home_enabled || !req.portalUser.google_home_linked) {
             return res.status(200).json({ entities: [] });
         }
 
@@ -3726,7 +3727,7 @@ app.post('/api/account/google-home/entities/:entityId/expose', requirePortalUser
         return res.status(400).json({ error: 'Invalid entity id' });
     }
 
-    if (!req.portalUser.google_home_enabled) {
+    if (!req.portalUser.google_home_enabled || !req.portalUser.google_home_linked) {
         return res.status(403).json({ error: 'Google Home integration is disabled for this account' });
     }
 
@@ -3861,7 +3862,8 @@ app.get('/api/google/home/oauth', async (req, res) => {
         }
 
         if (!user.google_home_enabled) {
-            return res.status(403).send('Google Home integration is disabled for this account');
+            await dbRun(`UPDATE users SET google_home_enabled = 1 WHERE id = ?`, [user.id]);
+            user.google_home_enabled = 1;
         }
 
         const authCode = generateGoogleOAuthCode();
@@ -3950,7 +3952,8 @@ app.post('/api/google/home/oauth/continue', async (req, res) => {
     }
 
     if (!user.google_home_enabled) {
-        return res.status(403).json({ error: 'google_home_not_enabled' });
+        await dbRun(`UPDATE users SET google_home_enabled = 1 WHERE id = ?`, [user.id]);
+        user.google_home_enabled = 1;
     }
 
     const authorizeUrl = new URL('/api/google/home/oauth', `${req.protocol}://${req.get('host')}`);
@@ -4348,6 +4351,7 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
 
         if (intent === 'action.devices.DISCONNECT') {
             await cleanupGoogleAuthDataForUser(req.googleUser.id);
+            scheduleGoogleRequestSyncForUser(req.googleUser.id, 'google_home_unlinked');
             return res.status(200).json({ requestId, payload: {} });
         }
 
