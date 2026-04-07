@@ -113,13 +113,14 @@ function markHomegraphMetricSkipped(metricType, userId, reason = null) {
 const app = express();
 app.use(cookieParser());
 app.use(express.json({
+    limit: '5mb',
     verify: (req, res, buf) => {
         if (buf && buf.length > 0) {
             req.rawBody = buf.toString();
         }
     }
 }));
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: false, limit: '1mb' }));
 app.use(cors());
 
 app.get(['/login', '/login.html', '/signup', '/signup.html'], (req, res, next) => {
@@ -1235,6 +1236,60 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
         entity,
         syncChanged
     };
+}
+
+async function saveGoogleDeviceSnapshotEntityIds(userId, deviceId, entityIds = []) {
+    const normalizedUserId = parsePositiveInt(userId);
+    const normalizedDeviceId = parsePositiveInt(deviceId);
+    if (!normalizedUserId || !normalizedDeviceId) {
+        return;
+    }
+
+    const normalizedEntityIds = Array.from(new Set((Array.isArray(entityIds) ? entityIds : [])
+        .map((entityId) => sanitizeEntityId(entityId))
+        .filter(Boolean)));
+
+    const nowIso = new Date().toISOString();
+    const payload = JSON.stringify(normalizedEntityIds).slice(0, 120000);
+    await dbRun(
+        `
+            INSERT INTO google_home_sync_snapshots (
+                user_id,
+                device_id,
+                snapshot_entity_ids_json,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id, device_id) DO UPDATE SET
+                snapshot_entity_ids_json = excluded.snapshot_entity_ids_json,
+                updated_at = excluded.updated_at
+        `,
+        [normalizedUserId, normalizedDeviceId, payload, nowIso]
+    );
+}
+
+async function getGoogleDeviceSnapshotEntityIds(userId, deviceId) {
+    const normalizedUserId = parsePositiveInt(userId);
+    const normalizedDeviceId = parsePositiveInt(deviceId);
+    if (!normalizedUserId || !normalizedDeviceId) {
+        return [];
+    }
+
+    const row = await dbGet(
+        `
+            SELECT snapshot_entity_ids_json
+            FROM google_home_sync_snapshots
+            WHERE user_id = ?
+              AND device_id = ?
+            LIMIT 1
+        `,
+        [normalizedUserId, normalizedDeviceId]
+    );
+
+    const parsed = parseJsonSafe(row?.snapshot_entity_ids_json, []);
+    return Array.from(new Set((Array.isArray(parsed) ? parsed : [])
+        .map((entityId) => sanitizeEntityId(entityId))
+        .filter(Boolean)));
 }
 
 async function queueGoogleCommandForEntity(userId, deviceId, entityId, action, payload) {
@@ -3852,6 +3907,7 @@ app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async 
                 `,
                 [nowIso, device.user_id, device.id]
             );
+            await saveGoogleDeviceSnapshotEntityIds(device.user_id, device.id, []);
 
             return res.status(200).json({
                 message: 'Google Home integration is disabled for this account',
@@ -3861,7 +3917,56 @@ app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async 
         }
 
         const entitiesPayload = Array.isArray(req.body?.entities) ? req.body.entities : [];
+        const fullSnapshot = req.body?.full_snapshot !== false;
+        const snapshotEntityIds = Array.isArray(req.body?.snapshot_entity_ids)
+            ? req.body.snapshot_entity_ids
+            : null;
+
         if (entitiesPayload.length === 0) {
+            if (fullSnapshot && snapshotEntityIds) {
+                const normalizedSnapshotIds = Array.from(new Set(snapshotEntityIds
+                    .map((item) => sanitizeEntityId(item))
+                    .filter(Boolean)));
+                const placeholders = normalizedSnapshotIds.map(() => '?').join(',');
+
+                if (normalizedSnapshotIds.length > 0) {
+                    await dbRun(
+                        `
+                            UPDATE google_home_entities
+                            SET online = 0,
+                                entity_last_seen_at = ?,
+                                updated_at = ?
+                            WHERE user_id = ?
+                              AND device_id = ?
+                              AND entity_id NOT IN (${placeholders})
+                        `,
+                        [nowIso, nowIso, device.user_id, device.id, ...normalizedSnapshotIds]
+                    );
+                } else {
+                    await dbRun(
+                        `
+                            UPDATE google_home_entities
+                            SET online = 0,
+                                entity_last_seen_at = ?,
+                                updated_at = ?
+                            WHERE user_id = ?
+                              AND device_id = ?
+                        `,
+                        [nowIso, nowIso, device.user_id, device.id]
+                    );
+                }
+
+                await saveGoogleDeviceSnapshotEntityIds(device.user_id, device.id, normalizedSnapshotIds);
+                scheduleGoogleRequestSyncForUser(device.user_id, 'entity_inventory_snapshot_commit');
+                scheduleGoogleReportStateForUser(device.user_id, { force: false });
+
+                return res.status(200).json({
+                    message: 'Snapshot inventory committed',
+                    synced_count: 0,
+                    synced_entities: []
+                });
+            }
+
             console.warn('DEVICE GOOGLE ENTITIES SYNC: EMPTY PAYLOAD, SKIPPING INVENTORY UPDATE', {
                 user_id: device.user_id,
                 device_id: device.id
@@ -3920,9 +4025,16 @@ app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async 
         );
         const beforeSet = new Set((beforeRows || []).map((row) => sanitizeEntityId(row.entity_id)).filter(Boolean));
 
-        const fullSnapshot = req.body?.full_snapshot !== false;
         if (fullSnapshot && uniqueIncomingEntityIds.length > 0) {
-            const placeholders = uniqueIncomingEntityIds.map(() => '?').join(',');
+            const baselineIds = snapshotEntityIds
+                ? Array.from(new Set(snapshotEntityIds.map((item) => sanitizeEntityId(item)).filter(Boolean)))
+                : await getGoogleDeviceSnapshotEntityIds(device.user_id, device.id);
+            const snapshotIdsSet = new Set(baselineIds);
+            for (const entityId of uniqueIncomingEntityIds) {
+                snapshotIdsSet.add(entityId);
+            }
+            const effectiveSnapshotIds = Array.from(snapshotIdsSet);
+            const placeholders = effectiveSnapshotIds.map(() => '?').join(',');
             await dbRun(
                 `
                     UPDATE google_home_entities
@@ -3933,8 +4045,10 @@ app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async 
                       AND device_id = ?
                       AND entity_id NOT IN (${placeholders})
                 `,
-                [nowIso, nowIso, device.user_id, device.id, ...uniqueIncomingEntityIds]
+                [nowIso, nowIso, device.user_id, device.id, ...effectiveSnapshotIds]
             );
+
+            await saveGoogleDeviceSnapshotEntityIds(device.user_id, device.id, effectiveSnapshotIds);
         } else if (fullSnapshot) {
             await dbRun(
                 `
@@ -3947,6 +4061,7 @@ app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async 
                 `,
                 [nowIso, nowIso, device.user_id, device.id]
             );
+            await saveGoogleDeviceSnapshotEntityIds(device.user_id, device.id, []);
         }
 
         const afterRows = await dbAll(

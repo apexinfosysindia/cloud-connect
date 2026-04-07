@@ -156,6 +156,19 @@ const GOOGLE_HOME_COMMAND_QUEUE_TABLE_SCHEMA = `
     )
 `;
 
+const GOOGLE_HOME_SYNC_SNAPSHOTS_TABLE_SCHEMA = `
+    CREATE TABLE IF NOT EXISTS google_home_sync_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        device_id INTEGER NOT NULL,
+        snapshot_entity_ids_json TEXT,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, device_id),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+    )
+`;
+
 const DEVICE_SCHEMA_STATEMENTS = [
     DEVICES_TABLE_SCHEMA,
     DEVICE_LOGS_TABLE_SCHEMA,
@@ -165,6 +178,7 @@ const DEVICE_SCHEMA_STATEMENTS = [
     GOOGLE_HOME_TOKENS_TABLE_SCHEMA,
     GOOGLE_HOME_ENTITIES_TABLE_SCHEMA,
     GOOGLE_HOME_COMMAND_QUEUE_TABLE_SCHEMA,
+    GOOGLE_HOME_SYNC_SNAPSHOTS_TABLE_SCHEMA,
     'CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id)',
     'CREATE INDEX IF NOT EXISTS idx_devices_last_seen ON devices(last_seen_at)',
     'CREATE INDEX IF NOT EXISTS idx_device_logs_device_created ON device_logs(device_id, created_at DESC)',
@@ -175,6 +189,7 @@ const DEVICE_SCHEMA_STATEMENTS = [
     'CREATE INDEX IF NOT EXISTS idx_google_home_entities_user_reported_hash ON google_home_entities(user_id, last_reported_state_hash)',
     'CREATE INDEX IF NOT EXISTS idx_google_home_command_queue_device_status_expiry ON google_home_command_queue(device_id, status, expires_at)',
     'CREATE INDEX IF NOT EXISTS idx_google_home_command_queue_user_status ON google_home_command_queue(user_id, status)',
+    'CREATE INDEX IF NOT EXISTS idx_google_home_sync_snapshots_user_device ON google_home_sync_snapshots(user_id, device_id)',
     'ALTER TABLE devices ADD COLUMN admin_name_override INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE users ADD COLUMN google_home_enabled INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE users ADD COLUMN google_home_linked INTEGER NOT NULL DEFAULT 0',
