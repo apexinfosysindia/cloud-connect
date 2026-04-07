@@ -1084,7 +1084,10 @@ async function getGoogleEntitiesForUser(userId, options = {}) {
             [userId]
         );
 
-    return rows || [];
+    return (rows || []).map((row) => ({
+        ...row,
+        online: isDeviceOnline(row.last_seen_at) ? 1 : 0
+    }));
 }
 
 async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
@@ -1096,7 +1099,7 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
     const displayName = sanitizeString(payload?.display_name, 120) || entityId;
     const entityType = mapGoogleDomainToEntityType(entityId, normalizeGoogleEntityType(payload?.entity_type));
     const roomHint = sanitizeString(payload?.room_hint, 120);
-    const online = payload?.online === false ? 0 : 1;
+    const online = 1;
     const stateJson = JSON.stringify(payload?.state || {}).slice(0, 2500);
     const entityState = parseGoogleEntityState({
         entity_type: entityType,
@@ -3572,6 +3575,16 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                     continue;
                 }
 
+                const deviceOnline = isDeviceOnline(entity.last_seen_at);
+                if (!deviceOnline) {
+                    devicesState[entityId] = {
+                        online: false,
+                        status: 'ERROR',
+                        errorCode: 'deviceOffline'
+                    };
+                    continue;
+                }
+
                 devicesState[entityId] = parseGoogleEntityState(entity);
             }
 
@@ -4167,6 +4180,84 @@ app.get('/api/google/home/homegraph-debug', async (req, res) => {
         queued_report_state_users: Array.from(googleHomegraphReportStateQueue.keys()),
         metrics: homegraphMetrics
     });
+});
+
+app.get('/api/google/home/entity-debug', async (req, res) => {
+    const email = sanitizeString(req.query?.email, 255);
+    const userId = parsePositiveInt(req.query?.user_id);
+
+    if (!email && !userId) {
+        return res.status(400).json({ error: 'email or user_id is required' });
+    }
+
+    try {
+        const user = email
+            ? await dbGet(`SELECT id, email, google_home_enabled, google_home_linked FROM users WHERE email = ? LIMIT 1`, [email])
+            : await dbGet(`SELECT id, email, google_home_enabled, google_home_linked FROM users WHERE id = ? LIMIT 1`, [userId]);
+
+        if (!user) {
+            return res.status(404).json({ error: 'user_not_found' });
+        }
+
+        const rows = await dbAll(
+            `
+                SELECT
+                    ge.entity_id,
+                    ge.display_name,
+                    ge.entity_type,
+                    ge.exposed,
+                    ge.online AS stored_entity_online,
+                    ge.updated_at,
+                    ge.last_reported_at,
+                    d.id AS device_id,
+                    d.device_uid,
+                    d.last_seen_at,
+                    d.agent_state
+                FROM google_home_entities ge
+                INNER JOIN devices d ON d.id = ge.device_id
+                WHERE ge.user_id = ?
+                ORDER BY ge.updated_at DESC
+                LIMIT 120
+            `,
+            [user.id]
+        );
+
+        const entities = (rows || []).map((row) => ({
+            entity_id: row.entity_id,
+            display_name: row.display_name,
+            entity_type: row.entity_type,
+            exposed: Boolean(row.exposed),
+            stored_entity_online: Boolean(row.stored_entity_online),
+            device_online: isDeviceOnline(row.last_seen_at),
+            effective_online: isDeviceOnline(row.last_seen_at),
+            device_id: row.device_id,
+            device_uid: row.device_uid,
+            device_last_seen_at: row.last_seen_at,
+            device_agent_state: row.agent_state,
+            entity_updated_at: row.updated_at,
+            last_reported_at: row.last_reported_at
+        }));
+
+        const onlineCount = entities.filter((entity) => entity.effective_online).length;
+
+        return res.status(200).json({
+            user: {
+                id: user.id,
+                email: user.email,
+                google_home_enabled: Boolean(user.google_home_enabled),
+                google_home_linked: Boolean(user.google_home_linked)
+            },
+            totals: {
+                entities: entities.length,
+                online: onlineCount,
+                offline: Math.max(0, entities.length - onlineCount)
+            },
+            entities
+        });
+    } catch (error) {
+        console.error('GOOGLE ENTITY DEBUG ERROR:', error);
+        return res.status(500).json({ error: 'unable_to_load_entity_debug' });
+    }
 });
 
 app.post('/api/billing/create-checkout', async (req, res) => {
