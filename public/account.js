@@ -550,6 +550,14 @@
             }
         }
 
+        const consentHandled = handleGoogleConsentFlow(userData);
+        if (consentHandled) {
+            if (shouldScroll) {
+                scrollToAccountShell();
+            }
+            return;
+        }
+
         if (shouldScroll) {
             scrollToAccountShell();
         }
@@ -1251,16 +1259,13 @@
         } else {
             accountRenderFingerprint = buildAccountRenderFingerprint(parsedUser);
             renderDashboard(parsedUser);
-            const handledConsent = handleGoogleConsentFlow(parsedUser);
-            if (!handledConsent) {
-                refreshAccountState({ silent: true });
+            refreshAccountState({ silent: true });
 
-                document.addEventListener('visibilitychange', () => {
-                    if (document.visibilityState === 'visible') {
-                        refreshAccountState({ silent: true });
-                    }
-                });
-            }
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') {
+                    refreshAccountState({ silent: true });
+                }
+            });
         }
     } else if (pageMode === 'signup') {
         showSignupView();

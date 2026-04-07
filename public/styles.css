@@ -1325,6 +1325,35 @@ code {
     color: var(--text-soft);
     font-size: 0.86rem;
     line-height: 1.5;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+#googleConsentCard {
+    min-width: 0;
+}
+
+#googleConsentCard .detail-copy,
+#googleConsentCard .google-consent-meta {
+    max-width: 100%;
+}
+
+#googleConsentCard .button {
+    min-width: 0;
+}
+
+#googleConsentCard .stack {
+    gap: 10px;
+}
+
+@media (max-width: 560px) {
+    #googleConsentCard {
+        padding: 14px;
+    }
+
+    #googleConsentCard .button {
+        width: 100%;
+    }
 }
 
 .admin-dashboard {
