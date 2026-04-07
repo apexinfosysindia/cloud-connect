@@ -59,7 +59,8 @@ Capabilities:
 Required environment variables:
 - `ADMIN_EMAIL`
 - `ADMIN_PASSWORD`
-- Optional: `ADMIN_SESSION_SECRET`
+- `ADMIN_SESSION_SECRET` (min 32 chars)
+- `PORTAL_SESSION_SECRET` (min 32 chars)
 
 ## Device Fleet API (Internal + Admin)
 Internal device endpoints:
@@ -93,12 +94,15 @@ ADMIN_SESSION_SECRET=
 PORTAL_SESSION_SECRET=
 GOOGLE_HOME_CLIENT_ID=
 GOOGLE_HOME_CLIENT_SECRET=
+GOOGLE_HOME_REDIRECT_URI_HOSTS=oauth-redirect.googleusercontent.com
 GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL=
 GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY=
 GOOGLE_HOMEGRAPH_ADMIN_TOKEN=
 GOOGLE_HOMEGRAPH_REPORT_STATE_ENABLED=1
 GOOGLE_HOMEGRAPH_REQUEST_SYNC_DEBOUNCE_MS=2500
 GOOGLE_HOMEGRAPH_REPORT_STATE_DEBOUNCE_MS=1200
+GOOGLE_DEBUG_ENDPOINTS_ENABLED=0
+ALLOWED_CORS_ORIGINS=https://oasis.apexinfosys.in,https://vista.apexinfosys.in
 DEVICE_HEARTBEAT_TIMEOUT_SECONDS=45
 DEVICE_HEARTBEAT_INTERVAL_SECONDS=20
 ADMIN_CONNECT_TOKEN_TTL_MINUTES=10
@@ -190,6 +194,11 @@ Internal Homegraph debug/ops endpoints:
 - `GET /api/google/home/homegraph-debug`
 - `POST /api/internal/google/homegraph/request-sync` (requires `Authorization: Bearer $GOOGLE_HOMEGRAPH_ADMIN_TOKEN`)
 - `POST /api/internal/google/homegraph/report-state` (requires `Authorization: Bearer $GOOGLE_HOMEGRAPH_ADMIN_TOKEN`)
+
+Security hardening notes:
+- Set strong secrets for `PORTAL_SESSION_SECRET` and `ADMIN_SESSION_SECRET` (minimum 32 chars). The server exits if these are missing.
+- Debug endpoints are disabled by default. Enable only when needed with `GOOGLE_DEBUG_ENDPOINTS_ENABLED=1`.
+- Set `ALLOWED_CORS_ORIGINS` explicitly for your portal/admin domains.
 
 Addon integration:
 - Addon syncs entities via `POST /api/internal/devices/google-home/entities`

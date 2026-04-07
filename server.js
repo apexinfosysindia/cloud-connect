@@ -20,6 +20,7 @@ const ADMIN_SSH_JUMP_PORT = 22;
 const ADMIN_SSH_TARGET_HOST = '127.0.0.1';
 const GOOGLE_HOME_CLIENT_ID = process.env.GOOGLE_HOME_CLIENT_ID || '';
 const GOOGLE_HOME_CLIENT_SECRET = process.env.GOOGLE_HOME_CLIENT_SECRET || '';
+const GOOGLE_HOME_REDIRECT_URI_HOSTS = (process.env.GOOGLE_HOME_REDIRECT_URI_HOSTS || 'oauth-redirect.googleusercontent.com').split(',').map((item) => item.trim().toLowerCase()).filter(Boolean);
 const GOOGLE_HOME_AUTH_CODE_TTL_SECONDS = Number(process.env.GOOGLE_HOME_AUTH_CODE_TTL_SECONDS || 600);
 const GOOGLE_HOME_ACCESS_TOKEN_TTL_SECONDS = Number(process.env.GOOGLE_HOME_ACCESS_TOKEN_TTL_SECONDS || 3600);
 const GOOGLE_HOME_COMMAND_TTL_SECONDS = Number(process.env.GOOGLE_HOME_COMMAND_TTL_SECONDS || 45);
@@ -29,6 +30,8 @@ const GOOGLE_HOMEGRAPH_API_BASE_URL = 'https://homegraph.googleapis.com/v1';
 const GOOGLE_HOMEGRAPH_REQUEST_SYNC_DEBOUNCE_MS = Number(process.env.GOOGLE_HOMEGRAPH_REQUEST_SYNC_DEBOUNCE_MS || 2500);
 const GOOGLE_HOMEGRAPH_REPORT_STATE_DEBOUNCE_MS = Number(process.env.GOOGLE_HOMEGRAPH_REPORT_STATE_DEBOUNCE_MS || 1200);
 const GOOGLE_HOMEGRAPH_REPORT_STATE_ENABLED = process.env.GOOGLE_HOMEGRAPH_REPORT_STATE_ENABLED === '0' ? false : true;
+const GOOGLE_DEBUG_ENDPOINTS_ENABLED = process.env.GOOGLE_DEBUG_ENDPOINTS_ENABLED === '1';
+const ALLOWED_CORS_ORIGINS = (process.env.ALLOWED_CORS_ORIGINS || '').split(',').map((item) => item.trim()).filter(Boolean);
 const PORTAL_SESSION_COOKIE_NAME = 'apx_portal_session';
 const PORTAL_SESSION_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const PORTAL_SESSION_COOKIE_SECURE = process.env.PORTAL_COOKIE_SECURE === '0' ? false : true;
@@ -103,6 +106,19 @@ function isMissingGoogleLastReportedColumnsError(error) {
     return message.includes('no such column: last_reported_state_hash') || message.includes('no such column: last_reported_at');
 }
 
+function hasExactlyOneDot(value) {
+    if (typeof value !== 'string') {
+        return false;
+    }
+
+    const firstDot = value.indexOf('.');
+    if (firstDot <= 0) {
+        return false;
+    }
+
+    return value.indexOf('.', firstDot + 1) === -1;
+}
+
 function markHomegraphMetricSuccess(metricType, userId, statusCode = null) {
     const metric = homegraphMetrics[metricType];
     if (!metric) {
@@ -153,7 +169,36 @@ app.use(express.json({
     }
 }));
 app.use(express.urlencoded({ extended: false, limit: '1mb' }));
-app.use(cors());
+app.use(cors({
+    origin: (origin, callback) => {
+        if (!origin) {
+            callback(null, true);
+            return;
+        }
+
+        if (ALLOWED_CORS_ORIGINS.length === 0) {
+            callback(null, false);
+            return;
+        }
+
+        callback(null, ALLOWED_CORS_ORIGINS.includes(origin));
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+app.use((error, req, res, next) => {
+    if (error?.type === 'entity.too.large') {
+        return res.status(413).json({ error: 'payload_too_large' });
+    }
+
+    if (error instanceof SyntaxError && error?.status === 400 && 'body' in error) {
+        return res.status(400).json({ error: 'invalid_json_payload' });
+    }
+
+    return next(error);
+});
 
 app.get(['/login', '/login.html', '/signup', '/signup.html'], (req, res, next) => {
     const isSignupPath = req.path.startsWith('/signup');
@@ -309,6 +354,27 @@ function sanitizeGoogleRequestId(value) {
     }
 
     return /^[a-zA-Z0-9._:-]+$/.test(normalized) ? normalized : null;
+}
+
+function isTrustedGoogleRedirectUri(redirectUri) {
+    const normalized = sanitizeString(redirectUri, 1000);
+    if (!normalized) {
+        return false;
+    }
+
+    let parsed;
+    try {
+        parsed = new URL(normalized);
+    } catch (error) {
+        return false;
+    }
+
+    if (parsed.protocol !== 'https:') {
+        return false;
+    }
+
+    const host = (parsed.hostname || '').toLowerCase();
+    return GOOGLE_HOME_REDIRECT_URI_HOSTS.includes(host);
 }
 
 function sanitizePort(value) {
@@ -1634,7 +1700,7 @@ let googleRuntimeSchemaReadyPromise = null;
 
 function isIgnorableSqliteMigrationError(error) {
     const message = String(error?.message || '').toLowerCase();
-    return message.includes('duplicate column name') || message.includes('already exists') || message.includes('near "on": syntax error') || message.includes('near "do": syntax error');
+    return message.includes('duplicate column name') || message.includes('already exists');
 }
 
 async function ensureGoogleRuntimeSchemaReady() {
@@ -1697,7 +1763,12 @@ function isAccessEnabled(status) {
 }
 
 function getPortalSecret() {
-    return process.env.PORTAL_SESSION_SECRET || 'apex-portal-secret';
+    const secret = sanitizeString(process.env.PORTAL_SESSION_SECRET || '', 512);
+    if (!secret || secret.length < 32) {
+        throw new Error('PORTAL_SESSION_SECRET must be configured with at least 32 characters');
+    }
+
+    return secret;
 }
 
 function signPortalValue(value) {
@@ -1713,7 +1784,7 @@ function createPortalSessionToken(email) {
 }
 
 function verifyPortalSessionToken(token) {
-    if (!token || !token.includes('.')) {
+    if (!token || !hasExactlyOneDot(token)) {
         return null;
     }
 
@@ -1774,7 +1845,6 @@ function serializeUser(user) {
         email: user.email,
         subdomain: user.subdomain,
         access_token: accessEnabled ? user.access_token : null,
-        portal_session_token: createPortalSessionToken(user.email),
         status: user.status,
         domain: hasSubdomain ? `${user.subdomain}.${CLOUD_BASE_DOMAIN}` : null,
         google_home_enabled: Boolean(user.google_home_enabled),
@@ -1860,7 +1930,12 @@ function ensureAdminConfigured() {
 }
 
 function getAdminSecret() {
-    return process.env.ADMIN_SESSION_SECRET || process.env.RAZORPAY_KEY_SECRET || 'apex-admin-secret';
+    const secret = sanitizeString(process.env.ADMIN_SESSION_SECRET || process.env.RAZORPAY_KEY_SECRET || '', 512);
+    if (!secret || secret.length < 32) {
+        throw new Error('ADMIN_SESSION_SECRET or RAZORPAY_KEY_SECRET must be configured with at least 32 characters');
+    }
+
+    return secret;
 }
 
 function signAdminValue(value) {
@@ -1876,7 +1951,7 @@ function createAdminToken(email) {
 }
 
 function verifyAdminToken(token) {
-    if (!token || !token.includes('.')) {
+    if (!token || !hasExactlyOneDot(token)) {
         return null;
     }
 
@@ -2649,25 +2724,36 @@ async function markGoogleReportedStateHashes(userId, stateHashesByEntityId) {
         .map(([entityId, hash]) => [sanitizeEntityId(entityId), sanitizeString(hash, 80)])
         .filter(([entityId, hash]) => Boolean(entityId && hash));
 
-    for (const [entityId, hash] of entries) {
-        try {
-            await dbRun(
-                `
-                    UPDATE google_home_entities
-                    SET last_reported_state_hash = ?,
-                        last_reported_at = ?
-                    WHERE user_id = ?
-                      AND entity_id = ?
-                `,
-                [hash, nowIso, normalizedUserId, entityId]
-            );
-        } catch (error) {
-            if (isMissingGoogleLastReportedColumnsError(error)) {
-                googleLastReportedColumnsSupported = false;
-                return;
-            }
-            throw error;
+    if (entries.length === 0) {
+        return;
+    }
+
+    const byEntityId = new Map(entries);
+    const entityIds = Array.from(byEntityId.keys());
+    const placeholders = entityIds.map(() => '?').join(',');
+    const caseClauses = entityIds.map(() => 'WHEN ? THEN ?').join(' ');
+    const args = [];
+    for (const entityId of entityIds) {
+        args.push(entityId, byEntityId.get(entityId));
+    }
+
+    try {
+        await dbRun(
+            `
+                UPDATE google_home_entities
+                SET last_reported_state_hash = CASE entity_id ${caseClauses} ELSE last_reported_state_hash END,
+                    last_reported_at = ?
+                WHERE user_id = ?
+                  AND entity_id IN (${placeholders})
+            `,
+            [...args, nowIso, normalizedUserId, ...entityIds]
+        );
+    } catch (error) {
+        if (isMissingGoogleLastReportedColumnsError(error)) {
+            googleLastReportedColumnsSupported = false;
+            return;
         }
+        throw error;
     }
 }
 
@@ -3511,9 +3597,11 @@ app.post('/api/account/subdomain', async (req, res) => {
         }
 
         if (user.subdomain === normalizedSubdomain) {
+            const portalSessionToken = createPortalSessionToken(user.email);
+            setPortalSessionCookie(res, portalSessionToken);
             return res.status(200).json({
                 message: 'Cloud address saved',
-                data: serializeUser(user)
+                data: serializeUserWithPortalSession(user, portalSessionToken)
             });
         }
 
@@ -3524,10 +3612,12 @@ app.post('/api/account/subdomain', async (req, res) => {
 
         await dbRun(`UPDATE users SET subdomain = ? WHERE id = ?`, [normalizedSubdomain, user.id]);
         const updatedUser = await dbGet(`SELECT * FROM users WHERE id = ?`, [user.id]);
+        const portalSessionToken = createPortalSessionToken(updatedUser.email);
+        setPortalSessionCookie(res, portalSessionToken);
 
         return res.status(200).json({
             message: 'Cloud address saved',
-            data: serializeUser(updatedUser)
+            data: serializeUserWithPortalSession(updatedUser, portalSessionToken)
         });
     } catch (error) {
         console.error('SUBDOMAIN UPDATE ERROR:', error);
@@ -3555,8 +3645,11 @@ app.post('/api/account/me', async (req, res) => {
             return res.status(404).json({ error: 'Account not found' });
         }
 
+        const portalSessionToken = createPortalSessionToken(user.email);
+        setPortalSessionCookie(res, portalSessionToken);
+
         return res.status(200).json({
-            data: serializeUser(user)
+            data: serializeUserWithPortalSession(user, portalSessionToken)
         });
     } catch (error) {
         console.error('ACCOUNT ME ERROR:', error);
@@ -3582,13 +3675,15 @@ app.post('/api/account/google-home/enable', requirePortalUser, async (req, res) 
         );
 
         const updatedUser = await dbGet(`SELECT * FROM users WHERE id = ?`, [req.portalUser.id]);
+        const portalSessionToken = createPortalSessionToken(updatedUser.email);
+        setPortalSessionCookie(res, portalSessionToken);
         if (enable) {
             scheduleGoogleRequestSyncForUser(req.portalUser.id, 'google_home_enabled');
             scheduleGoogleReportStateForUser(req.portalUser.id, { force: true });
         }
         return res.status(200).json({
             message: enable ? 'Google Home integration enabled' : 'Google Home integration disabled',
-            data: serializeUser(updatedUser)
+            data: serializeUserWithPortalSession(updatedUser, portalSessionToken)
         });
     } catch (error) {
         console.error('ACCOUNT GOOGLE HOME ENABLE ERROR:', error);
@@ -3695,6 +3790,10 @@ app.get('/api/google/home/oauth', async (req, res) => {
         return res.status(401).send('Invalid client_id');
     }
 
+    if (!isTrustedGoogleRedirectUri(redirectUri)) {
+        return res.status(400).send('Invalid redirect_uri');
+    }
+
     const forceCustomerLogin = req.hostname !== CUSTOMER_PORTAL_HOST || req.query?.from_cookie !== '1';
     if (!portalToken) {
         const loginRedirect = `/login.html?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
@@ -3714,6 +3813,12 @@ app.get('/api/google/home/oauth', async (req, res) => {
     }
 
     const callbackUrl = new URL(redirectUri);
+    const consentChallenge = encodeURIComponent(JSON.stringify({
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        state,
+        portal_session_token: portalToken
+    }));
 
     if (req.query?.error) {
         callbackUrl.searchParams.set('error', sanitizeString(req.query.error, 120) || 'access_denied');
@@ -3745,6 +3850,14 @@ app.get('/api/google/home/oauth', async (req, res) => {
 
         if (!isAccessEnabled(user.status)) {
             return res.status(403).send('Account is not active for Google Home');
+        }
+
+        if (req.query?.approved !== '1') {
+            const consentUrl = `/login.html?google_oauth=1&google_oauth_consent=1&oauth_challenge=${consentChallenge}`;
+            if (req.hostname !== CUSTOMER_PORTAL_HOST) {
+                return res.redirect(`https://${CUSTOMER_PORTAL_HOST}${consentUrl}`);
+            }
+            return res.redirect(consentUrl);
         }
 
         if (!user.google_home_enabled) {
@@ -3859,6 +3972,10 @@ app.post('/api/account/logout', async (_req, res) => {
 });
 
 app.get('/api/google/home/oauth-debug', async (req, res) => {
+    if (!GOOGLE_DEBUG_ENDPOINTS_ENABLED) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
     const clientId = sanitizeString(req.query?.client_id, 255);
     const redirectUri = sanitizeString(req.query?.redirect_uri, 1000);
     const state = sanitizeString(req.query?.state, 1000) || '';
@@ -3869,6 +3986,10 @@ app.get('/api/google/home/oauth-debug', async (req, res) => {
 
     if (!clientId || !redirectUri) {
         return res.status(400).json({ ok: false, error: 'missing_oauth_params' });
+    }
+
+    if (!isTrustedGoogleRedirectUri(redirectUri)) {
+        return res.status(400).json({ ok: false, error: 'invalid_redirect_uri' });
     }
 
     const payload = {
@@ -3919,6 +4040,10 @@ app.get('/api/google/home/oauth-debug', async (req, res) => {
 });
 
 app.post('/api/google/home/oauth-debug-cookie', async (req, res) => {
+    if (!GOOGLE_DEBUG_ENDPOINTS_ENABLED) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
     const portalTokenRaw = req.body?.portal_session_token;
     const portalToken = typeof portalTokenRaw === 'string' ? portalTokenRaw.trim() : '';
 
@@ -4886,6 +5011,10 @@ app.post('/api/internal/google/homegraph/report-state', requireGoogleHomegraphAd
 });
 
 app.get('/api/google/home/homegraph-debug', async (req, res) => {
+    if (!GOOGLE_DEBUG_ENDPOINTS_ENABLED) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
     try {
         await ensureGoogleRuntimeSchemaReady();
     } catch (error) {
@@ -4922,6 +5051,10 @@ app.get('/api/google/home/homegraph-debug', async (req, res) => {
 });
 
 app.get('/api/google/home/entity-debug', async (req, res) => {
+    if (!GOOGLE_DEBUG_ENDPOINTS_ENABLED) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
     try {
         await ensureGoogleRuntimeSchemaReady();
     } catch (error) {
@@ -5356,6 +5489,14 @@ app.post('/api/internal/verify-token', async (req, res) => {
         return reject('Internal verification error');
     }
 });
+
+try {
+    getPortalSecret();
+    getAdminSecret();
+} catch (error) {
+    console.error('CRITICAL CONFIG ERROR:', error.message);
+    process.exit(1);
+}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

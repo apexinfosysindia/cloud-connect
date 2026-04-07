@@ -22,6 +22,10 @@
     const googleHomeEnableBtn = document.getElementById('googleHomeEnableBtn');
     const googleHomeDisableBtn = document.getElementById('googleHomeDisableBtn');
     const googleHomeEntities = document.getElementById('googleHomeEntities');
+    const googleConsentCard = document.getElementById('googleConsentCard');
+    const googleConsentMeta = document.getElementById('googleConsentMeta');
+    const googleConsentApproveBtn = document.getElementById('googleConsentApproveBtn');
+    const googleConsentDenyBtn = document.getElementById('googleConsentDenyBtn');
     const portalBrandTitle = 'ApexOS Cloud Connect Oasis';
     const loginTitle = `Sign In | ${portalBrandTitle}`;
     const signupTitle = `Create Account | ${portalBrandTitle}`;
@@ -30,6 +34,7 @@
     const GOOGLE_ENTITIES_REFRESH_MS = 15000;
     let accountRefreshTimer = null;
     let accountRefreshInFlight = false;
+    let accountRenderFingerprint = '';
     let googleOAuthRedirectInFlight = false;
     let googleEntitiesRefreshTimer = null;
     let googleEntitiesRefreshInFlight = false;
@@ -41,6 +46,8 @@
     const googleOAuthRedirectUri = oauthParams.get('redirect_uri') || '';
     const googleOAuthState = oauthParams.get('state') || '';
     const googleOAuthError = oauthParams.get('error') || '';
+    const googleOAuthConsentMode = oauthParams.get('google_oauth_consent') === '1';
+    const googleOAuthChallengeParam = oauthParams.get('oauth_challenge') || '';
     const googleOAuthCookieProbeKey = [
         'apx_google_oauth_cookie_probe',
         googleOAuthClientId,
@@ -193,10 +200,14 @@
         hideAlert();
         scrollToAccountShell();
 
-        if (googleOAuthMode) {
+        if (googleOAuthMode && !googleOAuthConsentMode) {
             window.setTimeout(() => {
                 maybeContinueGoogleOAuthFromCookie();
             }, 80);
+        }
+
+        if (googleOAuthConsentMode) {
+            showAlert('Sign in to review and approve Google Assistant access.', false);
         }
     }
 
@@ -214,10 +225,14 @@
         hideAlert();
         scrollToAccountShell();
 
-        if (googleOAuthMode) {
+        if (googleOAuthMode && !googleOAuthConsentMode) {
             window.setTimeout(() => {
                 maybeContinueGoogleOAuthFromCookie();
             }, 80);
+        }
+
+        if (googleOAuthConsentMode) {
+            showAlert('Sign in to review and approve Google Assistant access.', false);
         }
     }
 
@@ -269,6 +284,25 @@
         };
     }
 
+    function buildAccountRenderFingerprint(userData) {
+        if (!userData || typeof userData !== 'object') {
+            return '';
+        }
+
+        return [
+            userData.status || '',
+            userData.subdomain || '',
+            userData.domain || '',
+            userData.access_token || '',
+            userData.google_home_enabled ? '1' : '0',
+            userData.google_home_linked ? '1' : '0',
+            userData.trial_ends_at || '',
+            userData.trial_approved_at || '',
+            userData.activated_at || '',
+            userData.payment_pending ? '1' : '0'
+        ].join('|');
+    }
+
     function escapeHtml(value) {
         return String(value || '')
             .replaceAll('&', '&amp;')
@@ -294,6 +328,32 @@
         }
 
         return parts[0].length > 10 && parts[1].length >= 32;
+    }
+
+    function parseGoogleOauthChallenge(encodedChallenge) {
+        if (!encodedChallenge) {
+            return null;
+        }
+
+        try {
+            const decoded = JSON.parse(decodeURIComponent(encodedChallenge));
+            const clientId = String(decoded?.client_id || '').trim();
+            const redirectUri = String(decoded?.redirect_uri || '').trim();
+            const state = String(decoded?.state || '').trim();
+            const portalToken = String(decoded?.portal_session_token || '').trim();
+            if (!clientId || !redirectUri || !isWellFormedPortalToken(portalToken)) {
+                return null;
+            }
+
+            return {
+                client_id: clientId,
+                redirect_uri: redirectUri,
+                state,
+                portal_session_token: portalToken
+            };
+        } catch (_error) {
+            return null;
+        }
     }
 
     async function loadGoogleHomeEntities(userData) {
@@ -384,6 +444,7 @@
     }
 
     function renderDashboard(userData, options = {}) {
+        accountRenderFingerprint = buildAccountRenderFingerprint(userData);
         const shouldScroll = options.scroll !== false;
         if (loginForm) loginForm.classList.add('hidden');
         if (signupForm) signupForm.classList.add('hidden');
@@ -405,6 +466,10 @@
         statusBadge.textContent = tone.label;
         document.getElementById('dashStatusTitle').textContent = tone.title;
         document.getElementById('dashStatusDetail').textContent = getStatusMessage(userData);
+
+        if (googleConsentCard) {
+            googleConsentCard.classList.add('hidden');
+        }
 
         const billingCard = document.getElementById('billingCard');
         const tokenCard = document.getElementById('tokenCard');
@@ -569,6 +634,120 @@
         }
     }
 
+    function renderGoogleConsentCard(userData, challenge) {
+        if (!googleConsentCard) {
+            showAlert('Consent screen unavailable. Please try again.');
+            return;
+        }
+
+        if (loginForm) loginForm.classList.add('hidden');
+        if (signupForm) signupForm.classList.add('hidden');
+        if (dashboard) dashboard.classList.remove('hidden');
+
+        setHeaderState(userData || null);
+        setPageTitle(dashboardTitle);
+        accountTitle.textContent = 'Confirm Google Assistant Access';
+        headerSubtitle.textContent = 'Authorize Apex Connect+ for Google Assistant account linking.';
+        hideAlert();
+
+        const statusCard = document.getElementById('statusCard');
+        const detailGrid = dashboard ? dashboard.querySelector('.detail-grid') : null;
+        const logoutButton = document.getElementById('logoutBtn');
+
+        if (statusCard) {
+            statusCard.classList.add('hidden');
+        }
+
+        if (detailGrid) {
+            for (const card of detailGrid.children) {
+                if (card.id !== 'googleConsentCard') {
+                    card.classList.add('hidden');
+                }
+            }
+        }
+
+        if (logoutButton) {
+            logoutButton.classList.remove('hidden');
+        }
+
+        if (googleConsentMeta) {
+            const safeEmail = escapeHtml(userData?.email || 'your account');
+            let redirectHost = challenge.redirect_uri;
+            try {
+                redirectHost = new URL(challenge.redirect_uri).host;
+            } catch (_error) {
+                redirectHost = challenge.redirect_uri;
+            }
+
+            googleConsentMeta.innerHTML = `
+                <div><strong>Google Client:</strong> ${escapeHtml(challenge.client_id)}</div>
+                <div><strong>Redirect Host:</strong> ${escapeHtml(redirectHost)}</div>
+                <div><strong>Account:</strong> ${safeEmail}</div>
+            `;
+        }
+
+        googleConsentCard.classList.remove('hidden');
+        stopGoogleEntitiesAutoRefresh();
+        stopAccountAutoRefresh();
+    }
+
+    function handleGoogleConsentFlow(userData) {
+        if (!googleOAuthMode || !googleOAuthConsentMode) {
+            return false;
+        }
+
+        const challenge = parseGoogleOauthChallenge(googleOAuthChallengeParam);
+        if (!challenge) {
+            showAlert('Invalid Google consent request. Please start linking again.');
+            return true;
+        }
+
+        if (!userData?.portal_session_token || userData.portal_session_token !== challenge.portal_session_token) {
+            showAlert('Please sign in again to continue Google linking.', false);
+            return true;
+        }
+
+        renderGoogleConsentCard(userData, challenge);
+
+        if (googleConsentApproveBtn) {
+            googleConsentApproveBtn.onclick = () => {
+                googleConsentApproveBtn.disabled = true;
+                googleConsentApproveBtn.textContent = 'Authorizing...';
+
+                try {
+                    const authorizeUrl = new URL('/api/google/home/oauth', window.location.origin);
+                    authorizeUrl.searchParams.set('client_id', challenge.client_id);
+                    authorizeUrl.searchParams.set('redirect_uri', challenge.redirect_uri);
+                    authorizeUrl.searchParams.set('response_type', 'code');
+                    authorizeUrl.searchParams.set('state', challenge.state || '');
+                    authorizeUrl.searchParams.set('portal_session_token', challenge.portal_session_token);
+                    authorizeUrl.searchParams.set('approved', '1');
+                    window.location.assign(authorizeUrl.toString());
+                } catch (_error) {
+                    showAlert('Unable to continue Google authorization. Please try again.');
+                    googleConsentApproveBtn.disabled = false;
+                    googleConsentApproveBtn.textContent = 'Allow and Continue';
+                }
+            };
+        }
+
+        if (googleConsentDenyBtn) {
+            googleConsentDenyBtn.onclick = () => {
+                const redirectUri = challenge.redirect_uri;
+                const denyUrl = new URL('/api/google/home/oauth', window.location.origin);
+                denyUrl.searchParams.set('client_id', challenge.client_id);
+                denyUrl.searchParams.set('redirect_uri', redirectUri);
+                denyUrl.searchParams.set('response_type', 'code');
+                denyUrl.searchParams.set('state', challenge.state || '');
+                denyUrl.searchParams.set('portal_session_token', challenge.portal_session_token);
+                denyUrl.searchParams.set('deny', '1');
+                window.location.assign(denyUrl.toString());
+            };
+        }
+
+        return true;
+    }
+
     function stopAccountAutoRefresh() {
         if (accountRefreshTimer) {
             window.clearInterval(accountRefreshTimer);
@@ -695,8 +874,21 @@
                 throw refreshError;
             }
 
-            localStorage.setItem('apex_user', JSON.stringify(data.data));
-            renderDashboard(data.data, { scroll: false });
+            const nextData = data.data || {};
+            const previousData = storedUser || {};
+            const nextFingerprint = buildAccountRenderFingerprint(nextData);
+            const previousFingerprint = buildAccountRenderFingerprint(previousData);
+            const onlySessionTokenChanged = nextFingerprint === previousFingerprint
+                && nextData.portal_session_token
+                && previousData.portal_session_token
+                && nextData.portal_session_token !== previousData.portal_session_token;
+
+            localStorage.setItem('apex_user', JSON.stringify(nextData));
+
+            if (!onlySessionTokenChanged || nextFingerprint !== accountRenderFingerprint) {
+                accountRenderFingerprint = nextFingerprint;
+                renderDashboard(nextData, { scroll: false });
+            }
         } catch (err) {
             if (err?.status === 401 || err?.status === 404) {
                 void clearSessionAndShowAuth();
@@ -1057,14 +1249,18 @@
                 showAlert('Your session needs refresh. Please sign in again to continue Google linking.', false);
             }
         } else {
+            accountRenderFingerprint = buildAccountRenderFingerprint(parsedUser);
             renderDashboard(parsedUser);
-            refreshAccountState({ silent: true });
+            const handledConsent = handleGoogleConsentFlow(parsedUser);
+            if (!handledConsent) {
+                refreshAccountState({ silent: true });
 
-            document.addEventListener('visibilitychange', () => {
-                if (document.visibilityState === 'visible') {
-                    refreshAccountState({ silent: true });
-                }
-            });
+                document.addEventListener('visibilitychange', () => {
+                    if (document.visibilityState === 'visible') {
+                        refreshAccountState({ silent: true });
+                    }
+                });
+            }
         }
     } else if (pageMode === 'signup') {
         showSignupView();
@@ -1073,6 +1269,8 @@
     }
 
     if (googleOAuthMode && !storedUser) {
-        showAlert('Sign in to continue Google account linking.', false);
+        showAlert(googleOAuthConsentMode
+            ? 'Sign in to review and approve Google Assistant access.'
+            : 'Sign in to continue Google account linking.', false);
     }
 })();
