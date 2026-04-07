@@ -660,7 +660,7 @@
     }
 
     function handleGoogleConsentFlow(userData) {
-        if (!googleOAuthMode || !googleOAuthConsentMode) {
+        if (!isGoogleOauthLinkingIntent() || !googleOAuthConsentMode) {
             return false;
         }
 
@@ -670,7 +670,11 @@
             return true;
         }
 
-        if (!userData?.portal_session_token || userData.portal_session_token !== challenge.portal_session_token) {
+        const activePortalToken = isWellFormedPortalToken(userData?.portal_session_token)
+            ? String(userData.portal_session_token).trim()
+            : '';
+
+        if (!activePortalToken) {
             showAlert('Please sign in again to continue Google linking.', false);
             return true;
         }
@@ -688,7 +692,7 @@
                     authorizeUrl.searchParams.set('redirect_uri', challenge.redirect_uri);
                     authorizeUrl.searchParams.set('response_type', 'code');
                     authorizeUrl.searchParams.set('state', challenge.state || '');
-                    authorizeUrl.searchParams.set('portal_session_token', challenge.portal_session_token);
+                    authorizeUrl.searchParams.set('portal_session_token', activePortalToken);
                     authorizeUrl.searchParams.set('approved', '1');
                     window.location.assign(authorizeUrl.toString());
                 } catch (_error) {
@@ -707,7 +711,7 @@
                 denyUrl.searchParams.set('redirect_uri', redirectUri);
                 denyUrl.searchParams.set('response_type', 'code');
                 denyUrl.searchParams.set('state', challenge.state || '');
-                denyUrl.searchParams.set('portal_session_token', challenge.portal_session_token);
+                denyUrl.searchParams.set('portal_session_token', activePortalToken);
                 denyUrl.searchParams.set('deny', '1');
                 window.location.assign(denyUrl.toString());
             };
