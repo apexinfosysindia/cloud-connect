@@ -125,6 +125,7 @@ const GOOGLE_HOME_ENTITIES_TABLE_SCHEMA = `
         room_hint TEXT,
         exposed INTEGER NOT NULL DEFAULT 1,
         online INTEGER NOT NULL DEFAULT 1,
+        entity_last_seen_at DATETIME,
         state_json TEXT,
         state_hash TEXT,
         last_reported_state_hash TEXT,
@@ -178,9 +179,11 @@ const DEVICE_SCHEMA_STATEMENTS = [
     'ALTER TABLE users ADD COLUMN google_home_enabled INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE users ADD COLUMN google_home_linked INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE users ADD COLUMN google_home_linked_at DATETIME',
+    'ALTER TABLE google_home_entities ADD COLUMN entity_last_seen_at DATETIME',
     'ALTER TABLE google_home_entities ADD COLUMN state_hash TEXT',
     'ALTER TABLE google_home_entities ADD COLUMN last_reported_state_hash TEXT',
-    'ALTER TABLE google_home_entities ADD COLUMN last_reported_at DATETIME'
+    'ALTER TABLE google_home_entities ADD COLUMN last_reported_at DATETIME',
+    'CREATE INDEX IF NOT EXISTS idx_google_home_entities_user_last_seen ON google_home_entities(user_id, entity_last_seen_at)'
 ];
 
 const USERS_REBUILD_COLUMNS = [

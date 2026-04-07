@@ -356,6 +356,43 @@ function isDeviceOnline(lastSeenAt) {
     return (Date.now() - lastSeenEpoch) <= (getHeartbeatWindowSeconds() * 1000);
 }
 
+function getEntityFreshWindowSeconds() {
+    const base = getHeartbeatWindowSeconds();
+    const computed = Math.max(30, Math.round(base * 2.5));
+    return Math.min(900, computed);
+}
+
+function isEntityFresh(entityLastSeenAt) {
+    if (!entityLastSeenAt) {
+        return false;
+    }
+
+    const lastSeenEpoch = new Date(entityLastSeenAt).getTime();
+    if (!Number.isFinite(lastSeenEpoch)) {
+        return false;
+    }
+
+    return (Date.now() - lastSeenEpoch) <= (getEntityFreshWindowSeconds() * 1000);
+}
+
+function isEntityEffectivelyOnline(entityRow) {
+    if (!entityRow) {
+        return false;
+    }
+
+    const deviceOnline = isDeviceOnline(entityRow.last_seen_at);
+    if (!deviceOnline) {
+        return false;
+    }
+
+    const entityFresh = isEntityFresh(entityRow.entity_last_seen_at || entityRow.updated_at);
+    if (!entityFresh) {
+        return false;
+    }
+
+    return Number(entityRow.online) !== 0;
+}
+
 function getHeartbeatIntervalSeconds() {
     if (!Number.isFinite(DEVICE_HEARTBEAT_INTERVAL_SECONDS)) {
         return 20;
@@ -1053,6 +1090,21 @@ function parseGoogleEntityState(entity) {
     };
 }
 
+function withEffectiveGoogleOnline(entity) {
+    if (!entity) {
+        return entity;
+    }
+
+    const effectiveOnline = isEntityEffectivelyOnline(entity);
+    return {
+        ...entity,
+        online: effectiveOnline ? 1 : 0,
+        effective_online: effectiveOnline ? 1 : 0,
+        device_online: isDeviceOnline(entity.last_seen_at) ? 1 : 0,
+        entity_fresh: isEntityFresh(entity.entity_last_seen_at || entity.updated_at) ? 1 : 0
+    };
+}
+
 async function getGoogleEntitiesForUser(userId, options = {}) {
     const includeDisabled = Boolean(options.includeDisabled);
     const rows = includeDisabled
@@ -1084,11 +1136,14 @@ async function getGoogleEntitiesForUser(userId, options = {}) {
             [userId]
         );
 
-    return (rows || []).map((row) => ({
-        ...row,
-        online: isDeviceOnline(row.last_seen_at) ? 1 : 0
-    }));
+    return (rows || []).map((row) => withEffectiveGoogleOnline(row));
 }
+
+setInterval(() => {
+    markGoogleEntitiesStaleByFreshness().catch((error) => {
+        console.error('GOOGLE ENTITY STALE MARK ERROR:', error);
+    });
+}, 30000).unref?.();
 
 async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
     const entityId = sanitizeEntityId(payload?.entity_id);
@@ -1099,7 +1154,7 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
     const displayName = sanitizeString(payload?.display_name, 120) || entityId;
     const entityType = mapGoogleDomainToEntityType(entityId, normalizeGoogleEntityType(payload?.entity_type));
     const roomHint = sanitizeString(payload?.room_hint, 120);
-    const online = 1;
+    const online = payload?.online === false ? 0 : 1;
     const stateJson = JSON.stringify(payload?.state || {}).slice(0, 2500);
     const entityState = parseGoogleEntityState({
         entity_type: entityType,
@@ -1134,12 +1189,13 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
                     entity_type = ?,
                     room_hint = ?,
                     online = ?,
+                    entity_last_seen_at = ?,
                     state_json = ?,
                     state_hash = ?,
                     updated_at = ?
                 WHERE id = ?
             `,
-            [deviceId, displayName, entityType, roomHint, online, stateJson, stateHash, nowIso, existing.id]
+            [deviceId, displayName, entityType, roomHint, online, nowIso, stateJson, stateHash, nowIso, existing.id]
         );
     } else {
         await dbRun(
@@ -1153,14 +1209,15 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
                     room_hint,
                     exposed,
                     online,
+                    entity_last_seen_at,
                     state_json,
                     state_hash,
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
             `,
-            [userId, deviceId, entityId, displayName, entityType, roomHint, online, stateJson, stateHash, nowIso, nowIso]
+            [userId, deviceId, entityId, displayName, entityType, roomHint, online, nowIso, stateJson, stateHash, nowIso, nowIso]
         );
     }
 
@@ -2200,8 +2257,7 @@ async function collectGoogleReportableStateChangesForUser(userId, options = {}) 
         }
 
         const parsedState = {
-            online: row.online !== 0,
-            ...parseGoogleEntityState(row)
+            ...parseGoogleEntityState(withEffectiveGoogleOnline(row))
         };
         const stateHash = computeGoogleStateHash(parsedState);
         const lastReportedHash = row.last_reported_state_hash || null;
@@ -2240,6 +2296,22 @@ async function markGoogleReportedStateHashes(userId, stateHashesByEntityId) {
     }
 }
 
+async function markGoogleEntitiesStaleByFreshness() {
+    const freshnessThresholdIso = new Date(Date.now() - (getEntityFreshWindowSeconds() * 1000)).toISOString();
+    const nowIso = new Date().toISOString();
+
+    await dbRun(
+        `
+            UPDATE google_home_entities
+            SET online = 0,
+                updated_at = ?
+            WHERE online = 1
+              AND (entity_last_seen_at IS NULL OR entity_last_seen_at < ?)
+        `,
+        [nowIso, freshnessThresholdIso]
+    );
+}
+
 function scheduleGoogleReportStateForUser(userId, options = {}) {
     if (!GOOGLE_HOMEGRAPH_REPORT_STATE_ENABLED || !hasGoogleHomegraphCredentials()) {
         return;
@@ -2265,6 +2337,8 @@ function scheduleGoogleReportStateForUser(userId, options = {}) {
             if (!user || !user.google_home_enabled || !user.google_home_linked) {
                 return;
             }
+
+            await markGoogleEntitiesStaleByFreshness();
 
             const reportable = await collectGoogleReportableStateChangesForUser(normalizedUserId, { force });
             const entityIds = Object.keys(reportable.states);
@@ -3140,6 +3214,8 @@ app.post('/api/account/google-home/entities', requirePortalUser, async (req, res
                 room_hint: entity.room_hint,
                 exposed: Boolean(entity.exposed),
                 online: Boolean(entity.online),
+                device_online: Boolean(entity.device_online),
+                entity_fresh: Boolean(entity.entity_fresh),
                 state: parseJsonSafe(entity.state_json, {}),
                 device_id: entity.device_id,
                 updated_at: entity.updated_at
@@ -3540,9 +3616,11 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
     const intent = sanitizeString(input.intent, 120) || '';
 
     try {
+        await markGoogleEntitiesStaleByFreshness();
+
         if (intent === 'action.devices.SYNC') {
             const entities = await getGoogleEntitiesForUser(req.googleUser.id, { includeDisabled: false });
-            const devices = entities.map((entity) => buildGoogleDeviceObject(entity));
+            const devices = entities.map((entity) => buildGoogleDeviceObject(withEffectiveGoogleOnline(entity)));
 
             return res.status(200).json({
                 requestId,
@@ -3575,8 +3653,8 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                     continue;
                 }
 
-                const deviceOnline = isDeviceOnline(entity.last_seen_at);
-                if (!deviceOnline) {
+                const effectiveEntity = withEffectiveGoogleOnline(entity);
+                if (effectiveEntity.online !== 1) {
                     devicesState[entityId] = {
                         online: false,
                         status: 'ERROR',
@@ -3585,7 +3663,7 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                     continue;
                 }
 
-                devicesState[entityId] = parseGoogleEntityState(entity);
+                devicesState[entityId] = parseGoogleEntityState(effectiveEntity);
             }
 
             return res.status(200).json({
@@ -3615,6 +3693,15 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
 
                     const entity = entitiesMap.get(entityId);
                     if (!entity) {
+                        commandResults.push({
+                            ids: [entityId],
+                            status: 'ERROR',
+                            errorCode: 'deviceOffline'
+                        });
+                        continue;
+                    }
+
+                    if (!isEntityEffectivelyOnline(entity)) {
                         commandResults.push({
                             ids: [entityId],
                             status: 'ERROR',
@@ -3753,6 +3840,7 @@ app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async 
         const device = req.device;
         const user = await dbGet(`SELECT * FROM users WHERE id = ?`, [device.user_id]);
         const nowIso = new Date().toISOString();
+        await markGoogleEntitiesStaleByFreshness();
         if (!user || !user.google_home_enabled) {
             await dbRun(
                 `
@@ -3832,29 +3920,32 @@ app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async 
         );
         const beforeSet = new Set((beforeRows || []).map((row) => sanitizeEntityId(row.entity_id)).filter(Boolean));
 
-        if (uniqueIncomingEntityIds.length > 0) {
+        const fullSnapshot = req.body?.full_snapshot !== false;
+        if (fullSnapshot && uniqueIncomingEntityIds.length > 0) {
             const placeholders = uniqueIncomingEntityIds.map(() => '?').join(',');
             await dbRun(
                 `
                     UPDATE google_home_entities
                     SET online = 0,
+                        entity_last_seen_at = ?,
                         updated_at = ?
                     WHERE user_id = ?
                       AND device_id = ?
                       AND entity_id NOT IN (${placeholders})
                 `,
-                [nowIso, device.user_id, device.id, ...uniqueIncomingEntityIds]
+                [nowIso, nowIso, device.user_id, device.id, ...uniqueIncomingEntityIds]
             );
-        } else {
+        } else if (fullSnapshot) {
             await dbRun(
                 `
                     UPDATE google_home_entities
                     SET online = 0,
+                        entity_last_seen_at = ?,
                         updated_at = ?
                     WHERE user_id = ?
                       AND device_id = ?
                 `,
-                [nowIso, device.user_id, device.id]
+                [nowIso, nowIso, device.user_id, device.id]
             );
         }
 
@@ -4040,6 +4131,7 @@ app.post('/api/internal/devices/google-home/commands/:id/result', requireDeviceA
                     UPDATE google_home_entities
                     SET state_json = ?,
                         online = 1,
+                        entity_last_seen_at = ?,
                         state_hash = ?,
                         updated_at = ?
                     WHERE user_id = ?
@@ -4048,6 +4140,7 @@ app.post('/api/internal/devices/google-home/commands/:id/result', requireDeviceA
                 `,
                 [
                     stateJson,
+                    nowIso,
                     stateHash,
                     nowIso,
                     command.user_id,
@@ -4175,6 +4268,7 @@ app.get('/api/google/home/homegraph-debug', async (req, res) => {
         api_base_url: getGoogleHomegraphApiBaseUrl(),
         request_sync_debounce_ms: getGoogleHomegraphRequestSyncDebounceMs(),
         report_state_debounce_ms: getGoogleHomegraphReportStateDebounceMs(),
+        entity_fresh_window_seconds: getEntityFreshWindowSeconds(),
         token_cache_valid: tokenCacheValid,
         queued_request_sync_users: Array.from(googleHomegraphRequestSyncQueue.keys()),
         queued_report_state_users: Array.from(googleHomegraphReportStateQueue.keys()),
@@ -4199,6 +4293,8 @@ app.get('/api/google/home/entity-debug', async (req, res) => {
             return res.status(404).json({ error: 'user_not_found' });
         }
 
+        await markGoogleEntitiesStaleByFreshness();
+
         const rows = await dbAll(
             `
                 SELECT
@@ -4207,6 +4303,7 @@ app.get('/api/google/home/entity-debug', async (req, res) => {
                     ge.entity_type,
                     ge.exposed,
                     ge.online AS stored_entity_online,
+                    ge.entity_last_seen_at,
                     ge.updated_at,
                     ge.last_reported_at,
                     d.id AS device_id,
@@ -4229,7 +4326,14 @@ app.get('/api/google/home/entity-debug', async (req, res) => {
             exposed: Boolean(row.exposed),
             stored_entity_online: Boolean(row.stored_entity_online),
             device_online: isDeviceOnline(row.last_seen_at),
-            effective_online: isDeviceOnline(row.last_seen_at),
+            entity_last_seen_at: row.entity_last_seen_at,
+            entity_fresh: isEntityFresh(row.entity_last_seen_at || row.updated_at),
+            effective_online: isEntityEffectivelyOnline({
+                online: row.stored_entity_online,
+                last_seen_at: row.last_seen_at,
+                entity_last_seen_at: row.entity_last_seen_at,
+                updated_at: row.updated_at
+            }),
             device_id: row.device_id,
             device_uid: row.device_uid,
             device_last_seen_at: row.last_seen_at,
@@ -4239,6 +4343,8 @@ app.get('/api/google/home/entity-debug', async (req, res) => {
         }));
 
         const onlineCount = entities.filter((entity) => entity.effective_online).length;
+        const availableCount = entities.filter((entity) => entity.stored_entity_online).length;
+        const staleCount = entities.filter((entity) => !entity.entity_fresh).length;
 
         return res.status(200).json({
             user: {
@@ -4250,7 +4356,9 @@ app.get('/api/google/home/entity-debug', async (req, res) => {
             totals: {
                 entities: entities.length,
                 online: onlineCount,
-                offline: Math.max(0, entities.length - onlineCount)
+                offline: Math.max(0, entities.length - onlineCount),
+                entity_available: availableCount,
+                entity_stale: staleCount
             },
             entities
         });
