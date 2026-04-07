@@ -19,8 +19,6 @@
     const dashUrlHelp = document.getElementById('dashUrlHelp');
     const googleHomeCard = document.getElementById('googleHomeCard');
     const googleHomeStatus = document.getElementById('googleHomeStatus');
-    const googleHomeEnableBtn = document.getElementById('googleHomeEnableBtn');
-    const googleHomeDisableBtn = document.getElementById('googleHomeDisableBtn');
     const googleHomeEntities = document.getElementById('googleHomeEntities');
     const googleConsentCard = document.getElementById('googleConsentCard');
     const googleConsentMeta = document.getElementById('googleConsentMeta');
@@ -118,8 +116,12 @@
         }
     }
 
+    function isGoogleOauthLinkingIntent() {
+        return googleOAuthMode || googleOAuthConsentMode;
+    }
+
     function maybeContinueGoogleOAuthFromCookie() {
-        if (!googleOAuthMode || googleOAuthRedirectInFlight) {
+        if (!isGoogleOauthLinkingIntent() || googleOAuthConsentMode || googleOAuthRedirectInFlight) {
             return;
         }
 
@@ -200,7 +202,7 @@
         hideAlert();
         scrollToAccountShell();
 
-        if (googleOAuthMode && !googleOAuthConsentMode) {
+        if (isGoogleOauthLinkingIntent() && !googleOAuthConsentMode) {
             window.setTimeout(() => {
                 maybeContinueGoogleOAuthFromCookie();
             }, 80);
@@ -225,7 +227,7 @@
         hideAlert();
         scrollToAccountShell();
 
-        if (googleOAuthMode && !googleOAuthConsentMode) {
+        if (isGoogleOauthLinkingIntent() && !googleOAuthConsentMode) {
             window.setTimeout(() => {
                 maybeContinueGoogleOAuthFromCookie();
             }, 80);
@@ -399,50 +401,6 @@
         }
     }
 
-    async function setGoogleHomeEnabled(userData, enabled, triggerButton) {
-        if (!userData?.portal_session_token) {
-            showAlert('Please log in again to continue.');
-            return;
-        }
-
-        const originalLabel = triggerButton ? triggerButton.textContent : '';
-        if (triggerButton) {
-            triggerButton.disabled = true;
-            triggerButton.textContent = enabled ? 'Enabling...' : 'Disabling...';
-        }
-
-        try {
-            const res = await fetch('/api/account/google-home/enable', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    portal_session_token: userData.portal_session_token,
-                    enabled
-                })
-            });
-
-            const data = await res.json();
-            if (!res.ok) {
-                throw new Error(data.error || 'Unable to update Google Home setting');
-            }
-
-            localStorage.setItem('apex_user', JSON.stringify(data.data));
-            googleEntitiesLastFingerprint = null;
-            renderDashboard(data.data, { scroll: false });
-            if (enabled) {
-                void appendGoogleOAuthPortalToken(data.data);
-            }
-            showAlert(data.message, false);
-        } catch (error) {
-            showAlert(error.message);
-        } finally {
-            if (triggerButton) {
-                triggerButton.disabled = false;
-                triggerButton.textContent = originalLabel;
-            }
-        }
-    }
-
     function renderDashboard(userData, options = {}) {
         accountRenderFingerprint = buildAccountRenderFingerprint(userData);
         const shouldScroll = options.scroll !== false;
@@ -484,34 +442,29 @@
         document.getElementById('dashToken').textContent = userData.access_token || 'Issued when service is enabled';
 
         if (googleHomeCard) {
-            const showGoogleCard = accessEnabled;
+            const linked = Boolean(userData.google_home_linked);
+            const showGoogleCard = accessEnabled && linked;
             googleHomeCard.classList.toggle('hidden', !showGoogleCard);
             if (showGoogleCard) {
-                const enabled = Boolean(userData.google_home_enabled);
-                const linked = Boolean(userData.google_home_linked);
                 if (googleHomeStatus) {
-                    googleHomeStatus.textContent = enabled
-                        ? (linked ? 'Enabled and linked to Google' : 'Enabled (not linked yet)')
-                        : 'Disabled';
+                    googleHomeStatus.textContent = 'Linked to Google';
                 }
-                if (googleHomeEnableBtn) {
-                    googleHomeEnableBtn.classList.toggle('hidden', enabled);
+
+                const nextRefreshKey = getGoogleEntitiesRefreshKey(userData);
+                if (googleEntitiesRefreshKey !== nextRefreshKey || googleEntitiesLastFingerprint === null) {
+                    void loadGoogleHomeEntities(userData);
                 }
-                if (googleHomeDisableBtn) {
-                    googleHomeDisableBtn.classList.toggle('hidden', !enabled);
-                }
-                if (!enabled && googleHomeEntities) {
-                    googleHomeEntities.innerHTML = '<p class="detail-copy">Enable Google Home to manage exposed entities.</p>';
-                    googleEntitiesLastFingerprint = null;
-                    stopGoogleEntitiesAutoRefresh();
-                } else {
-                    const nextRefreshKey = getGoogleEntitiesRefreshKey(userData);
-                    if (googleEntitiesRefreshKey !== nextRefreshKey || googleEntitiesLastFingerprint === null) {
-                        void loadGoogleHomeEntities(userData);
-                    }
-                    startGoogleEntitiesAutoRefresh(userData);
-                }
+                startGoogleEntitiesAutoRefresh(userData);
             } else {
+                if (googleHomeStatus) {
+                    googleHomeStatus.textContent = accessEnabled
+                        ? 'Link Apex Connect+ in Google Home app to manage exposed entities.'
+                        : 'Available after account activation.';
+                }
+                if (googleHomeEntities) {
+                    googleHomeEntities.innerHTML = '<p class="detail-copy">Link Apex Connect+ in Google Home app to manage exposed entities.</p>';
+                }
+                googleEntitiesLastFingerprint = null;
                 stopGoogleEntitiesAutoRefresh();
             }
         } else {
@@ -582,7 +535,7 @@
             return;
         }
 
-        if (!googleOAuthMode) {
+        if (!isGoogleOauthLinkingIntent() || googleOAuthConsentMode) {
             googleOAuthRedirectInFlight = false;
             return;
         }
@@ -591,6 +544,12 @@
         if (oauthError) {
             googleOAuthRedirectInFlight = false;
             showAlert(`Google link failed: ${oauthError}`);
+            return;
+        }
+
+        const challenge = parseGoogleOauthChallenge(googleOAuthChallengeParam);
+        if (googleOAuthConsentMode && challenge) {
+            googleOAuthRedirectInFlight = false;
             return;
         }
 
@@ -613,7 +572,8 @@
         }
 
         if (userData.google_home_enabled !== true) {
-            showAlert('Enable Google Home integration in dashboard first.');
+            googleOAuthRedirectInFlight = false;
+            showAlert('Google Home link is not active. Start linking again from Google Home app.');
             return;
         }
 
@@ -779,7 +739,7 @@
     }
 
     function getGoogleEntitiesRefreshKey(userData) {
-        if (!userData?.portal_session_token) {
+        if (!userData?.portal_session_token || !userData?.google_home_linked) {
             return '';
         }
 
@@ -802,7 +762,7 @@
         }
 
         const storedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
-        if (!storedUser?.portal_session_token || !storedUser.google_home_enabled) {
+        if (!storedUser?.portal_session_token || !storedUser.google_home_linked) {
             stopGoogleEntitiesAutoRefresh();
             return;
         }
@@ -839,7 +799,7 @@
     }
 
     function startGoogleEntitiesAutoRefresh(userData) {
-        if (!userData?.portal_session_token || !userData.google_home_enabled) {
+        if (!userData?.portal_session_token || !userData.google_home_linked) {
             stopGoogleEntitiesAutoRefresh();
             return;
         }
@@ -900,7 +860,7 @@
         } catch (err) {
             if (err?.status === 401 || err?.status === 404) {
                 void clearSessionAndShowAuth();
-                if (googleOAuthMode) {
+                if (isGoogleOauthLinkingIntent()) {
                     showAlert('Session expired. Sign in again to continue Google linking.');
                 }
                 return;
@@ -1091,20 +1051,6 @@
         });
     }
 
-    if (googleHomeEnableBtn) {
-        googleHomeEnableBtn.addEventListener('click', async () => {
-            const userData = JSON.parse(localStorage.getItem('apex_user') || 'null');
-            await setGoogleHomeEnabled(userData, true, googleHomeEnableBtn);
-        });
-    }
-
-    if (googleHomeDisableBtn) {
-        googleHomeDisableBtn.addEventListener('click', async () => {
-            const userData = JSON.parse(localStorage.getItem('apex_user') || 'null');
-            await setGoogleHomeEnabled(userData, false, googleHomeDisableBtn);
-        });
-    }
-
     if (googleHomeEntities) {
         googleHomeEntities.addEventListener('change', async (event) => {
             const toggle = event.target.closest('.google-entity-toggle');
@@ -1115,6 +1061,12 @@
             const userData = JSON.parse(localStorage.getItem('apex_user') || 'null');
             if (!userData?.portal_session_token) {
                 showAlert('Please log in again to continue.');
+                return;
+            }
+
+            if (!userData.google_home_linked) {
+                showAlert('Link Apex Connect+ in Google Home app first.');
+                toggle.checked = false;
                 return;
             }
 
@@ -1253,7 +1205,7 @@
                 showLoginView();
             }
 
-            if (googleOAuthMode) {
+            if (isGoogleOauthLinkingIntent()) {
                 showAlert('Your session needs refresh. Please sign in again to continue Google linking.', false);
             }
         } else {
@@ -1273,7 +1225,7 @@
         showLoginView();
     }
 
-    if (googleOAuthMode && !storedUser) {
+    if (isGoogleOauthLinkingIntent() && !storedUser) {
         showAlert(googleOAuthConsentMode
             ? 'Sign in to review and approve Google Assistant access.'
             : 'Sign in to continue Google account linking.', false);
