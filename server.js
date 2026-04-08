@@ -32,6 +32,7 @@ const GOOGLE_HOMEGRAPH_REPORT_STATE_DEBOUNCE_MS = Number(process.env.GOOGLE_HOME
 const GOOGLE_HOMEGRAPH_REPORT_STATE_ENABLED = process.env.GOOGLE_HOMEGRAPH_REPORT_STATE_ENABLED === '0' ? false : true;
 const GOOGLE_CAPABILITY_ENGINE_V2 = process.env.GOOGLE_CAPABILITY_ENGINE_V2 === '1';
 const GOOGLE_ENTITY_FRESH_WINDOW_SECONDS = Number(process.env.GOOGLE_ENTITY_FRESH_WINDOW_SECONDS || 0);
+const GOOGLE_ENTITY_AVAILABILITY_STRICT = process.env.GOOGLE_ENTITY_AVAILABILITY_STRICT === '1';
 const GOOGLE_DEBUG_ENDPOINTS_ENABLED = process.env.GOOGLE_DEBUG_ENDPOINTS_ENABLED === '1';
 const ALLOWED_CORS_ORIGINS = (process.env.ALLOWED_CORS_ORIGINS || '').split(',').map((item) => item.trim()).filter(Boolean);
 const PORTAL_SESSION_COOKIE_NAME = 'apx_portal_session';
@@ -493,6 +494,10 @@ function isEntityEffectivelyOnline(entityRow) {
     const entityFresh = isEntityFresh(entityRow.entity_last_seen_at || entityRow.updated_at || entityRow.last_seen_at);
     if (!entityFresh) {
         return false;
+    }
+
+    if (!GOOGLE_ENTITY_AVAILABILITY_STRICT) {
+        return true;
     }
 
     return Number(entityRow.online) !== 0;
@@ -3992,9 +3997,10 @@ app.get('/api/google/home/oauth', async (req, res) => {
         return res.status(400).send('Invalid redirect_uri');
     }
 
+    const loginRedirectBase = `/login.html?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
     const forceCustomerLogin = req.hostname !== CUSTOMER_PORTAL_HOST || req.query?.from_cookie !== '1';
     if (!portalToken) {
-        const loginRedirect = `/login.html?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
+        const loginRedirect = loginRedirectBase;
         if (forceCustomerLogin) {
             return res.redirect(`https://${CUSTOMER_PORTAL_HOST}${loginRedirect}`);
         }
@@ -4003,7 +4009,7 @@ app.get('/api/google/home/oauth', async (req, res) => {
 
     const session = verifyPortalSessionToken(portalToken);
     if (!session) {
-        const loginRedirect = `/login.html?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
+        const loginRedirect = loginRedirectBase;
         if (forceCustomerLogin) {
             return res.redirect(`https://${CUSTOMER_PORTAL_HOST}${loginRedirect}`);
         }
@@ -4043,11 +4049,19 @@ app.get('/api/google/home/oauth', async (req, res) => {
 
         const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [session.email]);
         if (!user) {
-            return res.status(404).send('Account not found');
+            const loginRedirect = `${loginRedirectBase}&google_oauth_error=account_not_found`;
+            if (forceCustomerLogin) {
+                return res.redirect(`https://${CUSTOMER_PORTAL_HOST}${loginRedirect}`);
+            }
+            return res.redirect(loginRedirect);
         }
 
         if (!isAccessEnabled(user.status)) {
-            return res.status(403).send('Account is not active for Google Home');
+            const loginRedirect = `${loginRedirectBase}&google_oauth_error=account_not_active`;
+            if (forceCustomerLogin) {
+                return res.redirect(`https://${CUSTOMER_PORTAL_HOST}${loginRedirect}`);
+            }
+            return res.redirect(loginRedirect);
         }
 
         if (req.query?.approved !== '1') {
@@ -4107,7 +4121,11 @@ app.get('/api/google/home/oauth', async (req, res) => {
         return res.redirect(callbackUrl.toString());
     } catch (error) {
         console.error('GOOGLE OAUTH AUTHORIZE ERROR:', error);
-        return res.status(500).send('Unable to authorize Google integration');
+        const loginRedirect = `${loginRedirectBase}&google_oauth_error=server_error`;
+        if (forceCustomerLogin) {
+            return res.redirect(`https://${CUSTOMER_PORTAL_HOST}${loginRedirect}`);
+        }
+        return res.redirect(loginRedirect);
     }
 });
 
@@ -4130,6 +4148,10 @@ app.post('/api/google/home/oauth/continue', async (req, res) => {
 
     if (clientId !== GOOGLE_HOME_CLIENT_ID) {
         return res.status(401).json({ error: 'invalid_client_id' });
+    }
+
+    if (!isTrustedGoogleRedirectUri(redirectUri)) {
+        return res.status(400).json({ error: 'invalid_redirect_uri' });
     }
 
     const session = verifyPortalSessionToken(portalToken);
@@ -5408,6 +5430,56 @@ app.get('/api/google/home/entity-debug', async (req, res) => {
         console.error('GOOGLE ENTITY DEBUG ERROR:', error);
         return res.status(500).json({ error: 'unable_to_load_entity_debug' });
     }
+});
+
+app.post('/api/google/home/oauth-probe', async (req, res) => {
+    const clientId = sanitizeString(req.body?.client_id || req.query?.client_id, 255);
+    const redirectUri = sanitizeString(req.body?.redirect_uri || req.query?.redirect_uri, 1000);
+    const state = sanitizeString(req.body?.state || req.query?.state, 1000);
+    const portalToken = sanitizeString(req.body?.portal_session_token || req.query?.portal_session_token || '', 4000);
+
+    const result = {
+        has_google_client_id: Boolean(GOOGLE_HOME_CLIENT_ID),
+        client_id_matches: clientId === GOOGLE_HOME_CLIENT_ID,
+        redirect_uri_trusted: isTrustedGoogleRedirectUri(redirectUri),
+        portal_token_well_formed: hasExactlyOneDot(portalToken),
+        has_cookie_token: Boolean(req.cookies?.[PORTAL_SESSION_COOKIE_NAME]),
+        redirect_host: (() => {
+            try {
+                return redirectUri ? new URL(redirectUri).host : null;
+            } catch (_error) {
+                return null;
+            }
+        })(),
+        allowed_redirect_hosts: GOOGLE_HOME_REDIRECT_URI_HOSTS
+    };
+
+    if (!clientId || !redirectUri || !portalToken) {
+        return res.status(200).json({ ok: false, error: 'missing_input', ...result });
+    }
+
+    const session = verifyPortalSessionToken(portalToken);
+    if (!session) {
+        return res.status(200).json({ ok: false, error: 'invalid_portal_session', ...result });
+    }
+
+    const user = await dbGet(`SELECT id, email, status, google_home_enabled, google_home_linked FROM users WHERE email = ? LIMIT 1`, [session.email]);
+    if (!user) {
+        return res.status(200).json({ ok: false, error: 'user_not_found', ...result });
+    }
+
+    return res.status(200).json({
+        ok: true,
+        ...result,
+        state: state || null,
+        user: {
+            id: user.id,
+            email: user.email,
+            status: user.status,
+            google_home_enabled: Boolean(user.google_home_enabled),
+            google_home_linked: Boolean(user.google_home_linked)
+        }
+    });
 });
 
 app.post('/api/billing/create-checkout', async (req, res) => {
