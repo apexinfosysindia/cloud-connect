@@ -20,7 +20,7 @@ const ADMIN_SSH_JUMP_PORT = 22;
 const ADMIN_SSH_TARGET_HOST = '127.0.0.1';
 const GOOGLE_HOME_CLIENT_ID = process.env.GOOGLE_HOME_CLIENT_ID || '';
 const GOOGLE_HOME_CLIENT_SECRET = process.env.GOOGLE_HOME_CLIENT_SECRET || '';
-const GOOGLE_HOME_REDIRECT_URI_HOSTS = (process.env.GOOGLE_HOME_REDIRECT_URI_HOSTS || 'oauth-redirect.googleusercontent.com').split(',').map((item) => item.trim().toLowerCase()).filter(Boolean);
+const GOOGLE_HOME_REDIRECT_URI_HOSTS = (process.env.GOOGLE_HOME_REDIRECT_URI_HOSTS || 'oauth-redirect.googleusercontent.com,oauth-redirect-sandbox.googleusercontent.com').split(',').map((item) => item.trim().toLowerCase()).filter(Boolean);
 const GOOGLE_HOME_AUTH_CODE_TTL_SECONDS = Number(process.env.GOOGLE_HOME_AUTH_CODE_TTL_SECONDS || 600);
 const GOOGLE_HOME_ACCESS_TOKEN_TTL_SECONDS = Number(process.env.GOOGLE_HOME_ACCESS_TOKEN_TTL_SECONDS || 3600);
 const GOOGLE_HOME_COMMAND_TTL_SECONDS = Number(process.env.GOOGLE_HOME_COMMAND_TTL_SECONDS || 45);
@@ -31,6 +31,7 @@ const GOOGLE_HOMEGRAPH_REQUEST_SYNC_DEBOUNCE_MS = Number(process.env.GOOGLE_HOME
 const GOOGLE_HOMEGRAPH_REPORT_STATE_DEBOUNCE_MS = Number(process.env.GOOGLE_HOMEGRAPH_REPORT_STATE_DEBOUNCE_MS || 1200);
 const GOOGLE_HOMEGRAPH_REPORT_STATE_ENABLED = process.env.GOOGLE_HOMEGRAPH_REPORT_STATE_ENABLED === '0' ? false : true;
 const GOOGLE_CAPABILITY_ENGINE_V2 = process.env.GOOGLE_CAPABILITY_ENGINE_V2 === '1';
+const GOOGLE_ENTITY_FRESH_WINDOW_SECONDS = Number(process.env.GOOGLE_ENTITY_FRESH_WINDOW_SECONDS || 0);
 const GOOGLE_DEBUG_ENDPOINTS_ENABLED = process.env.GOOGLE_DEBUG_ENDPOINTS_ENABLED === '1';
 const ALLOWED_CORS_ORIGINS = (process.env.ALLOWED_CORS_ORIGINS || '').split(',').map((item) => item.trim()).filter(Boolean);
 const PORTAL_SESSION_COOKIE_NAME = 'apx_portal_session';
@@ -457,6 +458,10 @@ function isDeviceOnline(lastSeenAt) {
 }
 
 function getEntityFreshWindowSeconds() {
+    if (Number.isFinite(GOOGLE_ENTITY_FRESH_WINDOW_SECONDS) && GOOGLE_ENTITY_FRESH_WINDOW_SECONDS > 0) {
+        return Math.max(10, Math.min(1800, Math.round(GOOGLE_ENTITY_FRESH_WINDOW_SECONDS)));
+    }
+
     const base = getHeartbeatWindowSeconds();
     const computed = Math.max(30, Math.round(base * 2.5));
     return Math.min(900, computed);
@@ -485,12 +490,49 @@ function isEntityEffectivelyOnline(entityRow) {
         return false;
     }
 
-    const entityFresh = isEntityFresh(entityRow.entity_last_seen_at || entityRow.updated_at);
+    const entityFresh = isEntityFresh(entityRow.entity_last_seen_at || entityRow.updated_at || entityRow.last_seen_at);
     if (!entityFresh) {
         return false;
     }
 
     return Number(entityRow.online) !== 0;
+}
+
+async function refreshGoogleEntityFreshnessFromDeviceHeartbeat(userId = null, deviceId = null) {
+    const params = [];
+    let where = '';
+
+    if (parsePositiveInt(userId)) {
+        where += ' AND ge.user_id = ?';
+        params.push(parsePositiveInt(userId));
+    }
+
+    if (parsePositiveInt(deviceId)) {
+        where += ' AND ge.device_id = ?';
+        params.push(parsePositiveInt(deviceId));
+    }
+
+    try {
+        await dbRun(
+            `
+                UPDATE google_home_entities
+                SET entity_last_seen_at = (
+                    SELECT d.last_seen_at
+                    FROM devices d
+                    WHERE d.id = google_home_entities.device_id
+                )
+                WHERE (entity_last_seen_at IS NULL OR entity_last_seen_at = '')
+                  ${where}
+            `,
+            params
+        );
+    } catch (error) {
+        if (isMissingGoogleEntityLastSeenColumnError(error)) {
+            googleEntityLastSeenColumnSupported = false;
+            return;
+        }
+        throw error;
+    }
 }
 
 function getHeartbeatIntervalSeconds() {
@@ -4298,6 +4340,7 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
 
     try {
         await markGoogleEntitiesStaleByFreshness();
+        await refreshGoogleEntityFreshnessFromDeviceHeartbeat(req.googleUser.id, null);
 
         if (intent === 'action.devices.SYNC') {
             const entities = await getGoogleEntitiesForUser(req.googleUser.id, { includeDisabled: false });
@@ -4548,6 +4591,7 @@ app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async 
         const device = req.device;
         const user = await dbGet(`SELECT * FROM users WHERE id = ?`, [device.user_id]);
         const nowIso = new Date().toISOString();
+        await refreshGoogleEntityFreshnessFromDeviceHeartbeat(device.user_id, device.id);
         await markGoogleEntitiesStaleByFreshness();
         if (!user || !user.google_home_enabled) {
             await dbRun(
@@ -5314,6 +5358,8 @@ app.get('/api/google/home/entity-debug', async (req, res) => {
                 throw queryError;
             }
         }
+
+        await refreshGoogleEntityFreshnessFromDeviceHeartbeat(user.id, null);
 
         const entities = (rows || []).map((row) => ({
             entity_id: row.entity_id,
