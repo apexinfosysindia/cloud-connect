@@ -44,7 +44,6 @@
     const googleOAuthRedirectUri = oauthParams.get('redirect_uri') || '';
     const googleOAuthState = oauthParams.get('state') || '';
     const googleOAuthError = oauthParams.get('error') || '';
-    const googleOAuthServerError = oauthParams.get('google_oauth_error') || '';
     const googleOAuthConsentMode = oauthParams.get('google_oauth_consent') === '1';
     const googleOAuthChallengeParam = oauthParams.get('oauth_challenge') || '';
     const googleOAuthCookieProbeKey = [
@@ -212,10 +211,6 @@
         if (googleOAuthConsentMode) {
             showAlert('Sign in to review and approve Google Assistant access.', false);
         }
-
-        if (googleOAuthServerError) {
-            showAlert(`Google link failed: ${googleOAuthServerError}`);
-        }
     }
 
     function showSignupView() {
@@ -240,10 +235,6 @@
 
         if (googleOAuthConsentMode) {
             showAlert('Sign in to review and approve Google Assistant access.', false);
-        }
-
-        if (googleOAuthServerError) {
-            showAlert(`Google link failed: ${googleOAuthServerError}`);
         }
     }
 
@@ -550,10 +541,9 @@
         }
 
         const oauthError = googleOAuthError;
-        if (oauthError || googleOAuthServerError) {
+        if (oauthError) {
             googleOAuthRedirectInFlight = false;
-            const errorMessage = oauthError || googleOAuthServerError;
-            showAlert(`Google link failed: ${errorMessage}`);
+            showAlert(`Google link failed: ${oauthError}`);
             return;
         }
 

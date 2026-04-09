@@ -20,7 +20,7 @@ const ADMIN_SSH_JUMP_PORT = 22;
 const ADMIN_SSH_TARGET_HOST = '127.0.0.1';
 const GOOGLE_HOME_CLIENT_ID = process.env.GOOGLE_HOME_CLIENT_ID || '';
 const GOOGLE_HOME_CLIENT_SECRET = process.env.GOOGLE_HOME_CLIENT_SECRET || '';
-const GOOGLE_HOME_REDIRECT_URI_HOSTS = (process.env.GOOGLE_HOME_REDIRECT_URI_HOSTS || 'oauth-redirect.googleusercontent.com,oauth-redirect-sandbox.googleusercontent.com').split(',').map((item) => item.trim().toLowerCase()).filter(Boolean);
+const GOOGLE_HOME_REDIRECT_URI_HOSTS = (process.env.GOOGLE_HOME_REDIRECT_URI_HOSTS || 'oauth-redirect.googleusercontent.com').split(',').map((item) => item.trim().toLowerCase()).filter(Boolean);
 const GOOGLE_HOME_AUTH_CODE_TTL_SECONDS = Number(process.env.GOOGLE_HOME_AUTH_CODE_TTL_SECONDS || 600);
 const GOOGLE_HOME_ACCESS_TOKEN_TTL_SECONDS = Number(process.env.GOOGLE_HOME_ACCESS_TOKEN_TTL_SECONDS || 3600);
 const GOOGLE_HOME_COMMAND_TTL_SECONDS = Number(process.env.GOOGLE_HOME_COMMAND_TTL_SECONDS || 45);
@@ -30,9 +30,6 @@ const GOOGLE_HOMEGRAPH_API_BASE_URL = 'https://homegraph.googleapis.com/v1';
 const GOOGLE_HOMEGRAPH_REQUEST_SYNC_DEBOUNCE_MS = Number(process.env.GOOGLE_HOMEGRAPH_REQUEST_SYNC_DEBOUNCE_MS || 2500);
 const GOOGLE_HOMEGRAPH_REPORT_STATE_DEBOUNCE_MS = Number(process.env.GOOGLE_HOMEGRAPH_REPORT_STATE_DEBOUNCE_MS || 1200);
 const GOOGLE_HOMEGRAPH_REPORT_STATE_ENABLED = process.env.GOOGLE_HOMEGRAPH_REPORT_STATE_ENABLED === '0' ? false : true;
-const GOOGLE_CAPABILITY_ENGINE_V2 = process.env.GOOGLE_CAPABILITY_ENGINE_V2 === '1';
-const GOOGLE_ENTITY_FRESH_WINDOW_SECONDS = Number(process.env.GOOGLE_ENTITY_FRESH_WINDOW_SECONDS || 0);
-const GOOGLE_ENTITY_AVAILABILITY_STRICT = process.env.GOOGLE_ENTITY_AVAILABILITY_STRICT === '1';
 const GOOGLE_DEBUG_ENDPOINTS_ENABLED = process.env.GOOGLE_DEBUG_ENDPOINTS_ENABLED === '1';
 const ALLOWED_CORS_ORIGINS = (process.env.ALLOWED_CORS_ORIGINS || '').split(',').map((item) => item.trim()).filter(Boolean);
 const PORTAL_SESSION_COOKIE_NAME = 'apx_portal_session';
@@ -46,7 +43,6 @@ const DEVICE_TUNNEL_PORT_MIN = Number(process.env.DEVICE_TUNNEL_PORT_MIN || 2200
 const DEVICE_TUNNEL_PORT_MAX = Number(process.env.DEVICE_TUNNEL_PORT_MAX || 22999);
 const DEVICE_TOKEN_PREFIX = 'dvc_';
 const ADMIN_CONNECT_TOKEN_PREFIX = 'acn_';
-const GOOGLE_BACKEND_RELEASE = 'google-backend-2026-04-09-r3';
 
 let googleHomegraphAccessTokenCache = {
     token: null,
@@ -55,79 +51,6 @@ let googleHomegraphAccessTokenCache = {
 
 const googleHomegraphRequestSyncQueue = new Map();
 const googleHomegraphReportStateQueue = new Map();
-const googleEndpointStats = {
-    oauth_hits: 0,
-    token_hits: 0,
-    fulfillment_hits: 0,
-    fulfillment_pre_auth_hits: 0,
-    fulfillment_auth_failures: 0,
-    oauth_status_counts: {},
-    token_status_counts: {},
-    fulfillment_status_counts: {},
-    last_oauth_at: null,
-    last_token_at: null,
-    last_fulfillment_at: null,
-    last_fulfillment_pre_auth_at: null,
-    last_fulfillment_auth_failure_at: null,
-    last_oauth_status: null,
-    last_token_status: null,
-    last_fulfillment_status: null,
-    last_fulfillment_error_message: null,
-    last_fulfillment_error_stack: null
-};
-
-function incrementStatusCounter(bucket, statusCode) {
-    const key = String(Number(statusCode) || 0);
-    bucket[key] = (bucket[key] || 0) + 1;
-}
-
-function trackGoogleEdgeRequest(req, res, next) {
-    const pathName = req.path || '';
-    const shouldTrack = pathName.startsWith('/api/google/home')
-        || pathName.startsWith('/google/home')
-        || pathName === '/oauth'
-        || pathName === '/token'
-        || pathName === '/fulfillment';
-
-    if (!shouldTrack) {
-        return next();
-    }
-
-    const startedAt = Date.now();
-    res.on('finish', () => {
-        const elapsedMs = Date.now() - startedAt;
-        if (pathName.includes('/oauth') || pathName === '/oauth') {
-            incrementStatusCounter(googleEndpointStats.oauth_status_counts, res.statusCode);
-            googleEndpointStats.last_oauth_status = res.statusCode;
-        }
-        if (pathName.includes('/token') || pathName === '/token') {
-            incrementStatusCounter(googleEndpointStats.token_status_counts, res.statusCode);
-            googleEndpointStats.last_token_status = res.statusCode;
-        }
-        if (pathName.includes('/fulfillment') || pathName === '/fulfillment') {
-            incrementStatusCounter(googleEndpointStats.fulfillment_status_counts, res.statusCode);
-            googleEndpointStats.last_fulfillment_status = res.statusCode;
-        }
-
-        console.log('GOOGLE EDGE REQUEST:', {
-            method: req.method,
-            path: pathName,
-            status: res.statusCode,
-            elapsed_ms: elapsedMs,
-            host: req.get('host') || null,
-            user_agent: req.get('user-agent') || null,
-            origin: req.get('origin') || null
-        });
-    });
-
-    return next();
-}
-
-function trackGoogleFulfillmentPreAuth(req, _res, next) {
-    googleEndpointStats.fulfillment_pre_auth_hits += 1;
-    googleEndpointStats.last_fulfillment_pre_auth_at = new Date().toISOString();
-    return next();
-}
 const homegraphMetrics = {
     request_sync: {
         sent: 0,
@@ -246,7 +169,6 @@ app.use(express.json({
     }
 }));
 app.use(express.urlencoded({ extended: false, limit: '1mb' }));
-app.use(trackGoogleEdgeRequest);
 app.use(cors({
     origin: (origin, callback) => {
         if (!origin) {
@@ -534,10 +456,6 @@ function isDeviceOnline(lastSeenAt) {
 }
 
 function getEntityFreshWindowSeconds() {
-    if (Number.isFinite(GOOGLE_ENTITY_FRESH_WINDOW_SECONDS) && GOOGLE_ENTITY_FRESH_WINDOW_SECONDS > 0) {
-        return Math.max(10, Math.min(1800, Math.round(GOOGLE_ENTITY_FRESH_WINDOW_SECONDS)));
-    }
-
     const base = getHeartbeatWindowSeconds();
     const computed = Math.max(30, Math.round(base * 2.5));
     return Math.min(900, computed);
@@ -566,53 +484,12 @@ function isEntityEffectivelyOnline(entityRow) {
         return false;
     }
 
-    const entityFresh = isEntityFresh(entityRow.entity_last_seen_at || entityRow.updated_at || entityRow.last_seen_at);
+    const entityFresh = isEntityFresh(entityRow.entity_last_seen_at || entityRow.updated_at);
     if (!entityFresh) {
         return false;
     }
 
-    if (!GOOGLE_ENTITY_AVAILABILITY_STRICT) {
-        return true;
-    }
-
     return Number(entityRow.online) !== 0;
-}
-
-async function refreshGoogleEntityFreshnessFromDeviceHeartbeat(userId = null, deviceId = null) {
-    const params = [];
-    let where = '';
-
-    if (parsePositiveInt(userId)) {
-        where += ' AND user_id = ?';
-        params.push(parsePositiveInt(userId));
-    }
-
-    if (parsePositiveInt(deviceId)) {
-        where += ' AND device_id = ?';
-        params.push(parsePositiveInt(deviceId));
-    }
-
-    try {
-        await dbRun(
-            `
-                UPDATE google_home_entities
-                SET entity_last_seen_at = (
-                    SELECT d.last_seen_at
-                    FROM devices d
-                    WHERE d.id = google_home_entities.device_id
-                )
-                WHERE (entity_last_seen_at IS NULL OR entity_last_seen_at = '')
-                  ${where}
-            `,
-            params
-        );
-    } catch (error) {
-        if (isMissingGoogleEntityLastSeenColumnError(error)) {
-            googleEntityLastSeenColumnSupported = false;
-            return;
-        }
-        throw error;
-    }
 }
 
 function getHeartbeatIntervalSeconds() {
@@ -1070,141 +947,6 @@ function mapGoogleEntityTypeToTraits(entityType) {
     };
 }
 
-function parseGoogleCapabilities(entity) {
-    const parsed = parseJsonSafe(entity?.capabilities_json, null) || parseJsonSafe(entity?.state_json, {}) || {};
-    if (!parsed || typeof parsed !== 'object') {
-        return {};
-    }
-
-    return parsed;
-}
-
-function getGoogleDeviceAttributesFromCapabilities(entity, traits) {
-    const capabilities = parseGoogleCapabilities(entity);
-    const attrs = {};
-
-    if (traits.includes('action.devices.traits.Brightness')) {
-        attrs.commandOnlyBrightness = false;
-    }
-
-    if (traits.includes('action.devices.traits.FanSpeed')) {
-        const percentageStep = Number(capabilities?.fan?.percentage_step);
-        const max = Number(capabilities?.fan?.speed_max || 100);
-        const min = Number(capabilities?.fan?.speed_min || 0);
-        const supportsPercent = capabilities?.fan?.supports_percentage !== false;
-
-        if (supportsPercent) {
-            attrs.availableFanSpeeds = {
-                speeds: [
-                    {
-                        speed_name: 'speed_percent',
-                        speed_values: [
-                            {
-                                speed_synonym: ['percent', 'speed', 'fan speed'],
-                                lang: 'en'
-                            }
-                        ]
-                    }
-                ],
-                ordered: true
-            };
-            attrs.reversible = false;
-            attrs.commandOnlyFanSpeed = false;
-            attrs.fanSpeedPercentStep = Number.isFinite(percentageStep) && percentageStep > 0 ? percentageStep : 1;
-            attrs.fanSpeedPercentMin = Number.isFinite(min) ? Math.max(0, min) : 0;
-            attrs.fanSpeedPercentMax = Number.isFinite(max) ? Math.min(100, max) : 100;
-        }
-    }
-
-    if (traits.includes('action.devices.traits.OpenClose')) {
-        attrs.discreteOnlyOpenClose = false;
-        attrs.queryOnlyOpenClose = false;
-    }
-
-    if (traits.includes('action.devices.traits.TemperatureSetting')) {
-        attrs.availableThermostatModes = getGoogleThermostatModesForEntity(entity);
-        attrs.thermostatTemperatureUnit = String(capabilities?.climate?.temperature_unit || 'C').toUpperCase() === 'F' ? 'F' : 'C';
-    }
-
-    if (traits.includes('action.devices.traits.Volume')) {
-        attrs.volumeMaxLevel = 100;
-        attrs.levelStepSize = 5;
-        attrs.volumeCanMuteAndUnmute = capabilities?.media_player?.supports_mute !== false;
-    }
-
-    if (traits.includes('action.devices.traits.Scene')) {
-        attrs.sceneReversible = false;
-    }
-
-    if (traits.includes('action.devices.traits.StartStop')) {
-        attrs.pausable = capabilities?.vacuum?.supports_pause !== false;
-    }
-
-    if (traits.includes('action.devices.traits.TemperatureControl')) {
-        attrs.temperatureUnitForUX = String(capabilities?.sensor?.temperature_unit || 'C').toUpperCase() === 'F' ? 'F' : 'C';
-    }
-
-    return attrs;
-}
-
-function getGoogleTraitsForEntity(entity) {
-    const fallbackTraits = mapGoogleEntityTypeToTraits(entity.entity_type);
-    if (!GOOGLE_CAPABILITY_ENGINE_V2) {
-        return fallbackTraits;
-    }
-
-    const capabilities = parseGoogleCapabilities(entity);
-    const entityType = normalizeGoogleEntityType(entity?.entity_type);
-    const traits = [];
-
-    const supports = {
-        onOff: capabilities?.supports?.on_off !== false,
-        brightness: capabilities?.light?.supports_brightness === true,
-        fanSpeed: capabilities?.fan?.supports_speed === true,
-        openClose: capabilities?.cover?.supports_position === true,
-        lockUnlock: capabilities?.lock?.supports_lock_unlock !== false,
-        tempSetting: capabilities?.climate?.supports_mode === true || capabilities?.climate?.supports_setpoint === true,
-        tempControl: capabilities?.sensor?.supports_temperature === true,
-        volume: capabilities?.media_player?.supports_volume === true,
-        scene: capabilities?.scene?.supports_activate === true || capabilities?.button?.supports_press === true,
-        startStop: capabilities?.vacuum?.supports_start_stop === true,
-        pauseUnpause: capabilities?.vacuum?.supports_pause === true
-    };
-
-    if (entityType === 'light') {
-        if (supports.onOff) traits.push('action.devices.traits.OnOff');
-        if (supports.brightness) traits.push('action.devices.traits.Brightness');
-    } else if (entityType === 'fan') {
-        if (supports.onOff) traits.push('action.devices.traits.OnOff');
-        if (supports.fanSpeed) traits.push('action.devices.traits.FanSpeed');
-    } else if (entityType === 'cover') {
-        if (supports.openClose) traits.push('action.devices.traits.OpenClose');
-    } else if (entityType === 'lock') {
-        if (supports.lockUnlock) traits.push('action.devices.traits.LockUnlock');
-    } else if (entityType === 'climate') {
-        if (supports.tempSetting) traits.push('action.devices.traits.TemperatureSetting');
-    } else if (entityType === 'media_player') {
-        if (supports.onOff) traits.push('action.devices.traits.OnOff');
-        if (supports.volume) traits.push('action.devices.traits.Volume');
-    } else if (entityType === 'scene' || entityType === 'button') {
-        if (supports.scene) traits.push('action.devices.traits.Scene');
-    } else if (entityType === 'vacuum') {
-        if (supports.onOff) traits.push('action.devices.traits.OnOff');
-        if (supports.startStop) traits.push('action.devices.traits.StartStop');
-        if (supports.pauseUnpause) traits.push('action.devices.traits.PauseUnpause');
-    } else if (entityType === 'sensor_temperature') {
-        if (supports.tempControl) traits.push('action.devices.traits.TemperatureControl');
-    } else if (entityType === 'switch') {
-        if (supports.onOff) traits.push('action.devices.traits.OnOff');
-    }
-
-    if (traits.length === 0) {
-        return fallbackTraits;
-    }
-
-    return Array.from(new Set(traits));
-}
-
 function normalizeGoogleThermostatMode(mode) {
     const normalized = sanitizeString(mode, 32).toLowerCase();
     if (!normalized) return 'off';
@@ -1274,52 +1016,8 @@ function supportsGoogleCommandForEntityType(entityType, commandName) {
     return allowedCommands.has(commandName);
 }
 
-function supportsGoogleCommandForEntity(entity, commandName) {
-    if (!GOOGLE_CAPABILITY_ENGINE_V2) {
-        return supportsGoogleCommandForEntityType(entity?.entity_type, commandName);
-    }
-
-    const capabilities = parseGoogleCapabilities(entity);
-    const traits = getGoogleTraitsForEntity(entity);
-    const hasTrait = (traitName) => traits.includes(traitName);
-    const supportsMute = capabilities?.media_player?.supports_mute !== false;
-
-    const commandTraitRequirements = {
-        'action.devices.commands.OnOff': 'action.devices.traits.OnOff',
-        'action.devices.commands.BrightnessAbsolute': 'action.devices.traits.Brightness',
-        'action.devices.commands.SetFanSpeed': 'action.devices.traits.FanSpeed',
-        'action.devices.commands.OpenClose': 'action.devices.traits.OpenClose',
-        'action.devices.commands.LockUnlock': 'action.devices.traits.LockUnlock',
-        'action.devices.commands.ThermostatSetMode': 'action.devices.traits.TemperatureSetting',
-        'action.devices.commands.ThermostatTemperatureSetpoint': 'action.devices.traits.TemperatureSetting',
-        'action.devices.commands.setVolume': 'action.devices.traits.Volume',
-        'action.devices.commands.mute': 'action.devices.traits.Volume',
-        'action.devices.commands.activateScene': 'action.devices.traits.Scene',
-        'action.devices.commands.StartStop': 'action.devices.traits.StartStop',
-        'action.devices.commands.PauseUnpause': 'action.devices.traits.PauseUnpause'
-    };
-
-    const requiredTrait = commandTraitRequirements[commandName];
-    if (!requiredTrait) {
-        return false;
-    }
-
-    if (!hasTrait(requiredTrait)) {
-        return false;
-    }
-
-    if (commandName === 'action.devices.commands.mute' && !supportsMute) {
-        return false;
-    }
-
-    return true;
-}
-
 function buildGoogleDeviceObject(entity) {
-    const mapped = {
-        type: mapGoogleEntityTypeToDeviceType(entity.entity_type),
-        traits: getGoogleTraitsForEntity(entity)
-    };
+    const mapped = mapGoogleEntityTypeToTraits(entity.entity_type);
     const roomHint = sanitizeString(entity.room_hint, 120);
 
     return {
@@ -1340,9 +1038,46 @@ function buildGoogleDeviceObject(entity) {
             model: entity.entity_type || 'generic',
             hwVersion: entity.addon_version || 'apex-cloud-link'
         },
-        attributes: {
-            ...getGoogleDeviceAttributesFromCapabilities(entity, mapped.traits),
-            ...(mapped.traits.includes('action.devices.traits.TemperatureControl')
+        attributes: entity.entity_type === 'light'
+            ? { commandOnlyBrightness: false }
+            : entity.entity_type === 'fan'
+                ? {
+                    availableFanSpeeds: {
+                        speeds: [
+                            { speed_name: '1', speed_values: [{ speed_synonym: ['low', '1'], lang: 'en' }] },
+                            { speed_name: '2', speed_values: [{ speed_synonym: ['medium', '2'], lang: 'en' }] },
+                            { speed_name: '3', speed_values: [{ speed_synonym: ['high', '3'], lang: 'en' }] }
+                        ],
+                        ordered: true
+                    },
+                    reversible: false,
+                    commandOnlyFanSpeed: false
+                }
+                : entity.entity_type === 'cover'
+                    ? {
+                        discreteOnlyOpenClose: false,
+                        queryOnlyOpenClose: false
+                    }
+                    : entity.entity_type === 'climate'
+                        ? {
+                            availableThermostatModes: getGoogleThermostatModesForEntity(entity),
+                            thermostatTemperatureUnit: 'C'
+                        }
+                        : entity.entity_type === 'media_player'
+                            ? {
+                                volumeMaxLevel: 100,
+                                volumeCanMuteAndUnmute: true,
+                                commandOnlyVolume: false
+                            }
+                            : entity.entity_type === 'scene' || entity.entity_type === 'button'
+                                ? {
+                                    sceneReversible: false
+                                }
+                                : entity.entity_type === 'vacuum'
+                                    ? {
+                                        pausable: true
+                                    }
+            : entity.entity_type === 'sensor_temperature'
                 ? {
                     sensorStatesSupported: [
                         {
@@ -1357,8 +1092,7 @@ function buildGoogleDeviceObject(entity) {
                         }
                     ]
                 }
-                : {})
-        }
+                : {}
     };
 }
 
@@ -1367,12 +1101,11 @@ function parseGoogleEntityState(entity) {
 
     if (entity.entity_type === 'fan') {
         const fanOn = Boolean(statePayload.on);
-        const speed = Number(statePayload.speed_percent ?? statePayload.speed ?? 0);
+        const speed = Number(statePayload.speed || 0);
         return {
             online: entity.online !== 0,
             on: fanOn,
-            currentFanSpeedPercent: Math.max(0, Math.min(100, Math.round(speed || 0))),
-            currentFanSpeedSetting: String(Math.max(0, Math.min(100, Math.round(speed || 0))))
+            currentFanSpeedSetting: String(Math.max(1, Math.min(3, Math.round(speed || 1))))
         };
     }
 
@@ -1529,7 +1262,6 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
     const entityType = mapGoogleDomainToEntityType(entityId, normalizeGoogleEntityType(payload?.entity_type));
     const roomHint = sanitizeString(payload?.room_hint, 120);
     const online = payload?.online === false ? 0 : 1;
-    const capabilitiesJson = JSON.stringify(payload?.capabilities || {}).slice(0, 5000);
     const stateJson = JSON.stringify(payload?.state || {}).slice(0, 2500);
     const entityState = parseGoogleEntityState({
         entity_type: entityType,
@@ -1564,7 +1296,6 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
                 room_hint = ?,
                 online = ?,
                 entity_last_seen_at = ?,
-                capabilities_json = ?,
                 state_json = ?,
                 updated_at = ?
             WHERE id = ?
@@ -1577,7 +1308,6 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
                 entity_type = ?,
                 room_hint = ?,
                 online = ?,
-                capabilities_json = ?,
                 state_json = ?,
                 updated_at = ?
             WHERE id = ?
@@ -1591,7 +1321,6 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
                 room_hint = ?,
                 online = ?,
                 entity_last_seen_at = ?,
-                capabilities_json = ?,
                 state_json = ?,
                 state_hash = ?,
                 updated_at = ?
@@ -1605,7 +1334,6 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
                 entity_type = ?,
                 room_hint = ?,
                 online = ?,
-                capabilities_json = ?,
                 state_json = ?,
                 state_hash = ?,
                 updated_at = ?
@@ -1614,19 +1342,19 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
 
         try {
             if (googleEntityLastSeenColumnSupported && googleStateHashColumnSupported) {
-                await dbRun(updateWithLastSeenAndHashSql, [deviceId, displayName, entityType, roomHint, online, nowIso, capabilitiesJson, stateJson, stateHash, nowIso, existing.id]);
+                await dbRun(updateWithLastSeenAndHashSql, [deviceId, displayName, entityType, roomHint, online, nowIso, stateJson, stateHash, nowIso, existing.id]);
             } else if (googleEntityLastSeenColumnSupported && !googleStateHashColumnSupported) {
-                await dbRun(updateWithLastSeenSql, [deviceId, displayName, entityType, roomHint, online, nowIso, capabilitiesJson, stateJson, nowIso, existing.id]);
+                await dbRun(updateWithLastSeenSql, [deviceId, displayName, entityType, roomHint, online, nowIso, stateJson, nowIso, existing.id]);
             } else if (!googleEntityLastSeenColumnSupported && googleStateHashColumnSupported) {
-                await dbRun(updateFallbackAndHashSql, [deviceId, displayName, entityType, roomHint, online, capabilitiesJson, stateJson, stateHash, nowIso, existing.id]);
+                await dbRun(updateFallbackAndHashSql, [deviceId, displayName, entityType, roomHint, online, stateJson, stateHash, nowIso, existing.id]);
             } else {
-                await dbRun(updateFallbackSql, [deviceId, displayName, entityType, roomHint, online, capabilitiesJson, stateJson, nowIso, existing.id]);
+                await dbRun(updateFallbackSql, [deviceId, displayName, entityType, roomHint, online, stateJson, nowIso, existing.id]);
             }
         } catch (error) {
             if (isMissingGoogleEntityLastSeenColumnError(error) || isMissingGoogleStateHashColumnError(error)) {
                 googleEntityLastSeenColumnSupported = false;
                 googleStateHashColumnSupported = false;
-                await dbRun(updateFallbackSql, [deviceId, displayName, entityType, roomHint, online, capabilitiesJson, stateJson, nowIso, existing.id]);
+                await dbRun(updateFallbackSql, [deviceId, displayName, entityType, roomHint, online, stateJson, nowIso, existing.id]);
             } else {
                 throw error;
             }
@@ -1643,12 +1371,11 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
                 exposed,
                 online,
                 entity_last_seen_at,
-                capabilities_json,
                 state_json,
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
         `;
 
         const insertFallbackSql = `
@@ -1661,12 +1388,11 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
                 room_hint,
                 exposed,
                 online,
-                capabilities_json,
                 state_json,
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
         `;
 
         const insertWithLastSeenAndHashSql = `
@@ -1680,13 +1406,12 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
                 exposed,
                 online,
                 entity_last_seen_at,
-                capabilities_json,
                 state_json,
                 state_hash,
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
         `;
 
         const insertFallbackAndHashSql = `
@@ -1699,30 +1424,29 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
                 room_hint,
                 exposed,
                 online,
-                capabilities_json,
                 state_json,
                 state_hash,
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
         `;
 
         try {
             if (googleEntityLastSeenColumnSupported && googleStateHashColumnSupported) {
-                await dbRun(insertWithLastSeenAndHashSql, [userId, deviceId, entityId, displayName, entityType, roomHint, online, nowIso, capabilitiesJson, stateJson, stateHash, nowIso, nowIso]);
+                await dbRun(insertWithLastSeenAndHashSql, [userId, deviceId, entityId, displayName, entityType, roomHint, online, nowIso, stateJson, stateHash, nowIso, nowIso]);
             } else if (googleEntityLastSeenColumnSupported && !googleStateHashColumnSupported) {
-                await dbRun(insertWithLastSeenSql, [userId, deviceId, entityId, displayName, entityType, roomHint, online, nowIso, capabilitiesJson, stateJson, nowIso, nowIso]);
+                await dbRun(insertWithLastSeenSql, [userId, deviceId, entityId, displayName, entityType, roomHint, online, nowIso, stateJson, nowIso, nowIso]);
             } else if (!googleEntityLastSeenColumnSupported && googleStateHashColumnSupported) {
-                await dbRun(insertFallbackAndHashSql, [userId, deviceId, entityId, displayName, entityType, roomHint, online, capabilitiesJson, stateJson, stateHash, nowIso, nowIso]);
+                await dbRun(insertFallbackAndHashSql, [userId, deviceId, entityId, displayName, entityType, roomHint, online, stateJson, stateHash, nowIso, nowIso]);
             } else {
-                await dbRun(insertFallbackSql, [userId, deviceId, entityId, displayName, entityType, roomHint, online, capabilitiesJson, stateJson, nowIso, nowIso]);
+                await dbRun(insertFallbackSql, [userId, deviceId, entityId, displayName, entityType, roomHint, online, stateJson, nowIso, nowIso]);
             }
         } catch (error) {
             if (isMissingGoogleEntityLastSeenColumnError(error) || isMissingGoogleStateHashColumnError(error)) {
                 googleEntityLastSeenColumnSupported = false;
                 googleStateHashColumnSupported = false;
-                await dbRun(insertFallbackSql, [userId, deviceId, entityId, displayName, entityType, roomHint, online, capabilitiesJson, stateJson, nowIso, nowIso]);
+                await dbRun(insertFallbackSql, [userId, deviceId, entityId, displayName, entityType, roomHint, online, stateJson, nowIso, nowIso]);
             } else {
                 throw error;
             }
@@ -1988,7 +1712,6 @@ async function ensureGoogleRuntimeSchemaReady() {
     googleRuntimeSchemaReadyPromise = (async () => {
         const statements = [
             'ALTER TABLE google_home_entities ADD COLUMN entity_last_seen_at DATETIME',
-            'ALTER TABLE google_home_entities ADD COLUMN capabilities_json TEXT',
             'ALTER TABLE google_home_entities ADD COLUMN state_hash TEXT',
             'ALTER TABLE google_home_entities ADD COLUMN last_reported_state_hash TEXT',
             'ALTER TABLE google_home_entities ADD COLUMN last_reported_at DATETIME',
@@ -2334,28 +2057,20 @@ async function requireGoogleBearer(req, res, next) {
     try {
         const authHeader = req.get('authorization') || '';
         if (!authHeader.startsWith('Bearer ')) {
-            googleEndpointStats.fulfillment_auth_failures += 1;
-            googleEndpointStats.last_fulfillment_auth_failure_at = new Date().toISOString();
             return res.status(401).json({ error: 'Missing bearer token' });
         }
 
         const token = authHeader.slice(7).trim();
         const user = await findUserByGoogleAccessToken(token);
         if (!user) {
-            googleEndpointStats.fulfillment_auth_failures += 1;
-            googleEndpointStats.last_fulfillment_auth_failure_at = new Date().toISOString();
             return res.status(401).json({ error: 'Invalid or expired access token' });
         }
 
         if (!user.google_home_enabled) {
-            googleEndpointStats.fulfillment_auth_failures += 1;
-            googleEndpointStats.last_fulfillment_auth_failure_at = new Date().toISOString();
             return res.status(403).json({ error: 'Google Home integration is disabled for this account' });
         }
 
         if (!isAccessEnabled(user.status)) {
-            googleEndpointStats.fulfillment_auth_failures += 1;
-            googleEndpointStats.last_fulfillment_auth_failure_at = new Date().toISOString();
             return res.status(403).json({ error: 'Account is not active for Google integration' });
         }
 
@@ -4055,9 +3770,7 @@ app.post('/api/account/google-home/entities/:entityId/expose', requirePortalUser
     }
 });
 
-app.get(['/api/google/home/oauth', '/google/home/oauth', '/oauth'], async (req, res) => {
-    googleEndpointStats.oauth_hits += 1;
-    googleEndpointStats.last_oauth_at = new Date().toISOString();
+app.get('/api/google/home/oauth', async (req, res) => {
     const clientId = sanitizeString(req.query?.client_id, 255);
     const redirectUri = sanitizeString(req.query?.redirect_uri, 1000);
     const state = sanitizeString(req.query?.state, 1000) || '';
@@ -4082,10 +3795,9 @@ app.get(['/api/google/home/oauth', '/google/home/oauth', '/oauth'], async (req, 
         return res.status(400).send('Invalid redirect_uri');
     }
 
-    const loginRedirectBase = `/login.html?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
     const forceCustomerLogin = req.hostname !== CUSTOMER_PORTAL_HOST || req.query?.from_cookie !== '1';
     if (!portalToken) {
-        const loginRedirect = loginRedirectBase;
+        const loginRedirect = `/login.html?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
         if (forceCustomerLogin) {
             return res.redirect(`https://${CUSTOMER_PORTAL_HOST}${loginRedirect}`);
         }
@@ -4094,7 +3806,7 @@ app.get(['/api/google/home/oauth', '/google/home/oauth', '/oauth'], async (req, 
 
     const session = verifyPortalSessionToken(portalToken);
     if (!session) {
-        const loginRedirect = loginRedirectBase;
+        const loginRedirect = `/login.html?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
         if (forceCustomerLogin) {
             return res.redirect(`https://${CUSTOMER_PORTAL_HOST}${loginRedirect}`);
         }
@@ -4134,19 +3846,11 @@ app.get(['/api/google/home/oauth', '/google/home/oauth', '/oauth'], async (req, 
 
         const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [session.email]);
         if (!user) {
-            const loginRedirect = `${loginRedirectBase}&google_oauth_error=account_not_found`;
-            if (forceCustomerLogin) {
-                return res.redirect(`https://${CUSTOMER_PORTAL_HOST}${loginRedirect}`);
-            }
-            return res.redirect(loginRedirect);
+            return res.status(404).send('Account not found');
         }
 
         if (!isAccessEnabled(user.status)) {
-            const loginRedirect = `${loginRedirectBase}&google_oauth_error=account_not_active`;
-            if (forceCustomerLogin) {
-                return res.redirect(`https://${CUSTOMER_PORTAL_HOST}${loginRedirect}`);
-            }
-            return res.redirect(loginRedirect);
+            return res.status(403).send('Account is not active for Google Home');
         }
 
         if (req.query?.approved !== '1') {
@@ -4206,15 +3910,11 @@ app.get(['/api/google/home/oauth', '/google/home/oauth', '/oauth'], async (req, 
         return res.redirect(callbackUrl.toString());
     } catch (error) {
         console.error('GOOGLE OAUTH AUTHORIZE ERROR:', error);
-        const loginRedirect = `${loginRedirectBase}&google_oauth_error=server_error`;
-        if (forceCustomerLogin) {
-            return res.redirect(`https://${CUSTOMER_PORTAL_HOST}${loginRedirect}`);
-        }
-        return res.redirect(loginRedirect);
+        return res.status(500).send('Unable to authorize Google integration');
     }
 });
 
-app.post(['/api/google/home/oauth/continue', '/google/home/oauth/continue', '/oauth/continue'], async (req, res) => {
+app.post('/api/google/home/oauth/continue', async (req, res) => {
     const clientId = sanitizeString(req.body?.client_id, 255);
     const redirectUri = sanitizeString(req.body?.redirect_uri, 1000);
     const state = sanitizeString(req.body?.state, 1000) || '';
@@ -4233,10 +3933,6 @@ app.post(['/api/google/home/oauth/continue', '/google/home/oauth/continue', '/oa
 
     if (clientId !== GOOGLE_HOME_CLIENT_ID) {
         return res.status(401).json({ error: 'invalid_client_id' });
-    }
-
-    if (!isTrustedGoogleRedirectUri(redirectUri)) {
-        return res.status(400).json({ error: 'invalid_redirect_uri' });
     }
 
     const session = verifyPortalSessionToken(portalToken);
@@ -4369,9 +4065,7 @@ app.post('/api/google/home/oauth-debug-cookie', async (req, res) => {
     });
 });
 
-app.post(['/api/google/home/token', '/google/home/token', '/token'], async (req, res) => {
-    googleEndpointStats.token_hits += 1;
-    googleEndpointStats.last_token_at = new Date().toISOString();
+app.post('/api/google/home/token', async (req, res) => {
     const grantType = sanitizeString(req.body?.grant_type, 64);
     const clientId = sanitizeString(req.body?.client_id, 255);
     const clientSecret = sanitizeString(req.body?.client_secret, 255);
@@ -4441,17 +4135,7 @@ app.post(['/api/google/home/token', '/google/home/token', '/token'], async (req,
     }
 });
 
-app.get(['/api/google/home/fulfillment', '/google/home/fulfillment', '/fulfillment'], (_req, res) => {
-    return res.status(200).send('ok');
-});
-
-app.head(['/api/google/home/fulfillment', '/google/home/fulfillment', '/fulfillment'], (_req, res) => {
-    return res.status(200).end();
-});
-
-app.post(['/api/google/home/fulfillment', '/google/home/fulfillment', '/fulfillment'], trackGoogleFulfillmentPreAuth, requireGoogleBearer, async (req, res) => {
-    googleEndpointStats.fulfillment_hits += 1;
-    googleEndpointStats.last_fulfillment_at = new Date().toISOString();
+app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) => {
     const requestId = sanitizeGoogleRequestId(req.body?.requestId) || `req_${Date.now()}`;
     const inputs = Array.isArray(req.body?.inputs) ? req.body.inputs : [];
     const input = inputs[0] || {};
@@ -4459,20 +4143,10 @@ app.post(['/api/google/home/fulfillment', '/google/home/fulfillment', '/fulfillm
 
     try {
         await markGoogleEntitiesStaleByFreshness();
-        await refreshGoogleEntityFreshnessFromDeviceHeartbeat(req.googleUser.id, null);
 
         if (intent === 'action.devices.SYNC') {
             const entities = await getGoogleEntitiesForUser(req.googleUser.id, { includeDisabled: false });
             const devices = entities.map((entity) => buildGoogleDeviceObject(withEffectiveGoogleOnline(entity)));
-
-            if (GOOGLE_DEBUG_ENDPOINTS_ENABLED) {
-                console.log('GOOGLE SYNC RESPONSE SUMMARY:', {
-                    user_id: req.googleUser.id,
-                    devices_count: devices.length,
-                    enabled: Boolean(req.googleUser.google_home_enabled),
-                    linked: Boolean(req.googleUser.google_home_linked)
-                });
-            }
 
             return res.status(200).json({
                 requestId,
@@ -4516,18 +4190,6 @@ app.post(['/api/google/home/fulfillment', '/google/home/fulfillment', '/fulfillm
                 }
 
                 devicesState[entityId] = parseGoogleEntityState(effectiveEntity);
-            }
-
-            if (GOOGLE_CAPABILITY_ENGINE_V2) {
-                for (const requestedId of requestedIds) {
-                    if (!devicesState[requestedId]) {
-                        devicesState[requestedId] = {
-                            online: false,
-                            status: 'ERROR',
-                            errorCode: 'deviceOffline'
-                        };
-                    }
-                }
             }
 
             return res.status(200).json({
@@ -4578,7 +4240,7 @@ app.post(['/api/google/home/fulfillment', '/google/home/fulfillment', '/fulfillm
                         const commandName = sanitizeActionName(execution?.command);
                         const params = execution?.params || {};
 
-                        if (!supportsGoogleCommandForEntity(entity, commandName)) {
+                        if (!supportsGoogleCommandForEntityType(entity.entity_type, commandName)) {
                             commandResults.push({
                                 ids: [entityId],
                                 status: 'ERROR',
@@ -4597,11 +4259,8 @@ app.post(['/api/google/home/fulfillment', '/google/home/fulfillment', '/fulfillm
                             payload = { brightness: Math.max(0, Math.min(100, Number(params?.brightness || 0))) };
                         } else if (commandName === 'action.devices.commands.SetFanSpeed') {
                             action = 'set_fan_speed';
-                            const speedPercent = Number(params?.fanSpeedPercent ?? params?.fanSpeed ?? 0);
                             payload = {
-                                speed_percent: Number.isFinite(speedPercent)
-                                    ? Math.max(0, Math.min(100, Math.round(speedPercent)))
-                                    : 0
+                                speed: String(params?.fanSpeed || '1')
                             };
                         } else if (commandName === 'action.devices.commands.OpenClose') {
                             action = 'set_open_percent';
@@ -4669,12 +4328,6 @@ app.post(['/api/google/home/fulfillment', '/google/home/fulfillment', '/fulfillm
                                 ...(payload.on !== undefined ? { on: payload.on } : {}),
                                 ...(payload.brightness !== undefined ? { brightness: payload.brightness } : {}),
                                 ...(payload.openPercent !== undefined ? { openPercent: payload.openPercent } : {}),
-                                ...(payload.speed_percent !== undefined
-                                    ? {
-                                        currentFanSpeedPercent: payload.speed_percent,
-                                        currentFanSpeedSetting: String(payload.speed_percent)
-                                    }
-                                    : {}),
                                 ...(payload.lock !== undefined ? { isLocked: payload.lock } : {}),
                                 ...(payload.mode !== undefined ? { thermostatMode: payload.mode } : {}),
                                 ...(payload.setpoint !== undefined ? { thermostatTemperatureSetpoint: payload.setpoint } : {}),
@@ -4704,33 +4357,9 @@ app.post(['/api/google/home/fulfillment', '/google/home/fulfillment', '/fulfillm
 
         return res.status(400).json({ error: 'Unsupported intent' });
     } catch (error) {
-        googleEndpointStats.last_fulfillment_error_message = sanitizeString(error?.message || 'unknown_error', 500) || 'unknown_error';
-        googleEndpointStats.last_fulfillment_error_stack = sanitizeString((error?.stack || '').slice(0, 3000), 3000) || null;
         console.error('GOOGLE FULFILLMENT ERROR:', error);
         return res.status(500).json({ error: 'Unable to process Google fulfillment request' });
     }
-});
-
-app.post('/api/google/home/fulfillment-test', async (req, res) => {
-    const bearer = req.get('authorization') || '';
-    const token = bearer.startsWith('Bearer ') ? bearer.slice(7).trim() : sanitizeString(req.body?.access_token || '', 512);
-    if (!token) {
-        return res.status(401).json({ error: 'missing_access_token' });
-    }
-
-    const user = await findUserByGoogleAccessToken(token);
-    if (!user) {
-        return res.status(401).json({ error: 'invalid_or_expired_access_token' });
-    }
-
-    const entities = await getGoogleEntitiesForUser(user.id, { includeDisabled: false });
-    return res.status(200).json({
-        ok: true,
-        user_id: user.id,
-        entities_count: entities.length,
-        linked: Boolean(user.google_home_linked),
-        enabled: Boolean(user.google_home_enabled)
-    });
 });
 
 app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async (req, res) => {
@@ -4743,7 +4372,6 @@ app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async 
         const device = req.device;
         const user = await dbGet(`SELECT * FROM users WHERE id = ?`, [device.user_id]);
         const nowIso = new Date().toISOString();
-        await refreshGoogleEntityFreshnessFromDeviceHeartbeat(device.user_id, device.id);
         await markGoogleEntitiesStaleByFreshness();
         if (!user || !user.google_home_enabled) {
             await dbRun(
@@ -5511,8 +5139,6 @@ app.get('/api/google/home/entity-debug', async (req, res) => {
             }
         }
 
-        await refreshGoogleEntityFreshnessFromDeviceHeartbeat(user.id, null);
-
         const entities = (rows || []).map((row) => ({
             entity_id: row.entity_id,
             display_name: row.display_name,
@@ -5560,136 +5186,6 @@ app.get('/api/google/home/entity-debug', async (req, res) => {
         console.error('GOOGLE ENTITY DEBUG ERROR:', error);
         return res.status(500).json({ error: 'unable_to_load_entity_debug' });
     }
-});
-
-app.get('/api/google/home/reachability-check', (_req, res) => {
-    return res.status(200).json({ ok: true, service: 'google-home-backend' });
-});
-
-app.get('/api/google/home/direct-sync-check', async (req, res) => {
-    const bearer = req.get('authorization') || '';
-    const token = bearer.startsWith('Bearer ') ? bearer.slice(7).trim() : sanitizeString(req.query?.access_token || '', 512);
-    if (!token) {
-        return res.status(401).json({ error: 'missing_access_token' });
-    }
-
-    const user = await findUserByGoogleAccessToken(token);
-    if (!user) {
-        return res.status(401).json({ error: 'invalid_or_expired_access_token' });
-    }
-
-    const entities = await getGoogleEntitiesForUser(user.id, { includeDisabled: false });
-    const devices = entities.map((entity) => buildGoogleDeviceObject(withEffectiveGoogleOnline(entity)));
-
-    return res.status(200).json({
-        ok: true,
-        requestId: `direct_${Date.now()}`,
-        payload: {
-            agentUserId: String(user.id),
-            devices
-        }
-    });
-});
-
-app.get('/api/google/home/live-reachability', async (_req, res) => {
-    return res.status(200).json({
-        ok: true,
-        release: GOOGLE_BACKEND_RELEASE,
-        endpoint_stats: googleEndpointStats,
-        now: new Date().toISOString()
-    });
-});
-
-app.post('/api/google/home/live-reachability/reset', (_req, res) => {
-    googleEndpointStats.oauth_hits = 0;
-    googleEndpointStats.token_hits = 0;
-    googleEndpointStats.fulfillment_hits = 0;
-    googleEndpointStats.fulfillment_pre_auth_hits = 0;
-    googleEndpointStats.fulfillment_auth_failures = 0;
-    googleEndpointStats.oauth_status_counts = {};
-    googleEndpointStats.token_status_counts = {};
-    googleEndpointStats.fulfillment_status_counts = {};
-    googleEndpointStats.last_oauth_at = null;
-    googleEndpointStats.last_token_at = null;
-    googleEndpointStats.last_fulfillment_at = null;
-    googleEndpointStats.last_fulfillment_pre_auth_at = null;
-    googleEndpointStats.last_fulfillment_auth_failure_at = null;
-    googleEndpointStats.last_oauth_status = null;
-    googleEndpointStats.last_token_status = null;
-    googleEndpointStats.last_fulfillment_status = null;
-    googleEndpointStats.last_fulfillment_error_message = null;
-    googleEndpointStats.last_fulfillment_error_stack = null;
-
-    return res.status(200).json({ ok: true, message: 'google_endpoint_stats_reset' });
-});
-
-app.get('/api/google/home/diag-endpoints', (_req, res) => {
-    const base = `https://${CLOUD_BASE_DOMAIN}`;
-    return res.status(200).json({
-        ok: true,
-        release: GOOGLE_BACKEND_RELEASE,
-        recommended: {
-            authorize_url: `${base}/api/google/home/oauth`,
-            token_url: `${base}/api/google/home/token`,
-            fulfillment_url: `${base}/api/google/home/fulfillment`
-        },
-        compatibility_aliases: {
-            authorize_url: [`${base}/google/home/oauth`, `${base}/oauth`],
-            token_url: [`${base}/google/home/token`, `${base}/token`],
-            fulfillment_url: [`${base}/google/home/fulfillment`, `${base}/fulfillment`]
-        },
-        reachability_url: `${base}/api/google/home/live-reachability`
-    });
-});
-
-app.post('/api/google/home/oauth-probe', async (req, res) => {
-    const clientId = sanitizeString(req.body?.client_id || req.query?.client_id, 255);
-    const redirectUri = sanitizeString(req.body?.redirect_uri || req.query?.redirect_uri, 1000);
-    const state = sanitizeString(req.body?.state || req.query?.state, 1000);
-    const portalToken = sanitizeString(req.body?.portal_session_token || req.query?.portal_session_token || '', 4000);
-
-    const result = {
-        has_google_client_id: Boolean(GOOGLE_HOME_CLIENT_ID),
-        client_id_matches: clientId === GOOGLE_HOME_CLIENT_ID,
-        redirect_uri_trusted: isTrustedGoogleRedirectUri(redirectUri),
-        portal_token_well_formed: hasExactlyOneDot(portalToken),
-        has_cookie_token: Boolean(req.cookies?.[PORTAL_SESSION_COOKIE_NAME]),
-        redirect_host: (() => {
-            try {
-                return redirectUri ? new URL(redirectUri).host : null;
-            } catch (_error) {
-                return null;
-            }
-        })(),
-        allowed_redirect_hosts: GOOGLE_HOME_REDIRECT_URI_HOSTS
-    };
-
-    if (!clientId || !redirectUri || !portalToken) {
-        return res.status(200).json({ ok: false, error: 'missing_input', ...result });
-    }
-
-    const session = verifyPortalSessionToken(portalToken);
-    if (!session) {
-        return res.status(200).json({ ok: false, error: 'invalid_portal_session', ...result });
-    }
-
-    const user = await dbGet(`SELECT id, email, status, google_home_enabled, google_home_linked FROM users WHERE email = ? LIMIT 1`, [session.email]);
-    if (!user) {
-        return res.status(200).json({ ok: false, error: 'user_not_found', ...result });
-    }
-
-    return res.status(200).json({
-        ok: true,
-        ...result,
-        state: state || null,
-        user: {
-            id: user.id,
-            email: user.email,
-            status: user.status,
-            google_home_enabled: Boolean(user.google_home_enabled),
-            google_home_linked: Boolean(user.google_home_linked)
-        }
-    });
 });
 
 app.post('/api/billing/create-checkout', async (req, res) => {

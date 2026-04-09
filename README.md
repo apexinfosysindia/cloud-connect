@@ -95,7 +95,6 @@ PORTAL_SESSION_SECRET=
 GOOGLE_HOME_CLIENT_ID=
 GOOGLE_HOME_CLIENT_SECRET=
 GOOGLE_HOME_REDIRECT_URI_HOSTS=oauth-redirect.googleusercontent.com
-GOOGLE_CAPABILITY_ENGINE_V2=0
 GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL=
 GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY=
 GOOGLE_HOMEGRAPH_ADMIN_TOKEN=
@@ -190,11 +189,6 @@ Online model (production-safe hybrid):
 - `entity_available` comes from addon state (`state != unavailable`)
 - `entity_fresh` is time-window based (derived from heartbeat window) to prevent stale entity drift
 - Empty or invalid entity sync payloads are ignored (non-destructive)
-
-Capability-native engine (optional rollout):
-- Set `GOOGLE_CAPABILITY_ENGINE_V2=1` to enable capability-driven trait/command resolution.
-- Addon now syncs `capabilities` metadata per entity; cloud uses this to expose only supported traits/commands.
-- Keep `GOOGLE_CAPABILITY_ENGINE_V2=0` for fallback/static behavior during phased rollout.
 
 Internal Homegraph debug/ops endpoints:
 - `GET /api/google/home/homegraph-debug`
