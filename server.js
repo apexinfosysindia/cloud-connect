@@ -3972,7 +3972,7 @@ app.post('/api/account/google-home/entities/:entityId/expose', requirePortalUser
     }
 });
 
-app.get('/api/google/home/oauth', async (req, res) => {
+app.get(['/api/google/home/oauth', '/google/home/oauth'], async (req, res) => {
     const clientId = sanitizeString(req.query?.client_id, 255);
     const redirectUri = sanitizeString(req.query?.redirect_uri, 1000);
     const state = sanitizeString(req.query?.state, 1000) || '';
@@ -4129,7 +4129,7 @@ app.get('/api/google/home/oauth', async (req, res) => {
     }
 });
 
-app.post('/api/google/home/oauth/continue', async (req, res) => {
+app.post(['/api/google/home/oauth/continue', '/google/home/oauth/continue'], async (req, res) => {
     const clientId = sanitizeString(req.body?.client_id, 255);
     const redirectUri = sanitizeString(req.body?.redirect_uri, 1000);
     const state = sanitizeString(req.body?.state, 1000) || '';
@@ -4284,7 +4284,7 @@ app.post('/api/google/home/oauth-debug-cookie', async (req, res) => {
     });
 });
 
-app.post('/api/google/home/token', async (req, res) => {
+app.post(['/api/google/home/token', '/google/home/token'], async (req, res) => {
     const grantType = sanitizeString(req.body?.grant_type, 64);
     const clientId = sanitizeString(req.body?.client_id, 255);
     const clientSecret = sanitizeString(req.body?.client_secret, 255);
@@ -4354,7 +4354,15 @@ app.post('/api/google/home/token', async (req, res) => {
     }
 });
 
-app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) => {
+app.get(['/api/google/home/fulfillment', '/google/home/fulfillment'], (_req, res) => {
+    return res.status(200).send('ok');
+});
+
+app.head(['/api/google/home/fulfillment', '/google/home/fulfillment'], (_req, res) => {
+    return res.status(200).end();
+});
+
+app.post(['/api/google/home/fulfillment', '/google/home/fulfillment'], requireGoogleBearer, async (req, res) => {
     const requestId = sanitizeGoogleRequestId(req.body?.requestId) || `req_${Date.now()}`;
     const inputs = Array.isArray(req.body?.inputs) ? req.body.inputs : [];
     const input = inputs[0] || {};
@@ -5430,6 +5438,10 @@ app.get('/api/google/home/entity-debug', async (req, res) => {
         console.error('GOOGLE ENTITY DEBUG ERROR:', error);
         return res.status(500).json({ error: 'unable_to_load_entity_debug' });
     }
+});
+
+app.get('/api/google/home/reachability-check', (_req, res) => {
+    return res.status(200).json({ ok: true, service: 'google-home-backend' });
 });
 
 app.post('/api/google/home/oauth-probe', async (req, res) => {
