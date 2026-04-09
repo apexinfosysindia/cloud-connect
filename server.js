@@ -54,6 +54,14 @@ let googleHomegraphAccessTokenCache = {
 
 const googleHomegraphRequestSyncQueue = new Map();
 const googleHomegraphReportStateQueue = new Map();
+const googleEndpointStats = {
+    oauth_hits: 0,
+    token_hits: 0,
+    fulfillment_hits: 0,
+    last_oauth_at: null,
+    last_token_at: null,
+    last_fulfillment_at: null
+};
 const homegraphMetrics = {
     request_sync: {
         sent: 0,
@@ -3973,6 +3981,8 @@ app.post('/api/account/google-home/entities/:entityId/expose', requirePortalUser
 });
 
 app.get(['/api/google/home/oauth', '/google/home/oauth'], async (req, res) => {
+    googleEndpointStats.oauth_hits += 1;
+    googleEndpointStats.last_oauth_at = new Date().toISOString();
     const clientId = sanitizeString(req.query?.client_id, 255);
     const redirectUri = sanitizeString(req.query?.redirect_uri, 1000);
     const state = sanitizeString(req.query?.state, 1000) || '';
@@ -4285,6 +4295,8 @@ app.post('/api/google/home/oauth-debug-cookie', async (req, res) => {
 });
 
 app.post(['/api/google/home/token', '/google/home/token'], async (req, res) => {
+    googleEndpointStats.token_hits += 1;
+    googleEndpointStats.last_token_at = new Date().toISOString();
     const grantType = sanitizeString(req.body?.grant_type, 64);
     const clientId = sanitizeString(req.body?.client_id, 255);
     const clientSecret = sanitizeString(req.body?.client_secret, 255);
@@ -4363,6 +4375,8 @@ app.head(['/api/google/home/fulfillment', '/google/home/fulfillment'], (_req, re
 });
 
 app.post(['/api/google/home/fulfillment', '/google/home/fulfillment'], requireGoogleBearer, async (req, res) => {
+    googleEndpointStats.fulfillment_hits += 1;
+    googleEndpointStats.last_fulfillment_at = new Date().toISOString();
     const requestId = sanitizeGoogleRequestId(req.body?.requestId) || `req_${Date.now()}`;
     const inputs = Array.isArray(req.body?.inputs) ? req.body.inputs : [];
     const input = inputs[0] || {};
@@ -4609,6 +4623,28 @@ app.post(['/api/google/home/fulfillment', '/google/home/fulfillment'], requireGo
         console.error('GOOGLE FULFILLMENT ERROR:', error);
         return res.status(500).json({ error: 'Unable to process Google fulfillment request' });
     }
+});
+
+app.post('/api/google/home/fulfillment-test', async (req, res) => {
+    const bearer = req.get('authorization') || '';
+    const token = bearer.startsWith('Bearer ') ? bearer.slice(7).trim() : sanitizeString(req.body?.access_token || '', 512);
+    if (!token) {
+        return res.status(401).json({ error: 'missing_access_token' });
+    }
+
+    const user = await findUserByGoogleAccessToken(token);
+    if (!user) {
+        return res.status(401).json({ error: 'invalid_or_expired_access_token' });
+    }
+
+    const entities = await getGoogleEntitiesForUser(user.id, { includeDisabled: false });
+    return res.status(200).json({
+        ok: true,
+        user_id: user.id,
+        entities_count: entities.length,
+        linked: Boolean(user.google_home_linked),
+        enabled: Boolean(user.google_home_enabled)
+    });
 });
 
 app.post('/api/internal/devices/google-home/entities', requireDeviceAuth, async (req, res) => {
@@ -5442,6 +5478,14 @@ app.get('/api/google/home/entity-debug', async (req, res) => {
 
 app.get('/api/google/home/reachability-check', (_req, res) => {
     return res.status(200).json({ ok: true, service: 'google-home-backend' });
+});
+
+app.get('/api/google/home/live-reachability', async (_req, res) => {
+    return res.status(200).json({
+        ok: true,
+        endpoint_stats: googleEndpointStats,
+        now: new Date().toISOString()
+    });
 });
 
 app.post('/api/google/home/oauth-probe', async (req, res) => {
