@@ -583,12 +583,12 @@ async function refreshGoogleEntityFreshnessFromDeviceHeartbeat(userId = null, de
     let where = '';
 
     if (parsePositiveInt(userId)) {
-        where += ' AND ge.user_id = ?';
+        where += ' AND user_id = ?';
         params.push(parsePositiveInt(userId));
     }
 
     if (parsePositiveInt(deviceId)) {
-        where += ' AND ge.device_id = ?';
+        where += ' AND device_id = ?';
         params.push(parsePositiveInt(deviceId));
     }
 
