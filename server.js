@@ -46,6 +46,7 @@ const DEVICE_TUNNEL_PORT_MIN = Number(process.env.DEVICE_TUNNEL_PORT_MIN || 2200
 const DEVICE_TUNNEL_PORT_MAX = Number(process.env.DEVICE_TUNNEL_PORT_MAX || 22999);
 const DEVICE_TOKEN_PREFIX = 'dvc_';
 const ADMIN_CONNECT_TOKEN_PREFIX = 'acn_';
+const GOOGLE_BACKEND_RELEASE = 'google-backend-2026-04-09-r3';
 
 let googleHomegraphAccessTokenCache = {
     token: null,
@@ -60,12 +61,23 @@ const googleEndpointStats = {
     fulfillment_hits: 0,
     fulfillment_pre_auth_hits: 0,
     fulfillment_auth_failures: 0,
+    oauth_status_counts: {},
+    token_status_counts: {},
+    fulfillment_status_counts: {},
     last_oauth_at: null,
     last_token_at: null,
     last_fulfillment_at: null,
     last_fulfillment_pre_auth_at: null,
-    last_fulfillment_auth_failure_at: null
+    last_fulfillment_auth_failure_at: null,
+    last_oauth_status: null,
+    last_token_status: null,
+    last_fulfillment_status: null
 };
+
+function incrementStatusCounter(bucket, statusCode) {
+    const key = String(Number(statusCode) || 0);
+    bucket[key] = (bucket[key] || 0) + 1;
+}
 
 function trackGoogleEdgeRequest(req, res, next) {
     const pathName = req.path || '';
@@ -82,6 +94,19 @@ function trackGoogleEdgeRequest(req, res, next) {
     const startedAt = Date.now();
     res.on('finish', () => {
         const elapsedMs = Date.now() - startedAt;
+        if (pathName.includes('/oauth') || pathName === '/oauth') {
+            incrementStatusCounter(googleEndpointStats.oauth_status_counts, res.statusCode);
+            googleEndpointStats.last_oauth_status = res.statusCode;
+        }
+        if (pathName.includes('/token') || pathName === '/token') {
+            incrementStatusCounter(googleEndpointStats.token_status_counts, res.statusCode);
+            googleEndpointStats.last_token_status = res.statusCode;
+        }
+        if (pathName.includes('/fulfillment') || pathName === '/fulfillment') {
+            incrementStatusCounter(googleEndpointStats.fulfillment_status_counts, res.statusCode);
+            googleEndpointStats.last_fulfillment_status = res.statusCode;
+        }
+
         console.log('GOOGLE EDGE REQUEST:', {
             method: req.method,
             path: pathName,
@@ -4438,6 +4463,15 @@ app.post(['/api/google/home/fulfillment', '/google/home/fulfillment', '/fulfillm
             const entities = await getGoogleEntitiesForUser(req.googleUser.id, { includeDisabled: false });
             const devices = entities.map((entity) => buildGoogleDeviceObject(withEffectiveGoogleOnline(entity)));
 
+            if (GOOGLE_DEBUG_ENDPOINTS_ENABLED) {
+                console.log('GOOGLE SYNC RESPONSE SUMMARY:', {
+                    user_id: req.googleUser.id,
+                    devices_count: devices.length,
+                    enabled: Boolean(req.googleUser.google_home_enabled),
+                    linked: Boolean(req.googleUser.google_home_linked)
+                });
+            }
+
             return res.status(200).json({
                 requestId,
                 payload: {
@@ -5528,9 +5562,35 @@ app.get('/api/google/home/reachability-check', (_req, res) => {
     return res.status(200).json({ ok: true, service: 'google-home-backend' });
 });
 
+app.get('/api/google/home/direct-sync-check', async (req, res) => {
+    const bearer = req.get('authorization') || '';
+    const token = bearer.startsWith('Bearer ') ? bearer.slice(7).trim() : sanitizeString(req.query?.access_token || '', 512);
+    if (!token) {
+        return res.status(401).json({ error: 'missing_access_token' });
+    }
+
+    const user = await findUserByGoogleAccessToken(token);
+    if (!user) {
+        return res.status(401).json({ error: 'invalid_or_expired_access_token' });
+    }
+
+    const entities = await getGoogleEntitiesForUser(user.id, { includeDisabled: false });
+    const devices = entities.map((entity) => buildGoogleDeviceObject(withEffectiveGoogleOnline(entity)));
+
+    return res.status(200).json({
+        ok: true,
+        requestId: `direct_${Date.now()}`,
+        payload: {
+            agentUserId: String(user.id),
+            devices
+        }
+    });
+});
+
 app.get('/api/google/home/live-reachability', async (_req, res) => {
     return res.status(200).json({
         ok: true,
+        release: GOOGLE_BACKEND_RELEASE,
         endpoint_stats: googleEndpointStats,
         now: new Date().toISOString()
     });
@@ -5542,19 +5602,26 @@ app.post('/api/google/home/live-reachability/reset', (_req, res) => {
     googleEndpointStats.fulfillment_hits = 0;
     googleEndpointStats.fulfillment_pre_auth_hits = 0;
     googleEndpointStats.fulfillment_auth_failures = 0;
+    googleEndpointStats.oauth_status_counts = {};
+    googleEndpointStats.token_status_counts = {};
+    googleEndpointStats.fulfillment_status_counts = {};
     googleEndpointStats.last_oauth_at = null;
     googleEndpointStats.last_token_at = null;
     googleEndpointStats.last_fulfillment_at = null;
     googleEndpointStats.last_fulfillment_pre_auth_at = null;
     googleEndpointStats.last_fulfillment_auth_failure_at = null;
+    googleEndpointStats.last_oauth_status = null;
+    googleEndpointStats.last_token_status = null;
+    googleEndpointStats.last_fulfillment_status = null;
 
     return res.status(200).json({ ok: true, message: 'google_endpoint_stats_reset' });
 });
 
 app.get('/api/google/home/diag-endpoints', (_req, res) => {
-    const base = `https://${CLOUD_HOST}`;
+    const base = `https://${CLOUD_BASE_DOMAIN}`;
     return res.status(200).json({
         ok: true,
+        release: GOOGLE_BACKEND_RELEASE,
         recommended: {
             authorize_url: `${base}/api/google/home/oauth`,
             token_url: `${base}/api/google/home/token`,
