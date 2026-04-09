@@ -58,10 +58,49 @@ const googleEndpointStats = {
     oauth_hits: 0,
     token_hits: 0,
     fulfillment_hits: 0,
+    fulfillment_pre_auth_hits: 0,
+    fulfillment_auth_failures: 0,
     last_oauth_at: null,
     last_token_at: null,
-    last_fulfillment_at: null
+    last_fulfillment_at: null,
+    last_fulfillment_pre_auth_at: null,
+    last_fulfillment_auth_failure_at: null
 };
+
+function trackGoogleEdgeRequest(req, res, next) {
+    const pathName = req.path || '';
+    const shouldTrack = pathName.startsWith('/api/google/home')
+        || pathName.startsWith('/google/home')
+        || pathName === '/oauth'
+        || pathName === '/token'
+        || pathName === '/fulfillment';
+
+    if (!shouldTrack) {
+        return next();
+    }
+
+    const startedAt = Date.now();
+    res.on('finish', () => {
+        const elapsedMs = Date.now() - startedAt;
+        console.log('GOOGLE EDGE REQUEST:', {
+            method: req.method,
+            path: pathName,
+            status: res.statusCode,
+            elapsed_ms: elapsedMs,
+            host: req.get('host') || null,
+            user_agent: req.get('user-agent') || null,
+            origin: req.get('origin') || null
+        });
+    });
+
+    return next();
+}
+
+function trackGoogleFulfillmentPreAuth(req, _res, next) {
+    googleEndpointStats.fulfillment_pre_auth_hits += 1;
+    googleEndpointStats.last_fulfillment_pre_auth_at = new Date().toISOString();
+    return next();
+}
 const homegraphMetrics = {
     request_sync: {
         sent: 0,
@@ -180,6 +219,7 @@ app.use(express.json({
     }
 }));
 app.use(express.urlencoded({ extended: false, limit: '1mb' }));
+app.use(trackGoogleEdgeRequest);
 app.use(cors({
     origin: (origin, callback) => {
         if (!origin) {
@@ -2267,20 +2307,28 @@ async function requireGoogleBearer(req, res, next) {
     try {
         const authHeader = req.get('authorization') || '';
         if (!authHeader.startsWith('Bearer ')) {
+            googleEndpointStats.fulfillment_auth_failures += 1;
+            googleEndpointStats.last_fulfillment_auth_failure_at = new Date().toISOString();
             return res.status(401).json({ error: 'Missing bearer token' });
         }
 
         const token = authHeader.slice(7).trim();
         const user = await findUserByGoogleAccessToken(token);
         if (!user) {
+            googleEndpointStats.fulfillment_auth_failures += 1;
+            googleEndpointStats.last_fulfillment_auth_failure_at = new Date().toISOString();
             return res.status(401).json({ error: 'Invalid or expired access token' });
         }
 
         if (!user.google_home_enabled) {
+            googleEndpointStats.fulfillment_auth_failures += 1;
+            googleEndpointStats.last_fulfillment_auth_failure_at = new Date().toISOString();
             return res.status(403).json({ error: 'Google Home integration is disabled for this account' });
         }
 
         if (!isAccessEnabled(user.status)) {
+            googleEndpointStats.fulfillment_auth_failures += 1;
+            googleEndpointStats.last_fulfillment_auth_failure_at = new Date().toISOString();
             return res.status(403).json({ error: 'Account is not active for Google integration' });
         }
 
@@ -3980,7 +4028,7 @@ app.post('/api/account/google-home/entities/:entityId/expose', requirePortalUser
     }
 });
 
-app.get(['/api/google/home/oauth', '/google/home/oauth'], async (req, res) => {
+app.get(['/api/google/home/oauth', '/google/home/oauth', '/oauth'], async (req, res) => {
     googleEndpointStats.oauth_hits += 1;
     googleEndpointStats.last_oauth_at = new Date().toISOString();
     const clientId = sanitizeString(req.query?.client_id, 255);
@@ -4139,7 +4187,7 @@ app.get(['/api/google/home/oauth', '/google/home/oauth'], async (req, res) => {
     }
 });
 
-app.post(['/api/google/home/oauth/continue', '/google/home/oauth/continue'], async (req, res) => {
+app.post(['/api/google/home/oauth/continue', '/google/home/oauth/continue', '/oauth/continue'], async (req, res) => {
     const clientId = sanitizeString(req.body?.client_id, 255);
     const redirectUri = sanitizeString(req.body?.redirect_uri, 1000);
     const state = sanitizeString(req.body?.state, 1000) || '';
@@ -4294,7 +4342,7 @@ app.post('/api/google/home/oauth-debug-cookie', async (req, res) => {
     });
 });
 
-app.post(['/api/google/home/token', '/google/home/token'], async (req, res) => {
+app.post(['/api/google/home/token', '/google/home/token', '/token'], async (req, res) => {
     googleEndpointStats.token_hits += 1;
     googleEndpointStats.last_token_at = new Date().toISOString();
     const grantType = sanitizeString(req.body?.grant_type, 64);
@@ -4366,15 +4414,15 @@ app.post(['/api/google/home/token', '/google/home/token'], async (req, res) => {
     }
 });
 
-app.get(['/api/google/home/fulfillment', '/google/home/fulfillment'], (_req, res) => {
+app.get(['/api/google/home/fulfillment', '/google/home/fulfillment', '/fulfillment'], (_req, res) => {
     return res.status(200).send('ok');
 });
 
-app.head(['/api/google/home/fulfillment', '/google/home/fulfillment'], (_req, res) => {
+app.head(['/api/google/home/fulfillment', '/google/home/fulfillment', '/fulfillment'], (_req, res) => {
     return res.status(200).end();
 });
 
-app.post(['/api/google/home/fulfillment', '/google/home/fulfillment'], requireGoogleBearer, async (req, res) => {
+app.post(['/api/google/home/fulfillment', '/google/home/fulfillment', '/fulfillment'], trackGoogleFulfillmentPreAuth, requireGoogleBearer, async (req, res) => {
     googleEndpointStats.fulfillment_hits += 1;
     googleEndpointStats.last_fulfillment_at = new Date().toISOString();
     const requestId = sanitizeGoogleRequestId(req.body?.requestId) || `req_${Date.now()}`;
@@ -5485,6 +5533,39 @@ app.get('/api/google/home/live-reachability', async (_req, res) => {
         ok: true,
         endpoint_stats: googleEndpointStats,
         now: new Date().toISOString()
+    });
+});
+
+app.post('/api/google/home/live-reachability/reset', (_req, res) => {
+    googleEndpointStats.oauth_hits = 0;
+    googleEndpointStats.token_hits = 0;
+    googleEndpointStats.fulfillment_hits = 0;
+    googleEndpointStats.fulfillment_pre_auth_hits = 0;
+    googleEndpointStats.fulfillment_auth_failures = 0;
+    googleEndpointStats.last_oauth_at = null;
+    googleEndpointStats.last_token_at = null;
+    googleEndpointStats.last_fulfillment_at = null;
+    googleEndpointStats.last_fulfillment_pre_auth_at = null;
+    googleEndpointStats.last_fulfillment_auth_failure_at = null;
+
+    return res.status(200).json({ ok: true, message: 'google_endpoint_stats_reset' });
+});
+
+app.get('/api/google/home/diag-endpoints', (_req, res) => {
+    const base = `https://${CLOUD_HOST}`;
+    return res.status(200).json({
+        ok: true,
+        recommended: {
+            authorize_url: `${base}/api/google/home/oauth`,
+            token_url: `${base}/api/google/home/token`,
+            fulfillment_url: `${base}/api/google/home/fulfillment`
+        },
+        compatibility_aliases: {
+            authorize_url: [`${base}/google/home/oauth`, `${base}/oauth`],
+            token_url: [`${base}/google/home/token`, `${base}/token`],
+            fulfillment_url: [`${base}/google/home/fulfillment`, `${base}/fulfillment`]
+        },
+        reachability_url: `${base}/api/google/home/live-reachability`
     });
 });
 
