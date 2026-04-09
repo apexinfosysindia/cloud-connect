@@ -71,7 +71,9 @@ const googleEndpointStats = {
     last_fulfillment_auth_failure_at: null,
     last_oauth_status: null,
     last_token_status: null,
-    last_fulfillment_status: null
+    last_fulfillment_status: null,
+    last_fulfillment_error_message: null,
+    last_fulfillment_error_stack: null
 };
 
 function incrementStatusCounter(bucket, statusCode) {
@@ -4702,6 +4704,8 @@ app.post(['/api/google/home/fulfillment', '/google/home/fulfillment', '/fulfillm
 
         return res.status(400).json({ error: 'Unsupported intent' });
     } catch (error) {
+        googleEndpointStats.last_fulfillment_error_message = sanitizeString(error?.message || 'unknown_error', 500) || 'unknown_error';
+        googleEndpointStats.last_fulfillment_error_stack = sanitizeString((error?.stack || '').slice(0, 3000), 3000) || null;
         console.error('GOOGLE FULFILLMENT ERROR:', error);
         return res.status(500).json({ error: 'Unable to process Google fulfillment request' });
     }
@@ -5613,6 +5617,8 @@ app.post('/api/google/home/live-reachability/reset', (_req, res) => {
     googleEndpointStats.last_oauth_status = null;
     googleEndpointStats.last_token_status = null;
     googleEndpointStats.last_fulfillment_status = null;
+    googleEndpointStats.last_fulfillment_error_message = null;
+    googleEndpointStats.last_fulfillment_error_stack = null;
 
     return res.status(200).json({ ok: true, message: 'google_endpoint_stats_reset' });
 });
