@@ -839,111 +839,217 @@ function mapGoogleDomainToEntityType(entityId, fallbackType = 'switch') {
     if (domain === 'scene') return 'scene';
     if (domain === 'button') return 'button';
     if (domain === 'vacuum') return 'vacuum';
-    if (domain === 'sensor') return 'sensor_temperature';
+    if (domain === 'humidifier') return 'humidifier';
+    if (domain === 'alarm_control_panel') return 'alarm_control_panel';
+    if (domain === 'water_heater') return 'water_heater';
+    if (domain === 'binary_sensor') return 'binary_sensor';
+    if (domain === 'sensor') return 'sensor';
 
     return fallbackType;
 }
 
-function mapGoogleEntityTypeToTraits(entityType) {
+function resolveGoogleTraitsFromCapabilities(entityType, statePayload) {
+    const sf = Number(statePayload?.supported_features) || 0;
+    const dc = statePayload?.device_class || null;
+    const colorModes = Array.isArray(statePayload?.supported_color_modes) ? statePayload.supported_color_modes : [];
+    const hasFeature = (bit) => (sf & bit) !== 0;
+
+    if (entityType === 'light') {
+        const traits = ['action.devices.traits.OnOff'];
+        const hasBrightness = colorModes.length > 0 && !colorModes.every(m => m === 'onoff');
+        if (hasBrightness) {
+            traits.push('action.devices.traits.Brightness');
+        }
+        const hasColor = colorModes.some(m => ['hs', 'xy', 'rgb', 'rgbw', 'rgbww'].includes(m));
+        const hasColorTemp = colorModes.includes('color_temp');
+        if (hasColor || hasColorTemp) {
+            traits.push('action.devices.traits.ColorSetting');
+        }
+        return { type: 'action.devices.types.LIGHT', traits };
+    }
+
     if (entityType === 'fan') {
-        return {
-            type: 'action.devices.types.FAN',
-            traits: [
-                'action.devices.traits.OnOff',
-                'action.devices.traits.FanSpeed'
-            ]
-        };
+        const traits = ['action.devices.traits.OnOff'];
+        const hasSetSpeed = hasFeature(1);
+        const hasPresetMode = hasFeature(8);
+        if (hasSetSpeed || hasPresetMode || sf === 0) {
+            traits.push('action.devices.traits.FanSpeed');
+        }
+        return { type: 'action.devices.types.FAN', traits };
     }
 
     if (entityType === 'cover') {
-        return {
-            type: 'action.devices.types.BLINDS',
-            traits: [
-                'action.devices.traits.OpenClose'
-            ]
-        };
+        let deviceType = 'action.devices.types.BLINDS';
+        if (dc === 'garage') deviceType = 'action.devices.types.GARAGE';
+        else if (dc === 'door') deviceType = 'action.devices.types.DOOR';
+        else if (dc === 'gate') deviceType = 'action.devices.types.GATE';
+        else if (dc === 'window') deviceType = 'action.devices.types.WINDOW';
+        else if (dc === 'curtain') deviceType = 'action.devices.types.CURTAIN';
+        else if (dc === 'awning' || dc === 'shutter') deviceType = 'action.devices.types.BLINDS';
+
+        const traits = ['action.devices.traits.OpenClose'];
+        const hasTilt = hasFeature(128);
+        if (hasTilt) {
+            traits.push('action.devices.traits.Rotation');
+        }
+        return { type: deviceType, traits };
     }
 
     if (entityType === 'lock') {
         return {
             type: 'action.devices.types.LOCK',
-            traits: [
-                'action.devices.traits.LockUnlock'
-            ]
+            traits: ['action.devices.traits.LockUnlock']
         };
     }
 
     if (entityType === 'climate') {
         return {
             type: 'action.devices.types.THERMOSTAT',
-            traits: [
-                'action.devices.traits.TemperatureSetting'
-            ]
+            traits: ['action.devices.traits.TemperatureSetting']
         };
     }
 
     if (entityType === 'media_player') {
-        return {
-            type: 'action.devices.types.TV',
-            traits: [
-                'action.devices.traits.OnOff',
-                'action.devices.traits.Volume'
-            ]
-        };
+        let deviceType = 'action.devices.types.TV';
+        if (dc === 'speaker') deviceType = 'action.devices.types.SPEAKER';
+        else if (dc === 'receiver') deviceType = 'action.devices.types.AUDIO_VIDEO_RECEIVER';
+        else if (dc === 'tv') deviceType = 'action.devices.types.TV';
+
+        const traits = [];
+        const hasTurnOn = hasFeature(128);
+        const hasTurnOff = hasFeature(256);
+        if (hasTurnOn || hasTurnOff || sf === 0) {
+            traits.push('action.devices.traits.OnOff');
+        }
+        const hasVolumeSet = hasFeature(4);
+        const hasVolumeStep = hasFeature(1024);
+        if (hasVolumeSet || hasVolumeStep || sf === 0) {
+            traits.push('action.devices.traits.Volume');
+        }
+        const hasVolumeMute = hasFeature(8);
+        const hasPause = hasFeature(1);
+        const hasPlay = hasFeature(16384);
+        const hasNextTrack = hasFeature(32);
+        const hasPreviousTrack = hasFeature(16);
+        const hasStop = hasFeature(4096);
+        if (hasPause || hasPlay || hasNextTrack || hasPreviousTrack || hasStop) {
+            traits.push('action.devices.traits.TransportControl');
+            traits.push('action.devices.traits.MediaState');
+        }
+        const hasSelectSource = hasFeature(2048);
+        const sourceList = Array.isArray(statePayload?.source_list) ? statePayload.source_list : [];
+        if (hasSelectSource && sourceList.length > 0) {
+            traits.push('action.devices.traits.InputSelector');
+        }
+        if (traits.length === 0) {
+            traits.push('action.devices.traits.OnOff');
+        }
+        return { type: deviceType, traits };
     }
 
     if (entityType === 'scene') {
         return {
             type: 'action.devices.types.SCENE',
-            traits: [
-                'action.devices.traits.Scene'
-            ]
+            traits: ['action.devices.traits.Scene']
         };
     }
 
     if (entityType === 'button') {
         return {
             type: 'action.devices.types.SCENE',
-            traits: [
-                'action.devices.traits.Scene'
-            ]
+            traits: ['action.devices.traits.Scene']
         };
     }
 
     if (entityType === 'vacuum') {
-        return {
-            type: 'action.devices.types.VACUUM',
-            traits: [
-                'action.devices.traits.StartStop',
-                'action.devices.traits.OnOff'
-            ]
-        };
+        const traits = [];
+        const hasStart = hasFeature(8192);
+        const hasTurnOn = hasFeature(1);
+        const hasTurnOff = hasFeature(2);
+        const hasPauseV = hasFeature(4);
+        const hasReturnHome = hasFeature(16);
+        const hasFanSpeed = hasFeature(32);
+        const hasBattery = hasFeature(64);
+        const hasLocate = hasFeature(512);
+
+        if (hasStart || sf === 0) {
+            traits.push('action.devices.traits.StartStop');
+        }
+        if (hasTurnOn || hasTurnOff) {
+            traits.push('action.devices.traits.OnOff');
+        }
+        if (hasReturnHome) {
+            traits.push('action.devices.traits.Dock');
+        }
+        if (hasLocate) {
+            traits.push('action.devices.traits.Locator');
+        }
+        if (hasFanSpeed) {
+            traits.push('action.devices.traits.FanSpeed');
+        }
+        if (hasBattery) {
+            traits.push('action.devices.traits.EnergyStorage');
+        }
+        if (traits.length === 0) {
+            traits.push('action.devices.traits.StartStop');
+            traits.push('action.devices.traits.OnOff');
+        }
+        return { type: 'action.devices.types.VACUUM', traits };
     }
 
-    if (entityType === 'light') {
-        return {
-            type: 'action.devices.types.LIGHT',
-            traits: [
-                'action.devices.traits.OnOff',
-                'action.devices.traits.Brightness'
-            ]
-        };
-    }
-
-    if (entityType === 'sensor_temperature') {
+    if (entityType === 'sensor' || entityType === 'sensor_temperature') {
         return {
             type: 'action.devices.types.SENSOR',
+            traits: ['action.devices.traits.SensorState']
+        };
+    }
+
+    if (entityType === 'binary_sensor') {
+        if (dc === 'door' || dc === 'window' || dc === 'garage_door' || dc === 'opening') {
+            return {
+                type: 'action.devices.types.SENSOR',
+                traits: ['action.devices.traits.OpenClose']
+            };
+        }
+        return {
+            type: 'action.devices.types.SENSOR',
+            traits: ['action.devices.traits.SensorState']
+        };
+    }
+
+    if (entityType === 'humidifier') {
+        const deviceType = dc === 'dehumidifier'
+            ? 'action.devices.types.DEHUMIDIFIER'
+            : 'action.devices.types.HUMIDIFIER';
+        return {
+            type: deviceType,
             traits: [
-                'action.devices.traits.SensorState'
+                'action.devices.traits.OnOff',
+                'action.devices.traits.HumiditySetting'
+            ]
+        };
+    }
+
+    if (entityType === 'alarm_control_panel') {
+        return {
+            type: 'action.devices.types.SECURITYSYSTEM',
+            traits: ['action.devices.traits.ArmDisarm']
+        };
+    }
+
+    if (entityType === 'water_heater') {
+        return {
+            type: 'action.devices.types.WATERHEATER',
+            traits: [
+                'action.devices.traits.OnOff',
+                'action.devices.traits.TemperatureSetting'
             ]
         };
     }
 
     return {
         type: 'action.devices.types.SWITCH',
-        traits: [
-            'action.devices.traits.OnOff'
-        ]
+        traits: ['action.devices.traits.OnOff']
     };
 }
 
@@ -970,55 +1076,454 @@ function getGoogleThermostatModesForEntity(entity) {
     return 'off,heat,cool,heatcool';
 }
 
-function supportsGoogleCommandForEntityType(entityType, commandName) {
+function supportsGoogleCommandForEntityType(entityType, commandName, statePayload) {
+    const sp = statePayload || {};
+    const sf = Number(sp.supported_features) || 0;
+    const hasFeature = (bit) => (sf & bit) !== 0;
+    const colorModes = Array.isArray(sp.supported_color_modes) ? sp.supported_color_modes : [];
+
     const allowed = {
-        light: new Set([
+        light: () => {
+            const cmds = new Set([
+                'action.devices.commands.OnOff'
+            ]);
+            const hasBrightness = colorModes.length > 0 && !colorModes.every(m => m === 'onoff');
+            if (hasBrightness) {
+                cmds.add('action.devices.commands.BrightnessAbsolute');
+            }
+            const hasColor = colorModes.some(m => ['hs', 'xy', 'rgb', 'rgbw', 'rgbww'].includes(m));
+            const hasColorTemp = colorModes.includes('color_temp');
+            if (hasColor || hasColorTemp) {
+                cmds.add('action.devices.commands.ColorAbsolute');
+            }
+            return cmds;
+        },
+        switch: () => new Set(['action.devices.commands.OnOff']),
+        fan: () => {
+            const cmds = new Set(['action.devices.commands.OnOff']);
+            const hasSetSpeed = hasFeature(1);
+            const hasPresetMode = hasFeature(8);
+            if (hasSetSpeed || hasPresetMode || sf === 0) {
+                cmds.add('action.devices.commands.SetFanSpeed');
+            }
+            return cmds;
+        },
+        cover: () => {
+            const cmds = new Set(['action.devices.commands.OpenClose']);
+            if (hasFeature(128)) {
+                cmds.add('action.devices.commands.RotateAbsolute');
+            }
+            return cmds;
+        },
+        lock: () => new Set(['action.devices.commands.LockUnlock']),
+        climate: () => new Set([
+            'action.devices.commands.ThermostatSetMode',
+            'action.devices.commands.ThermostatTemperatureSetpoint',
+            'action.devices.commands.ThermostatTemperatureSetRange'
+        ]),
+        media_player: () => {
+            const cmds = new Set();
+            if (hasFeature(128) || hasFeature(256) || sf === 0) {
+                cmds.add('action.devices.commands.OnOff');
+            }
+            if (hasFeature(4) || hasFeature(1024) || sf === 0) {
+                cmds.add('action.devices.commands.setVolume');
+            }
+            if (hasFeature(8) || sf === 0) {
+                cmds.add('action.devices.commands.mute');
+            }
+            if (hasFeature(1) || hasFeature(16384) || hasFeature(32) || hasFeature(16) || hasFeature(4096)) {
+                cmds.add('action.devices.commands.mediaControl');
+            }
+            if (hasFeature(2048)) {
+                cmds.add('action.devices.commands.SetInput');
+            }
+            return cmds;
+        },
+        scene: () => new Set(['action.devices.commands.activateScene']),
+        button: () => new Set(['action.devices.commands.activateScene']),
+        vacuum: () => {
+            const cmds = new Set();
+            if (hasFeature(8192) || sf === 0) {
+                cmds.add('action.devices.commands.StartStop');
+                cmds.add('action.devices.commands.PauseUnpause');
+            }
+            if (hasFeature(1) || hasFeature(2)) {
+                cmds.add('action.devices.commands.OnOff');
+            }
+            if (hasFeature(16)) {
+                cmds.add('action.devices.commands.Dock');
+            }
+            if (hasFeature(512)) {
+                cmds.add('action.devices.commands.Locate');
+            }
+            if (hasFeature(32)) {
+                cmds.add('action.devices.commands.SetFanSpeed');
+            }
+            if (cmds.size === 0) {
+                cmds.add('action.devices.commands.StartStop');
+                cmds.add('action.devices.commands.PauseUnpause');
+                cmds.add('action.devices.commands.OnOff');
+            }
+            return cmds;
+        },
+        sensor: () => new Set(),
+        sensor_temperature: () => new Set(),
+        binary_sensor: () => new Set(),
+        humidifier: () => new Set([
             'action.devices.commands.OnOff',
-            'action.devices.commands.BrightnessAbsolute'
+            'action.devices.commands.SetHumidity',
+            'action.devices.commands.SetModes'
         ]),
-        switch: new Set([
-            'action.devices.commands.OnOff'
+        alarm_control_panel: () => new Set([
+            'action.devices.commands.ArmDisarm'
         ]),
-        fan: new Set([
+        water_heater: () => new Set([
             'action.devices.commands.OnOff',
-            'action.devices.commands.SetFanSpeed'
-        ]),
-        cover: new Set([
-            'action.devices.commands.OpenClose'
-        ]),
-        lock: new Set([
-            'action.devices.commands.LockUnlock'
-        ]),
-        climate: new Set([
             'action.devices.commands.ThermostatSetMode',
             'action.devices.commands.ThermostatTemperatureSetpoint'
-        ]),
-        media_player: new Set([
-            'action.devices.commands.OnOff',
-            'action.devices.commands.setVolume',
-            'action.devices.commands.mute'
-        ]),
-        scene: new Set([
-            'action.devices.commands.activateScene'
-        ]),
-        button: new Set([
-            'action.devices.commands.activateScene'
-        ]),
-        vacuum: new Set([
-            'action.devices.commands.StartStop',
-            'action.devices.commands.PauseUnpause',
-            'action.devices.commands.OnOff'
-        ]),
-        sensor_temperature: new Set([])
+        ])
     };
 
-    const allowedCommands = allowed[normalizeGoogleEntityType(entityType)] || allowed.switch;
+    const resolver = allowed[normalizeGoogleEntityType(entityType)];
+    const allowedCommands = resolver ? resolver() : allowed.switch();
     return allowedCommands.has(commandName);
 }
 
+function buildGoogleDeviceAttributes(entityType, statePayload, traits) {
+    const sf = Number(statePayload?.supported_features) || 0;
+    const dc = statePayload?.device_class || null;
+    const colorModes = Array.isArray(statePayload?.supported_color_modes) ? statePayload.supported_color_modes : [];
+    const hasFeature = (bit) => (sf & bit) !== 0;
+    const hasTrait = (traitName) => traits.includes(`action.devices.traits.${traitName}`);
+    const attrs = {};
+
+    if (entityType === 'light') {
+        if (hasTrait('Brightness')) {
+            attrs.commandOnlyBrightness = false;
+        }
+        if (hasTrait('ColorSetting')) {
+            const hasColor = colorModes.some(m => ['hs', 'xy', 'rgb', 'rgbw', 'rgbww'].includes(m));
+            const hasColorTemp = colorModes.includes('color_temp');
+            if (hasColor) {
+                attrs.colorModel = 'hsv';
+            }
+            if (hasColorTemp) {
+                const minK = Number(statePayload?.min_color_temp_kelvin) || 2000;
+                const maxK = Number(statePayload?.max_color_temp_kelvin) || 6535;
+                attrs.colorTemperatureRange = {
+                    temperatureMinK: Math.max(1000, Math.min(12000, minK)),
+                    temperatureMaxK: Math.max(1000, Math.min(12000, maxK))
+                };
+            }
+            attrs.commandOnlyColorSetting = false;
+        }
+        return attrs;
+    }
+
+    if (entityType === 'fan') {
+        if (hasTrait('FanSpeed')) {
+            const hasSetSpeed = hasFeature(1);
+            const hasPresetMode = hasFeature(8);
+            const percentageStep = Number(statePayload?.percentage_step) || 0;
+            const presetModes = Array.isArray(statePayload?.preset_modes) ? statePayload.preset_modes : [];
+
+            if (hasSetSpeed && percentageStep > 0) {
+                const numSpeeds = Math.round(100 / percentageStep);
+                const speeds = [];
+                for (let i = 1; i <= numSpeeds; i++) {
+                    const pct = Math.round(i * percentageStep);
+                    let label = `Speed ${i}`;
+                    let synonyms = [`${i}`, `speed ${i}`, `${pct} percent`];
+                    if (i === 1) { label = 'Low'; synonyms = ['low', '1', 'slow', `${pct} percent`]; }
+                    else if (i === numSpeeds) { label = 'High'; synonyms = ['high', `${i}`, 'fast', 'max', `${pct} percent`]; }
+                    else if (i === Math.ceil(numSpeeds / 2)) { label = 'Medium'; synonyms = ['medium', `${i}`, 'mid', `${pct} percent`]; }
+                    speeds.push({
+                        speed_name: String(i),
+                        speed_values: [{ speed_synonym: [label, ...synonyms], lang: 'en' }]
+                    });
+                }
+                attrs.availableFanSpeeds = { speeds, ordered: true };
+                attrs.supportsFanSpeedPercent = true;
+            } else if (presetModes.length > 0 && !hasSetSpeed) {
+                const speeds = presetModes.map((mode) => ({
+                    speed_name: mode,
+                    speed_values: [{ speed_synonym: [mode], lang: 'en' }]
+                }));
+                attrs.availableFanSpeeds = { speeds, ordered: false };
+                attrs.supportsFanSpeedPercent = false;
+            } else {
+                attrs.availableFanSpeeds = {
+                    speeds: [
+                        { speed_name: '1', speed_values: [{ speed_synonym: ['low', '1'], lang: 'en' }] },
+                        { speed_name: '2', speed_values: [{ speed_synonym: ['medium', '2'], lang: 'en' }] },
+                        { speed_name: '3', speed_values: [{ speed_synonym: ['high', '3'], lang: 'en' }] }
+                    ],
+                    ordered: true
+                };
+            }
+            attrs.reversible = false;
+            attrs.commandOnlyFanSpeed = false;
+        }
+        return attrs;
+    }
+
+    if (entityType === 'cover') {
+        const hasSetPosition = hasFeature(4);
+        attrs.discreteOnlyOpenClose = !hasSetPosition;
+        attrs.queryOnlyOpenClose = false;
+        if (hasTrait('Rotation')) {
+            attrs.supportsDegrees = false;
+            attrs.supportsPercent = true;
+        }
+        return attrs;
+    }
+
+    if (entityType === 'climate') {
+        attrs.availableThermostatModes = getGoogleThermostatModesForEntity({ state_json: JSON.stringify(statePayload) });
+        const unit = statePayload?.temperature_unit || 'C';
+        attrs.thermostatTemperatureUnit = unit === 'F' ? 'F' : 'C';
+        const minTemp = Number(statePayload?.min_temp);
+        const maxTemp = Number(statePayload?.max_temp);
+        if (Number.isFinite(minTemp) && Number.isFinite(maxTemp)) {
+            attrs.thermostatTemperatureRange = {
+                minThresholdCelsius: unit === 'F' ? Math.round((minTemp - 32) * 5 / 9) : minTemp,
+                maxThresholdCelsius: unit === 'F' ? Math.round((maxTemp - 32) * 5 / 9) : maxTemp
+            };
+        }
+        const hvacModes = Array.isArray(statePayload?.hvac_modes) ? statePayload.hvac_modes : [];
+        if (hvacModes.some(m => m === 'heat_cool' || m === 'auto')) {
+            attrs.bufferRangeCelsius = 2;
+        }
+        return attrs;
+    }
+
+    if (entityType === 'media_player') {
+        if (hasTrait('Volume')) {
+            attrs.volumeMaxLevel = 100;
+            attrs.volumeCanMuteAndUnmute = hasFeature(8) || sf === 0;
+            attrs.commandOnlyVolume = false;
+        }
+        if (hasTrait('TransportControl')) {
+            const transportCommands = [];
+            if (hasFeature(1)) transportCommands.push('PAUSE');
+            if (hasFeature(16384) || hasFeature(1)) transportCommands.push('RESUME');
+            if (hasFeature(4096)) transportCommands.push('STOP');
+            if (hasFeature(32)) transportCommands.push('NEXT');
+            if (hasFeature(16)) transportCommands.push('PREVIOUS');
+            attrs.transportControlSupported = transportCommands.map(cmd => ({ command: cmd }));
+        }
+        if (hasTrait('MediaState')) {
+            attrs.supportActivityState = false;
+            attrs.supportPlaybackState = true;
+        }
+        if (hasTrait('InputSelector')) {
+            const sourceList = Array.isArray(statePayload?.source_list) ? statePayload.source_list : [];
+            attrs.availableInputs = sourceList.map((src) => ({
+                key: src.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+                names: [{ name_synonym: [src], lang: 'en' }]
+            }));
+            attrs.commandOnlyInputSelector = false;
+            attrs.orderedInputs = false;
+        }
+        return attrs;
+    }
+
+    if (entityType === 'scene' || entityType === 'button') {
+        attrs.sceneReversible = false;
+        return attrs;
+    }
+
+    if (entityType === 'vacuum') {
+        if (hasTrait('StartStop')) {
+            attrs.pausable = hasFeature(4) || sf === 0;
+        }
+        if (hasTrait('FanSpeed')) {
+            const fanSpeedList = Array.isArray(statePayload?.fan_speed_list) ? statePayload.fan_speed_list : [];
+            if (fanSpeedList.length > 0) {
+                attrs.availableFanSpeeds = {
+                    speeds: fanSpeedList.map((spd) => ({
+                        speed_name: spd,
+                        speed_values: [{ speed_synonym: [spd], lang: 'en' }]
+                    })),
+                    ordered: true
+                };
+                attrs.reversible = false;
+            }
+        }
+        if (hasTrait('EnergyStorage')) {
+            attrs.queryOnlyEnergyStorage = true;
+            attrs.isRechargeable = true;
+        }
+        return attrs;
+    }
+
+    if (entityType === 'sensor' || entityType === 'sensor_temperature') {
+        const sensorDc = dc || statePayload?.device_class || 'temperature';
+        const sensorStates = [];
+
+        if (sensorDc === 'temperature') {
+            const unitRaw = statePayload?.unit_of_measurement || '°C';
+            const isFahrenheit = /F/.test(unitRaw);
+            sensorStates.push({
+                name: 'TemperatureAmbient',
+                numericCapabilities: {
+                    rawValueUnit: isFahrenheit ? 'FAHRENHEIT' : 'CELSIUS',
+                    rawValueRange: { minValue: -40, maxValue: 130 }
+                }
+            });
+        } else if (sensorDc === 'humidity') {
+            sensorStates.push({
+                name: 'HumidityAmbient',
+                numericCapabilities: {
+                    rawValueUnit: 'PERCENT',
+                    rawValueRange: { minValue: 0, maxValue: 100 }
+                }
+            });
+        } else if (sensorDc === 'pm25') {
+            sensorStates.push({
+                name: 'PM2.5',
+                numericCapabilities: {
+                    rawValueUnit: 'MICROGRAMS_PER_CUBIC_METER',
+                    rawValueRange: { minValue: 0, maxValue: 1000 }
+                }
+            });
+        } else if (sensorDc === 'pm10') {
+            sensorStates.push({
+                name: 'PM10',
+                numericCapabilities: {
+                    rawValueUnit: 'MICROGRAMS_PER_CUBIC_METER',
+                    rawValueRange: { minValue: 0, maxValue: 1000 }
+                }
+            });
+        } else if (sensorDc === 'carbon_dioxide' || sensorDc === 'co2') {
+            sensorStates.push({
+                name: 'CarbonDioxideLevel',
+                numericCapabilities: {
+                    rawValueUnit: 'PARTS_PER_MILLION',
+                    rawValueRange: { minValue: 0, maxValue: 5000 }
+                }
+            });
+        } else if (sensorDc === 'carbon_monoxide' || sensorDc === 'co') {
+            sensorStates.push({
+                name: 'CarbonMonoxideLevel',
+                numericCapabilities: {
+                    rawValueUnit: 'PARTS_PER_MILLION',
+                    rawValueRange: { minValue: 0, maxValue: 1000 }
+                }
+            });
+        } else if (sensorDc === 'volatile_organic_compounds' || sensorDc === 'voc') {
+            sensorStates.push({
+                name: 'VolatileOrganicCompounds',
+                numericCapabilities: {
+                    rawValueUnit: 'PARTS_PER_MILLION',
+                    rawValueRange: { minValue: 0, maxValue: 5000 }
+                }
+            });
+        } else if (sensorDc === 'aqi') {
+            sensorStates.push({
+                name: 'AirQuality',
+                numericCapabilities: {
+                    rawValueUnit: 'AQI',
+                    rawValueRange: { minValue: 0, maxValue: 500 }
+                }
+            });
+        } else {
+            sensorStates.push({
+                name: 'TemperatureAmbient',
+                numericCapabilities: {
+                    rawValueUnit: 'CELSIUS',
+                    rawValueRange: { minValue: -40, maxValue: 130 }
+                }
+            });
+        }
+
+        attrs.sensorStatesSupported = sensorStates;
+        return attrs;
+    }
+
+    if (entityType === 'binary_sensor') {
+        if (dc === 'door' || dc === 'window' || dc === 'garage_door' || dc === 'opening') {
+            attrs.queryOnlyOpenClose = true;
+            attrs.discreteOnlyOpenClose = true;
+        } else if (dc === 'smoke') {
+            attrs.sensorStatesSupported = [{
+                name: 'SmokeLevel',
+                descriptiveCapabilities: {
+                    availableStates: ['smoke detected', 'no smoke detected']
+                }
+            }];
+        } else if (dc === 'moisture') {
+            attrs.sensorStatesSupported = [{
+                name: 'WaterLeak',
+                descriptiveCapabilities: {
+                    availableStates: ['leak', 'no leak']
+                }
+            }];
+        } else if (dc === 'motion' || dc === 'occupancy') {
+            attrs.sensorStatesSupported = [{
+                name: 'OccupancyDetecting',
+                descriptiveCapabilities: {
+                    availableStates: ['occupied', 'unoccupied']
+                }
+            }];
+        }
+        return attrs;
+    }
+
+    if (entityType === 'humidifier') {
+        const minHumidity = Number(statePayload?.min_humidity) || 0;
+        const maxHumidity = Number(statePayload?.max_humidity) || 100;
+        attrs.humiditySetpointRange = {
+            minPercent: Math.max(0, minHumidity),
+            maxPercent: Math.min(100, maxHumidity)
+        };
+        attrs.commandOnlyHumiditySetting = false;
+        attrs.queryOnlyHumiditySetting = false;
+        return attrs;
+    }
+
+    if (entityType === 'alarm_control_panel') {
+        const levels = [];
+        if (hasFeature(1)) levels.push({ level_name: 'L1', level_values: [{ level_synonym: ['home', 'arm home', 'stay'], lang: 'en' }] });
+        if (hasFeature(2)) levels.push({ level_name: 'L2', level_values: [{ level_synonym: ['away', 'arm away'], lang: 'en' }] });
+        if (hasFeature(4)) levels.push({ level_name: 'L3', level_values: [{ level_synonym: ['night', 'arm night'], lang: 'en' }] });
+        if (hasFeature(16)) levels.push({ level_name: 'L4', level_values: [{ level_synonym: ['custom', 'custom bypass'], lang: 'en' }] });
+        if (levels.length === 0) {
+            levels.push({ level_name: 'L1', level_values: [{ level_synonym: ['home', 'arm home'], lang: 'en' }] });
+            levels.push({ level_name: 'L2', level_values: [{ level_synonym: ['away', 'arm away'], lang: 'en' }] });
+        }
+        attrs.availableArmLevels = { levels, ordered: true };
+        return attrs;
+    }
+
+    if (entityType === 'water_heater') {
+        const operationList = Array.isArray(statePayload?.operation_list) ? statePayload.operation_list : [];
+        const modes = operationList.length > 0
+            ? operationList.map(m => normalizeGoogleThermostatMode(m)).filter(Boolean)
+            : ['off', 'heat'];
+        attrs.availableThermostatModes = modes.join(',');
+        const unit = statePayload?.temperature_unit || 'C';
+        attrs.thermostatTemperatureUnit = unit === 'F' ? 'F' : 'C';
+        const minTemp = Number(statePayload?.min_temp);
+        const maxTemp = Number(statePayload?.max_temp);
+        if (Number.isFinite(minTemp) && Number.isFinite(maxTemp)) {
+            attrs.thermostatTemperatureRange = {
+                minThresholdCelsius: unit === 'F' ? Math.round((minTemp - 32) * 5 / 9) : minTemp,
+                maxThresholdCelsius: unit === 'F' ? Math.round((maxTemp - 32) * 5 / 9) : maxTemp
+            };
+        }
+        return attrs;
+    }
+
+    return attrs;
+}
+
 function buildGoogleDeviceObject(entity) {
-    const mapped = mapGoogleEntityTypeToTraits(entity.entity_type);
+    const statePayload = parseJsonSafe(entity?.state_json, {}) || {};
+    const mapped = resolveGoogleTraitsFromCapabilities(entity.entity_type, statePayload);
     const roomHint = sanitizeString(entity.room_hint, 120);
+    const attributes = buildGoogleDeviceAttributes(entity.entity_type, statePayload, mapped.traits);
 
     return {
         id: entity.entity_id,
@@ -1038,83 +1543,48 @@ function buildGoogleDeviceObject(entity) {
             model: entity.entity_type || 'generic',
             hwVersion: entity.addon_version || 'apex-cloud-link'
         },
-        attributes: entity.entity_type === 'light'
-            ? { commandOnlyBrightness: false }
-            : entity.entity_type === 'fan'
-                ? {
-                    availableFanSpeeds: {
-                        speeds: [
-                            { speed_name: '1', speed_values: [{ speed_synonym: ['low', '1'], lang: 'en' }] },
-                            { speed_name: '2', speed_values: [{ speed_synonym: ['medium', '2'], lang: 'en' }] },
-                            { speed_name: '3', speed_values: [{ speed_synonym: ['high', '3'], lang: 'en' }] }
-                        ],
-                        ordered: true
-                    },
-                    reversible: false,
-                    commandOnlyFanSpeed: false
-                }
-                : entity.entity_type === 'cover'
-                    ? {
-                        discreteOnlyOpenClose: false,
-                        queryOnlyOpenClose: false
-                    }
-                    : entity.entity_type === 'climate'
-                        ? {
-                            availableThermostatModes: getGoogleThermostatModesForEntity(entity),
-                            thermostatTemperatureUnit: 'C'
-                        }
-                        : entity.entity_type === 'media_player'
-                            ? {
-                                volumeMaxLevel: 100,
-                                volumeCanMuteAndUnmute: true,
-                                commandOnlyVolume: false
-                            }
-                            : entity.entity_type === 'scene' || entity.entity_type === 'button'
-                                ? {
-                                    sceneReversible: false
-                                }
-                                : entity.entity_type === 'vacuum'
-                                    ? {
-                                        pausable: true
-                                    }
-            : entity.entity_type === 'sensor_temperature'
-                ? {
-                    sensorStatesSupported: [
-                        {
-                            name: 'TemperatureAmbient',
-                            numericCapabilities: {
-                                rawValueUnit: 'CELSIUS',
-                                rawValueRange: {
-                                    minValue: -40,
-                                    maxValue: 130
-                                }
-                            }
-                        }
-                    ]
-                }
-                : {}
+        attributes
     };
 }
 
 function parseGoogleEntityState(entity) {
     const statePayload = parseJsonSafe(entity.state_json, {}) || {};
+    const sf = Number(statePayload.supported_features) || 0;
+    const dc = statePayload.device_class || null;
+    const colorModes = Array.isArray(statePayload.supported_color_modes) ? statePayload.supported_color_modes : [];
+    const hasFeature = (bit) => (sf & bit) !== 0;
 
     if (entity.entity_type === 'fan') {
         const fanOn = Boolean(statePayload.on);
-        const speed = Number(statePayload.speed || 0);
-        return {
+        const state = {
             online: entity.online !== 0,
-            on: fanOn,
-            currentFanSpeedSetting: String(Math.max(1, Math.min(3, Math.round(speed || 1))))
+            on: fanOn
         };
+        const hasSetSpeed = hasFeature(1);
+        const percentageStep = Number(statePayload.percentage_step) || 0;
+        if (hasSetSpeed && percentageStep > 0) {
+            const percentage = Number(statePayload.percentage) || 0;
+            const speedIndex = Math.max(1, Math.round(percentage / percentageStep));
+            state.currentFanSpeedSetting = String(speedIndex);
+        } else if (hasFeature(8) && statePayload.preset_mode) {
+            state.currentFanSpeedSetting = statePayload.preset_mode;
+        } else {
+            const speed = Number(statePayload.speed || 0);
+            state.currentFanSpeedSetting = String(Math.max(1, Math.min(3, Math.round(speed || 1))));
+        }
+        return state;
     }
 
     if (entity.entity_type === 'cover') {
         const openPercent = Number(statePayload.openPercent || 0);
-        return {
+        const state = {
             online: entity.online !== 0,
             openPercent: Math.max(0, Math.min(100, Math.round(openPercent)))
         };
+        if (hasFeature(128) && statePayload.tilt_position != null) {
+            state.rotationPercent = Math.max(0, Math.min(100, Math.round(Number(statePayload.tilt_position) || 0)));
+        }
+        return state;
     }
 
     if (entity.entity_type === 'lock') {
@@ -1125,24 +1595,57 @@ function parseGoogleEntityState(entity) {
     }
 
     if (entity.entity_type === 'climate') {
-        const ambient = Number(statePayload.ambient_temperature || 0);
-        const target = Number(statePayload.target_temperature || ambient || 22);
-        return {
+        const ambient = statePayload.ambient_temperature != null ? Number(statePayload.ambient_temperature) : null;
+        const target = statePayload.target_temperature != null ? Number(statePayload.target_temperature) : null;
+        const targetLow = statePayload.target_temp_low != null ? Number(statePayload.target_temp_low) : null;
+        const targetHigh = statePayload.target_temp_high != null ? Number(statePayload.target_temp_high) : null;
+        const mode = normalizeGoogleThermostatMode(statePayload.mode);
+
+        const state = {
             online: entity.online !== 0,
-            thermostatMode: normalizeGoogleThermostatMode(statePayload.mode),
+            thermostatMode: mode,
             thermostatTemperatureAmbient: Number.isFinite(ambient) ? ambient : 0,
-            thermostatTemperatureSetpoint: Number.isFinite(target) ? target : 22
+            thermostatTemperatureSetpoint: Number.isFinite(target) ? target : (Number.isFinite(ambient) ? ambient : 22)
         };
+
+        if (mode === 'heatcool' && Number.isFinite(targetLow) && Number.isFinite(targetHigh)) {
+            state.thermostatTemperatureSetpointLow = targetLow;
+            state.thermostatTemperatureSetpointHigh = targetHigh;
+        }
+
+        if (statePayload.current_humidity != null) {
+            const humidity = Number(statePayload.current_humidity);
+            if (Number.isFinite(humidity)) {
+                state.thermostatHumidityAmbient = humidity;
+            }
+        }
+
+        return state;
     }
 
     if (entity.entity_type === 'media_player') {
-        const volume = Number(statePayload.volume || 0);
-        return {
+        const state = {
             online: entity.online !== 0,
-            on: Boolean(statePayload.on),
-            currentVolume: Math.max(0, Math.min(100, Math.round(volume))),
-            isMuted: Boolean(statePayload.muted)
+            on: Boolean(statePayload.on)
         };
+        if (hasFeature(4) || hasFeature(1024) || sf === 0) {
+            const volume = Number(statePayload.volume || 0);
+            state.currentVolume = Math.max(0, Math.min(100, Math.round(volume)));
+            state.isMuted = Boolean(statePayload.muted);
+        }
+        if (hasFeature(1) || hasFeature(16384) || hasFeature(32) || hasFeature(16) || hasFeature(4096)) {
+            if (statePayload.is_playing) {
+                state.playbackState = 'PLAYING';
+            } else if (statePayload.is_paused) {
+                state.playbackState = 'PAUSED';
+            } else {
+                state.playbackState = 'STOPPED';
+            }
+        }
+        if (hasFeature(2048) && statePayload.source) {
+            state.currentInput = statePayload.source.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        }
+        return state;
     }
 
     if (entity.entity_type === 'scene' || entity.entity_type === 'button') {
@@ -1152,34 +1655,189 @@ function parseGoogleEntityState(entity) {
     }
 
     if (entity.entity_type === 'vacuum') {
-        return {
+        const state = {
             online: entity.online !== 0,
-            on: Boolean(statePayload.on),
             isRunning: Boolean(statePayload.isRunning),
             isPaused: Boolean(statePayload.isPaused)
         };
+        if (hasFeature(1) || hasFeature(2) || sf === 0) {
+            state.on = Boolean(statePayload.on);
+        }
+        if (hasFeature(16)) {
+            state.isDocked = Boolean(statePayload.isDocked);
+        }
+        if (hasFeature(32) && statePayload.fan_speed) {
+            state.currentFanSpeedSetting = statePayload.fan_speed;
+        }
+        if (hasFeature(64) && statePayload.battery_level != null) {
+            const battery = Number(statePayload.battery_level);
+            state.descriptiveCapacityRemaining = 'FULL';
+            if (Number.isFinite(battery)) {
+                state.capacityRemaining = [{ rawValue: battery, unit: 'PERCENTAGE' }];
+                if (battery <= 10) state.descriptiveCapacityRemaining = 'CRITICALLY_LOW';
+                else if (battery <= 25) state.descriptiveCapacityRemaining = 'LOW';
+                else if (battery <= 75) state.descriptiveCapacityRemaining = 'MEDIUM';
+                else state.descriptiveCapacityRemaining = 'FULL';
+            }
+            state.isCharging = Boolean(statePayload.isDocked);
+        }
+        return state;
     }
 
     if (entity.entity_type === 'light') {
+        const state = {
+            online: entity.online !== 0,
+            on: Boolean(statePayload.on)
+        };
+        const hasBrightness = colorModes.length > 0 && !colorModes.every(m => m === 'onoff');
+        if (hasBrightness) {
+            state.brightness = Number.isFinite(Number(statePayload.brightness))
+                ? Math.max(0, Math.min(100, Math.round(Number(statePayload.brightness))))
+                : 0;
+        }
+        const hasColor = colorModes.some(m => ['hs', 'xy', 'rgb', 'rgbw', 'rgbww'].includes(m));
+        const hasColorTemp = colorModes.includes('color_temp');
+        if (hasColor || hasColorTemp) {
+            const colorMode = statePayload.color_mode || '';
+            if (colorMode === 'color_temp' && statePayload.color_temp_kelvin) {
+                state.color = { temperatureK: Number(statePayload.color_temp_kelvin) || 3000 };
+            } else if (hasColor && Array.isArray(statePayload.hs_color) && statePayload.hs_color.length >= 2) {
+                const h = Number(statePayload.hs_color[0]) || 0;
+                const s = Number(statePayload.hs_color[1]) || 0;
+                state.color = {
+                    spectrumHsv: {
+                        hue: h,
+                        saturation: s / 100,
+                        value: (state.brightness || 100) / 100
+                    }
+                };
+            } else if (hasColorTemp && statePayload.color_temp_kelvin) {
+                state.color = { temperatureK: Number(statePayload.color_temp_kelvin) || 3000 };
+            }
+        }
+        return state;
+    }
+
+    if (entity.entity_type === 'sensor' || entity.entity_type === 'sensor_temperature') {
+        const sensorDc = dc || statePayload.device_class || 'temperature';
+        const state = { online: entity.online !== 0 };
+        const sensorData = [];
+
+        if (sensorDc === 'temperature') {
+            const temperature = Number(statePayload.temperature != null ? statePayload.temperature : statePayload.value);
+            sensorData.push({
+                name: 'TemperatureAmbient',
+                rawValue: Number.isFinite(temperature) ? temperature : 0
+            });
+        } else if (sensorDc === 'humidity') {
+            const humidity = Number(statePayload.value);
+            sensorData.push({
+                name: 'HumidityAmbient',
+                rawValue: Number.isFinite(humidity) ? humidity : 0
+            });
+        } else if (sensorDc === 'pm25') {
+            const val = Number(statePayload.value);
+            sensorData.push({ name: 'PM2.5', rawValue: Number.isFinite(val) ? val : 0 });
+        } else if (sensorDc === 'pm10') {
+            const val = Number(statePayload.value);
+            sensorData.push({ name: 'PM10', rawValue: Number.isFinite(val) ? val : 0 });
+        } else if (sensorDc === 'carbon_dioxide' || sensorDc === 'co2') {
+            const val = Number(statePayload.value);
+            sensorData.push({ name: 'CarbonDioxideLevel', rawValue: Number.isFinite(val) ? val : 0 });
+        } else if (sensorDc === 'carbon_monoxide' || sensorDc === 'co') {
+            const val = Number(statePayload.value);
+            sensorData.push({ name: 'CarbonMonoxideLevel', rawValue: Number.isFinite(val) ? val : 0 });
+        } else if (sensorDc === 'volatile_organic_compounds' || sensorDc === 'voc') {
+            const val = Number(statePayload.value);
+            sensorData.push({ name: 'VolatileOrganicCompounds', rawValue: Number.isFinite(val) ? val : 0 });
+        } else if (sensorDc === 'aqi') {
+            const val = Number(statePayload.value);
+            sensorData.push({ name: 'AirQuality', rawValue: Number.isFinite(val) ? val : 0 });
+        } else {
+            const temperature = Number(statePayload.temperature != null ? statePayload.temperature : statePayload.value);
+            sensorData.push({
+                name: 'TemperatureAmbient',
+                rawValue: Number.isFinite(temperature) ? temperature : 0
+            });
+        }
+
+        state.currentSensorStateData = sensorData;
+        return state;
+    }
+
+    if (entity.entity_type === 'binary_sensor') {
+        const state = { online: entity.online !== 0 };
+        const isOn = Boolean(statePayload.is_on);
+
+        if (dc === 'door' || dc === 'window' || dc === 'garage_door' || dc === 'opening') {
+            state.openPercent = isOn ? 100 : 0;
+        } else if (dc === 'smoke') {
+            state.currentSensorStateData = [{
+                name: 'SmokeLevel',
+                currentSensorState: isOn ? 'smoke detected' : 'no smoke detected'
+            }];
+        } else if (dc === 'moisture') {
+            state.currentSensorStateData = [{
+                name: 'WaterLeak',
+                currentSensorState: isOn ? 'leak' : 'no leak'
+            }];
+        } else if (dc === 'motion' || dc === 'occupancy') {
+            state.currentSensorStateData = [{
+                name: 'OccupancyDetecting',
+                currentSensorState: isOn ? 'occupied' : 'unoccupied'
+            }];
+        }
+        return state;
+    }
+
+    if (entity.entity_type === 'humidifier') {
+        const state = {
+            online: entity.online !== 0,
+            on: Boolean(statePayload.on)
+        };
+        if (statePayload.target_humidity != null) {
+            state.humiditySetpointPercent = Math.max(0, Math.min(100, Math.round(Number(statePayload.target_humidity) || 0)));
+        }
+        if (statePayload.current_humidity != null) {
+            state.humidityAmbientPercent = Math.max(0, Math.min(100, Math.round(Number(statePayload.current_humidity) || 0)));
+        }
+        return state;
+    }
+
+    if (entity.entity_type === 'alarm_control_panel') {
+        const armState = statePayload.arm_state || 'disarmed';
+        const state = {
+            online: entity.online !== 0,
+            isArmed: armState !== 'disarmed' && armState !== 'pending'
+        };
+        if (state.isArmed) {
+            if (armState === 'armed_home') state.currentArmLevel = 'L1';
+            else if (armState === 'armed_away') state.currentArmLevel = 'L2';
+            else if (armState === 'armed_night') state.currentArmLevel = 'L3';
+            else if (armState === 'armed_custom_bypass') state.currentArmLevel = 'L4';
+            else state.currentArmLevel = 'L1';
+        }
+        if (armState === 'triggered') {
+            state.currentStatusReport = [{
+                blocking: true,
+                deviceTarget: entity.entity_id,
+                priority: 0,
+                statusCode: 'securityAlert'
+            }];
+        }
+        return state;
+    }
+
+    if (entity.entity_type === 'water_heater') {
+        const ambient = statePayload.current_temperature != null ? Number(statePayload.current_temperature) : null;
+        const target = statePayload.target_temperature != null ? Number(statePayload.target_temperature) : null;
+        const mode = statePayload.operation_mode || 'off';
         return {
             online: entity.online !== 0,
             on: Boolean(statePayload.on),
-            brightness: Number.isFinite(Number(statePayload.brightness))
-                ? Math.max(0, Math.min(100, Math.round(Number(statePayload.brightness))))
-                : 0
-        };
-    }
-
-    if (entity.entity_type === 'sensor_temperature') {
-        const temperature = Number(statePayload.temperature);
-        return {
-            online: entity.online !== 0,
-            currentSensorStateData: [
-                {
-                    name: 'TemperatureAmbient',
-                    currentSensorState: Number.isFinite(temperature) ? temperature : 0
-                }
-            ]
+            thermostatMode: normalizeGoogleThermostatMode(mode),
+            thermostatTemperatureAmbient: Number.isFinite(ambient) ? ambient : 0,
+            thermostatTemperatureSetpoint: Number.isFinite(target) ? target : (Number.isFinite(ambient) ? ambient : 50)
         };
     }
 
@@ -1262,7 +1920,7 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
     const entityType = mapGoogleDomainToEntityType(entityId, normalizeGoogleEntityType(payload?.entity_type));
     const roomHint = sanitizeString(payload?.room_hint, 120);
     const online = payload?.online === false ? 0 : 1;
-    const stateJson = JSON.stringify(payload?.state || {}).slice(0, 2500);
+    const stateJson = JSON.stringify(payload?.state || {}).slice(0, 8000);
     const entityState = parseGoogleEntityState({
         entity_type: entityType,
         online,
@@ -4236,11 +4894,13 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                         continue;
                     }
 
+                    const entityStatePayload = parseJsonSafe(entity.state_json, {}) || {};
+
                     for (const execution of executions) {
                         const commandName = sanitizeActionName(execution?.command);
                         const params = execution?.params || {};
 
-                        if (!supportsGoogleCommandForEntityType(entity.entity_type, commandName)) {
+                        if (!supportsGoogleCommandForEntityType(entity.entity_type, commandName, entityStatePayload)) {
                             commandResults.push({
                                 ids: [entityId],
                                 status: 'ERROR',
@@ -4251,36 +4911,117 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
 
                         let action = null;
                         let payload = {};
+                        let successStates = {};
+
                         if (commandName === 'action.devices.commands.OnOff') {
                             action = 'set_on';
                             payload = { on: Boolean(params?.on) };
+                            successStates = { on: payload.on };
                         } else if (commandName === 'action.devices.commands.BrightnessAbsolute') {
                             action = 'set_brightness';
                             payload = { brightness: Math.max(0, Math.min(100, Number(params?.brightness || 0))) };
+                            successStates = { on: true, brightness: payload.brightness };
+                        } else if (commandName === 'action.devices.commands.ColorAbsolute') {
+                            const color = params?.color || {};
+                            if (color.spectrumHSV || color.spectrumHsv) {
+                                const hsv = color.spectrumHSV || color.spectrumHsv || {};
+                                action = 'set_color_hs';
+                                payload = {
+                                    hue: Number(hsv.hue || 0),
+                                    saturation: Math.round((Number(hsv.saturation || 0)) * 100),
+                                    brightness_255: Math.round((Number(hsv.value || 1)) * 255)
+                                };
+                                successStates = { color: { spectrumHsv: hsv } };
+                            } else if (color.temperatureK) {
+                                action = 'set_color_temp';
+                                payload = { color_temp_kelvin: Number(color.temperatureK || 3000) };
+                                successStates = { color: { temperatureK: payload.color_temp_kelvin } };
+                            } else {
+                                commandResults.push({
+                                    ids: [entityId],
+                                    status: 'ERROR',
+                                    errorCode: 'notSupported'
+                                });
+                                continue;
+                            }
                         } else if (commandName === 'action.devices.commands.SetFanSpeed') {
-                            action = 'set_fan_speed';
-                            payload = {
-                                speed: String(params?.fanSpeed || '1')
-                            };
+                            const sfEntity = Number(entityStatePayload.supported_features) || 0;
+                            const hasSetSpeed = (sfEntity & 1) !== 0;
+                            const percentageStep = Number(entityStatePayload.percentage_step) || 0;
+
+                            if (entity.entity_type === 'vacuum') {
+                                action = 'set_vacuum_fan_speed';
+                                payload = { fan_speed: String(params?.fanSpeed || '') };
+                                successStates = { currentFanSpeedSetting: payload.fan_speed };
+                            } else if (hasSetSpeed && percentageStep > 0 && params?.fanSpeedPercent !== undefined) {
+                                action = 'set_fan_speed_percent';
+                                payload = { percentage: Math.max(0, Math.min(100, Math.round(Number(params.fanSpeedPercent)))) };
+                                successStates = { currentFanSpeedSetting: String(Math.round(payload.percentage / percentageStep)) };
+                            } else if (hasSetSpeed && percentageStep > 0 && params?.fanSpeed) {
+                                const speedIndex = Number(params.fanSpeed) || 1;
+                                const pct = Math.round(speedIndex * percentageStep);
+                                action = 'set_fan_speed_percent';
+                                payload = { percentage: Math.max(0, Math.min(100, pct)) };
+                                successStates = { currentFanSpeedSetting: String(speedIndex) };
+                            } else if (!hasSetSpeed && (sfEntity & 8) !== 0) {
+                                action = 'set_fan_preset';
+                                payload = { preset_mode: String(params?.fanSpeed || '') };
+                                successStates = { currentFanSpeedSetting: payload.preset_mode };
+                            } else {
+                                action = 'set_fan_speed';
+                                payload = { speed: String(params?.fanSpeed || '1') };
+                                successStates = { currentFanSpeedSetting: payload.speed };
+                            }
                         } else if (commandName === 'action.devices.commands.OpenClose') {
-                            action = 'set_open_percent';
-                            payload = {
-                                openPercent: Math.max(0, Math.min(100, Number(params?.openPercent ?? 0)))
-                            };
+                            const openPercent = Math.max(0, Math.min(100, Number(params?.openPercent ?? 0)));
+                            const sfEntity = Number(entityStatePayload.supported_features) || 0;
+                            const hasSetPosition = (sfEntity & 4) !== 0;
+                            if (hasSetPosition || sfEntity === 0) {
+                                action = 'set_open_percent';
+                                payload = { openPercent };
+                            } else {
+                                action = 'set_open_close';
+                                payload = { open: openPercent > 0 };
+                            }
+                            successStates = { openPercent };
+                        } else if (commandName === 'action.devices.commands.RotateAbsolute') {
+                            action = 'set_tilt';
+                            const tilt = Math.max(0, Math.min(100, Number(params?.rotationPercent ?? 0)));
+                            payload = { tilt };
+                            successStates = { rotationPercent: tilt };
                         } else if (commandName === 'action.devices.commands.LockUnlock') {
                             action = 'set_lock';
-                            payload = {
-                                lock: Boolean(params?.lock)
-                            };
+                            payload = { lock: Boolean(params?.lock) };
+                            successStates = { isLocked: payload.lock };
                         } else if (commandName === 'action.devices.commands.ThermostatSetMode') {
-                            action = 'set_thermostat_mode';
-                            payload = {
-                                mode: normalizeGoogleThermostatMode(params?.thermostatMode)
-                            };
+                            const mode = normalizeGoogleThermostatMode(params?.thermostatMode);
+                            if (entity.entity_type === 'water_heater') {
+                                action = 'set_water_heater_mode';
+                                payload = { mode };
+                            } else {
+                                action = 'set_thermostat_mode';
+                                payload = { mode };
+                            }
+                            successStates = { thermostatMode: mode };
                         } else if (commandName === 'action.devices.commands.ThermostatTemperatureSetpoint') {
-                            action = 'set_thermostat_setpoint';
+                            const setpoint = Number(params?.thermostatTemperatureSetpoint || 22);
+                            if (entity.entity_type === 'water_heater') {
+                                action = 'set_water_heater_temperature';
+                                payload = { temperature: setpoint };
+                            } else {
+                                action = 'set_thermostat_setpoint';
+                                payload = { setpoint };
+                            }
+                            successStates = { thermostatTemperatureSetpoint: setpoint };
+                        } else if (commandName === 'action.devices.commands.ThermostatTemperatureSetRange') {
+                            action = 'set_thermostat_setpoint_range';
                             payload = {
-                                setpoint: Number(params?.thermostatTemperatureSetpoint || 22)
+                                heat_setpoint: Number(params?.thermostatTemperatureSetpointLow || 20),
+                                cool_setpoint: Number(params?.thermostatTemperatureSetpointHigh || 24)
+                            };
+                            successStates = {
+                                thermostatTemperatureSetpointLow: payload.heat_setpoint,
+                                thermostatTemperatureSetpointHigh: payload.cool_setpoint
                             };
                         } else if (commandName === 'action.devices.commands.setVolume') {
                             action = 'set_volume';
@@ -4290,25 +5031,92 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                             if (Object.prototype.hasOwnProperty.call(params || {}, 'mute')) {
                                 payload.muted = Boolean(params?.mute);
                             }
+                            successStates = { currentVolume: payload.volume };
+                            if (payload.muted !== undefined) successStates.isMuted = payload.muted;
                         } else if (commandName === 'action.devices.commands.mute') {
                             action = 'set_mute';
-                            payload = {
-                                muted: Boolean(params?.mute)
-                            };
+                            payload = { muted: Boolean(params?.mute) };
+                            successStates = { isMuted: payload.muted };
+                        } else if (commandName === 'action.devices.commands.mediaControl') {
+                            const mediaCommand = params?.mediaCommand || '';
+                            if (mediaCommand === 'PAUSE') {
+                                action = 'media_pause';
+                            } else if (mediaCommand === 'RESUME') {
+                                action = 'media_resume';
+                            } else if (mediaCommand === 'STOP') {
+                                action = 'media_stop';
+                            } else if (mediaCommand === 'NEXT') {
+                                action = 'media_next';
+                            } else if (mediaCommand === 'PREVIOUS') {
+                                action = 'media_previous';
+                            } else {
+                                commandResults.push({
+                                    ids: [entityId],
+                                    status: 'ERROR',
+                                    errorCode: 'notSupported'
+                                });
+                                continue;
+                            }
+                            payload = {};
+                            successStates = {};
+                        } else if (commandName === 'action.devices.commands.SetInput') {
+                            const inputKey = params?.newInput || '';
+                            const sourceList = Array.isArray(entityStatePayload.source_list) ? entityStatePayload.source_list : [];
+                            const matchedSource = sourceList.find(src =>
+                                src.toLowerCase().replace(/[^a-z0-9_]/g, '_') === inputKey
+                            ) || inputKey;
+                            action = 'set_input';
+                            payload = { source: matchedSource };
+                            successStates = { currentInput: inputKey };
                         } else if (commandName === 'action.devices.commands.activateScene') {
                             action = 'activate_scene';
-                            payload = {
-                                deactivate: Boolean(params?.deactivate)
-                            };
+                            payload = { deactivate: Boolean(params?.deactivate) };
+                            successStates = {};
                         } else if (commandName === 'action.devices.commands.StartStop') {
                             action = 'set_start_stop';
-                            payload = {
-                                start: Boolean(params?.start)
-                            };
+                            payload = { start: Boolean(params?.start) };
+                            successStates = { isRunning: payload.start };
                         } else if (commandName === 'action.devices.commands.PauseUnpause') {
                             action = 'set_pause';
+                            payload = { pause: Boolean(params?.pause) };
+                            successStates = { isPaused: payload.pause };
+                        } else if (commandName === 'action.devices.commands.Dock') {
+                            action = 'dock';
+                            payload = {};
+                            successStates = { isDocked: true, isRunning: false };
+                        } else if (commandName === 'action.devices.commands.Locate') {
+                            action = 'locate';
+                            payload = {};
+                            successStates = {};
+                        } else if (commandName === 'action.devices.commands.SetHumidity') {
+                            action = 'set_humidity';
+                            payload = { humidity: Math.max(0, Math.min(100, Number(params?.humiditySetpointPercent || 50))) };
+                            successStates = { humiditySetpointPercent: payload.humidity };
+                        } else if (commandName === 'action.devices.commands.SetModes') {
+                            if (entity.entity_type === 'humidifier') {
+                                const updateModeSettings = params?.updateModeSettings || {};
+                                const modeName = Object.keys(updateModeSettings)[0] || '';
+                                const modeValue = updateModeSettings[modeName] || '';
+                                action = 'set_humidifier_mode';
+                                payload = { mode: modeValue };
+                                successStates = {};
+                            } else {
+                                commandResults.push({
+                                    ids: [entityId],
+                                    status: 'ERROR',
+                                    errorCode: 'notSupported'
+                                });
+                                continue;
+                            }
+                        } else if (commandName === 'action.devices.commands.ArmDisarm') {
+                            action = 'arm_disarm';
                             payload = {
-                                pause: Boolean(params?.pause)
+                                arm: Boolean(params?.arm),
+                                arm_level: String(params?.armLevel || '')
+                            };
+                            successStates = {
+                                isArmed: payload.arm,
+                                ...(payload.arm && payload.arm_level ? { currentArmLevel: payload.arm_level } : {})
                             };
                         } else {
                             commandResults.push({
@@ -4325,16 +5133,7 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                             status: 'SUCCESS',
                             states: {
                                 online: true,
-                                ...(payload.on !== undefined ? { on: payload.on } : {}),
-                                ...(payload.brightness !== undefined ? { brightness: payload.brightness } : {}),
-                                ...(payload.openPercent !== undefined ? { openPercent: payload.openPercent } : {}),
-                                ...(payload.lock !== undefined ? { isLocked: payload.lock } : {}),
-                                ...(payload.mode !== undefined ? { thermostatMode: payload.mode } : {}),
-                                ...(payload.setpoint !== undefined ? { thermostatTemperatureSetpoint: payload.setpoint } : {}),
-                                ...(payload.volume !== undefined ? { currentVolume: payload.volume } : {}),
-                                ...(payload.muted !== undefined ? { isMuted: payload.muted } : {}),
-                                ...(payload.start !== undefined ? { isRunning: payload.start } : {}),
-                                ...(payload.pause !== undefined ? { isPaused: payload.pause } : {})
+                                ...successStates
                             }
                         });
                     }
@@ -4792,10 +5591,16 @@ app.post('/api/internal/devices/google-home/commands/:id/result', requireDeviceA
 
         if (success && req.body?.state) {
             const normalizedState = req.body.state || {};
-            const stateJson = JSON.stringify(normalizedState).slice(0, 2500);
+            const existingEntity = await dbGet(
+                `SELECT state_json FROM google_home_entities WHERE user_id = ? AND device_id = ? AND entity_id = ? LIMIT 1`,
+                [command.user_id, command.device_id, command.entity_id]
+            );
+            const existingState = parseJsonSafe(existingEntity?.state_json, {}) || {};
+            const mergedState = { ...existingState, ...normalizedState };
+            const stateJson = JSON.stringify(mergedState).slice(0, 8000);
             const stateHash = computeGoogleStateHash({
                 online: true,
-                ...normalizedState
+                ...mergedState
             });
             const updateWithLastSeenSql = `
                 UPDATE google_home_entities
