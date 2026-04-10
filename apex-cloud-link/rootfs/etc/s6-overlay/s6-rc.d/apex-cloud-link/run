@@ -1,0 +1,903 @@
+#!/usr/bin/with-contenv bashio
+set -e
+
+FRP_VERSION="0.56.0"
+FRP_SERVER_ADDR="cloud.apexinfosys.in"
+FRP_SERVER_PORT=7000
+CLOUD_API_URL="https://cloud.apexinfosys.in"
+HA_API_BASE_URL="http://supervisor/core/api"
+FRP_DIR="/data/frp"
+FRPC_BIN="${FRP_DIR}/frpc"
+FRPC_CONFIG="/tmp/frpc.toml"
+DEVICE_TOKEN_PATH="/data/cloud_device_token"
+DEVICE_SSH_REMOTE_PORT_PATH="/data/cloud_device_ssh_remote_port"
+
+HEARTBEAT_INTERVAL=20
+HEARTBEAT_PID=""
+DEVICE_TOKEN=""
+SSH_REMOTE_PORT=0
+SSH_LOCAL_PORT=22
+GOOGLE_ENTITY_SYNC_INTERVAL=5
+GOOGLE_COMMAND_SYNC_INTERVAL=1
+GOOGLE_SYNC_PID=""
+GOOGLE_WARNED_NO_SUPERVISOR_TOKEN=0
+GOOGLE_WARNED_STATE_FETCH=0
+GOOGLE_WARNED_EMPTY_ENTITY_SYNC=0
+GOOGLE_ENTITY_SYNC_PAGE_LIMIT=300
+GOOGLE_ENTITY_SYNC_BATCH_SIZE=120
+CLOUD_POST_STATUS=""
+CLOUD_POST_BODY=""
+
+SUBDOMAIN=$(bashio::config 'subdomain')
+ACCESS_TOKEN=$(bashio::config 'access_token')
+
+SUBDOMAIN=${SUBDOMAIN//.cloud.apexinfosys.in/}
+
+sanitize_uid() {
+    printf '%s' "$1" | tr -cd 'a-zA-Z0-9._-'
+}
+
+is_valid_port() {
+    case "$1" in
+        ''|*[!0-9]*)
+            return 1
+            ;;
+    esac
+
+    if [ "$1" -lt 1 ] || [ "$1" -gt 65535 ]; then
+        return 1
+    fi
+
+    return 0
+}
+
+get_local_ips_csv() {
+    local ip_list=''
+
+    if command -v ip >/dev/null 2>&1; then
+        ip_list=$(ip -o -4 addr show scope global 2>/dev/null | awk '{split($4, parts, "/"); print parts[1]}' | paste -sd, -)
+    fi
+
+    if [ -z "$ip_list" ] && command -v hostname >/dev/null 2>&1; then
+        ip_list=$(hostname -i 2>/dev/null | tr ' ' ',' | sed 's/,$//')
+    fi
+
+    printf '%s' "$ip_list"
+}
+
+cloud_post() {
+    local endpoint="$1"
+    local payload="$2"
+    local token="$3"
+    local base_url="${CLOUD_API_URL%/}"
+    local url="${base_url}${endpoint}"
+
+    if [ -z "$token" ]; then
+        curl -fsS --max-time 12 \
+            -H "Content-Type: application/json" \
+            -X POST "$url" \
+            -d "$payload" 2>/dev/null || true
+        return
+    fi
+
+    curl -fsS --max-time 12 \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${token}" \
+        -X POST "$url" \
+        -d "$payload" 2>/dev/null || true
+}
+
+cloud_post_capture() {
+    local endpoint="$1"
+    local payload="$2"
+    local token="$3"
+    local base_url="${CLOUD_API_URL%/}"
+    local url="${base_url}${endpoint}"
+    local response=''
+
+    if [ -z "$token" ]; then
+        response=$(curl -sS --max-time 20 \
+            -H "Content-Type: application/json" \
+            -X POST "$url" \
+            -d "$payload" \
+            -w $'\n%{http_code}' 2>/dev/null || true)
+    else
+        response=$(curl -sS --max-time 20 \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${token}" \
+            -X POST "$url" \
+            -d "$payload" \
+            -w $'\n%{http_code}' 2>/dev/null || true)
+    fi
+
+    CLOUD_POST_STATUS="${response##*$'\n'}"
+    if [ "$CLOUD_POST_STATUS" = "$response" ]; then
+        CLOUD_POST_STATUS="000"
+        CLOUD_POST_BODY=''
+        return
+    fi
+
+    CLOUD_POST_BODY="${response%$'\n'*}"
+}
+
+ha_api_get() {
+    local endpoint="$1"
+    local url="${HA_API_BASE_URL}${endpoint}"
+
+    if [ -z "${SUPERVISOR_TOKEN:-}" ]; then
+        if [ "$GOOGLE_WARNED_NO_SUPERVISOR_TOKEN" -eq 0 ]; then
+            bashio::log.warning "Google sync disabled: SUPERVISOR_TOKEN unavailable. Ensure addon has hassio_api/homeassistant_api permissions."
+            GOOGLE_WARNED_NO_SUPERVISOR_TOKEN=1
+        fi
+        return
+    fi
+
+    curl -fsS --max-time 12 \
+        -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "$url" 2>/dev/null || true
+}
+
+ha_api_post() {
+    local endpoint="$1"
+    local payload="$2"
+    local url="${HA_API_BASE_URL}${endpoint}"
+
+    if [ -z "${SUPERVISOR_TOKEN:-}" ]; then
+        if [ "$GOOGLE_WARNED_NO_SUPERVISOR_TOKEN" -eq 0 ]; then
+            bashio::log.warning "Google command execution disabled: SUPERVISOR_TOKEN unavailable."
+            GOOGLE_WARNED_NO_SUPERVISOR_TOKEN=1
+        fi
+        return
+    fi
+
+    curl -fsS --max-time 12 \
+        -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -X POST "$url" \
+        -d "$payload" 2>/dev/null || true
+}
+
+sync_google_entities() {
+    if [ "$FLEET_ACTIVE" -ne 1 ] || [ -z "$DEVICE_TOKEN" ]; then
+        return
+    fi
+
+    local states_json
+    states_json=$(ha_api_get "/states")
+    if [ -z "$states_json" ]; then
+        if [ "$GOOGLE_WARNED_STATE_FETCH" -eq 0 ]; then
+            bashio::log.warning "Google entity sync skipped: unable to fetch Home Assistant states from Supervisor API"
+            GOOGLE_WARNED_STATE_FETCH=1
+        fi
+        return
+    fi
+
+    GOOGLE_WARNED_STATE_FETCH=0
+
+    local entities_json='[]'
+    entities_json=$(printf '%s' "$states_json" | jq -c '
+            map(select(.entity_id | test("^(switch|light|sensor|fan|cover|lock|climate|media_player|scene|button|vacuum)\\.")))
+            | map(select(
+                if (.entity_id | startswith("sensor."))
+                then (((.attributes.device_class // "") | tostring) == "temperature") or (((.attributes.unit_of_measurement // "") | tostring) | test("^(°C|°F|C|F)$"))
+                else true
+                end
+            ))
+            | map(
+                . as $s
+                | (($s.state // "") | tostring | ascii_downcase) as $state_text
+                | {
+                    entity_id: $s.entity_id,
+                    display_name: ($s.attributes.friendly_name // $s.entity_id),
+                    room_hint: ($s.attributes.area_name // ""),
+                    online: ($state_text != "unavailable"),
+                    entity_type: (
+                        if ($s.entity_id | startswith("light.")) then "light"
+                        elif ($s.entity_id | startswith("fan.")) then "fan"
+                        elif ($s.entity_id | startswith("cover.")) then "cover"
+                        elif ($s.entity_id | startswith("lock.")) then "lock"
+                        elif ($s.entity_id | startswith("climate.")) then "climate"
+                        elif ($s.entity_id | startswith("media_player.")) then "media_player"
+                        elif ($s.entity_id | startswith("scene.")) then "scene"
+                        elif ($s.entity_id | startswith("button.")) then "button"
+                        elif ($s.entity_id | startswith("vacuum.")) then "vacuum"
+                        elif ($s.entity_id | startswith("sensor.")) then "sensor_temperature"
+                        else "switch"
+                        end
+                    ),
+                    state: (
+                        if ($s.entity_id | startswith("light.")) then {
+                            on: ($s.state == "on"),
+                            brightness: (((($s.attributes.brightness | tonumber?) // 0) * 100 / 255) | floor)
+                        }
+                        elif ($s.entity_id | startswith("fan.")) then {
+                            on: ($s.state == "on"),
+                            speed: (((($s.attributes.percentage | tonumber?) // 0) / 33.33) | ceil)
+                        }
+                        elif ($s.entity_id | startswith("cover.")) then {
+                            openPercent: (($s.attributes.current_position | tonumber?) // 0)
+                        }
+                        elif ($s.entity_id | startswith("lock.")) then {
+                            isLocked: ($s.state == "locked")
+                        }
+                        elif ($s.entity_id | startswith("climate.")) then {
+                            mode: ($s.state // "off"),
+                            hvac_modes: ($s.attributes.hvac_modes // []),
+                            target_temperature: (($s.attributes.temperature | tonumber?) // 22),
+                            ambient_temperature: (($s.attributes.current_temperature | tonumber?) // 0)
+                        }
+                        elif ($s.entity_id | startswith("media_player.")) then {
+                            on: ($s.state != "off"),
+                            volume: (((($s.attributes.volume_level | tonumber?) // 0) * 100) | floor),
+                            muted: (($s.attributes.is_volume_muted // false) == true)
+                        }
+                        elif ($s.entity_id | startswith("scene.")) then {
+                            activated: false
+                        }
+                        elif ($s.entity_id | startswith("button.")) then {
+                            pressed: false
+                        }
+                        elif ($s.entity_id | startswith("vacuum.")) then {
+                            on: ($s.state != "docked"),
+                            isRunning: (($s.state == "cleaning") or ($s.state == "returning")),
+                            isPaused: ($s.state == "paused")
+                        }
+                        elif ($s.entity_id | startswith("sensor.")) then {
+                            temperature: (($s.state | tonumber?) // 0)
+                        }
+                        else {
+                            on: ($s.state == "on")
+                        }
+                        end
+                    )
+                }
+            )
+        ' 2>/dev/null || printf '[]')
+
+    local entities_count
+    entities_count=$(printf '%s' "$entities_json" | jq -r 'length' 2>/dev/null || printf '0')
+    if [ "$entities_count" -eq 0 ]; then
+        if [ "$GOOGLE_WARNED_EMPTY_ENTITY_SYNC" -eq 0 ]; then
+            bashio::log.warning "Google entity sync produced zero entities. Check Home Assistant states and addon API permissions."
+            GOOGLE_WARNED_EMPTY_ENTITY_SYNC=1
+        fi
+        return
+    else
+        GOOGLE_WARNED_EMPTY_ENTITY_SYNC=0
+    fi
+
+    local all_entity_ids_json='[]'
+    all_entity_ids_json=$(printf '%s' "$entities_json" | jq -c 'map(.entity_id)' 2>/dev/null || printf '[]')
+
+    local offset=0
+    local chunk='[]'
+    local payload
+    while true; do
+        chunk=$(printf '%s' "$entities_json" | jq -c --argjson offset "$offset" --argjson limit "$GOOGLE_ENTITY_SYNC_BATCH_SIZE" '.[$offset:($offset + $limit)]' 2>/dev/null || printf '[]')
+        if [ -z "$chunk" ] || [ "$chunk" = "[]" ]; then
+            break
+        fi
+
+        payload=$(jq -n --argjson entities "$chunk" '{entities: $entities, full_snapshot: false}')
+        cloud_post_capture "/api/internal/devices/google-home/entities" "$payload" "$DEVICE_TOKEN"
+
+        case "$CLOUD_POST_STATUS" in
+            2??)
+                ;;
+            *)
+                bashio::log.warning "Google entity sync batch failed with status=${CLOUD_POST_STATUS} body=${CLOUD_POST_BODY}"
+                return
+                ;;
+        esac
+
+        offset=$((offset + GOOGLE_ENTITY_SYNC_BATCH_SIZE))
+    done
+
+    payload=$(jq -n --argjson entities '[]' --argjson snapshot_entity_ids "$all_entity_ids_json" '{entities: $entities, full_snapshot: true, snapshot_entity_ids: $snapshot_entity_ids}')
+    cloud_post_capture "/api/internal/devices/google-home/entities" "$payload" "$DEVICE_TOKEN"
+    case "$CLOUD_POST_STATUS" in
+        2??)
+            ;;
+        *)
+            bashio::log.warning "Google entity sync snapshot commit failed with status=${CLOUD_POST_STATUS} body=${CLOUD_POST_BODY}"
+            return
+            ;;
+    esac
+}
+
+execute_google_command() {
+    local command_json="$1"
+    local command_id
+    local entity_id
+    local action
+    local payload_json
+    local success=true
+    local error_msg=''
+    local resulting_state='{}'
+
+    command_id=$(printf '%s' "$command_json" | jq -r '.id // 0')
+    entity_id=$(printf '%s' "$command_json" | jq -r '.entity_id // empty')
+    action=$(printf '%s' "$command_json" | jq -r '.action // empty')
+    payload_json=$(printf '%s' "$command_json" | jq -c '.payload // {}')
+
+    if [ -z "$entity_id" ] || [ -z "$action" ] || [ "$command_id" -le 0 ]; then
+        return
+    fi
+
+    local domain
+    domain=${entity_id%%.*}
+
+    if [ "$action" = "set_on" ]; then
+        local desired_on
+        desired_on=$(printf '%s' "$payload_json" | jq -r '.on // false')
+        if [ "$desired_on" = "true" ]; then
+            if [ "$domain" = "scene" ]; then
+                ha_api_post "/services/scene/turn_on" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            elif [ "$domain" = "button" ]; then
+                ha_api_post "/services/button/press" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            else
+                ha_api_post "/services/${domain}/turn_on" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            fi
+            resulting_state='{"on":true}'
+        else
+            if [ "$domain" = "scene" ] || [ "$domain" = "button" ]; then
+                success=true
+            else
+                ha_api_post "/services/${domain}/turn_off" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            fi
+            resulting_state='{"on":false}'
+        fi
+    elif [ "$action" = "set_brightness" ]; then
+        local brightness_percent
+        local brightness_255
+        brightness_percent=$(printf '%s' "$payload_json" | jq -r '.brightness // 0')
+        brightness_255=$(printf '%s' "$brightness_percent" | awk '{v=int($1*255/100); if (v<0) v=0; if (v>255) v=255; print v}')
+        ha_api_post "/services/light/turn_on" "$(jq -n --arg entity_id "$entity_id" --argjson brightness "$brightness_255" '{entity_id: $entity_id, brightness: $brightness}')" >/dev/null || success=false
+        resulting_state=$(jq -n --argjson brightness "$brightness_percent" '{on: true, brightness: $brightness}')
+    elif [ "$action" = "set_fan_speed" ]; then
+        local fan_speed
+        local fan_percentage
+        fan_speed=$(printf '%s' "$payload_json" | jq -r '.speed // "1"')
+        case "$fan_speed" in
+            3|high|HIGH)
+                fan_percentage=100
+                ;;
+            2|medium|MEDIUM)
+                fan_percentage=66
+                ;;
+            *)
+                fan_percentage=33
+                ;;
+        esac
+        ha_api_post "/services/fan/turn_on" "$(jq -n --arg entity_id "$entity_id" --argjson percentage "$fan_percentage" '{entity_id: $entity_id, percentage: $percentage}')" >/dev/null || success=false
+        resulting_state=$(jq -n --arg speed "${fan_speed}" '{on: true, speed: ($speed|tonumber? // 1)}')
+    elif [ "$action" = "set_open_percent" ]; then
+        local open_percent
+        open_percent=$(printf '%s' "$payload_json" | jq -r '.openPercent // 0')
+        ha_api_post "/services/cover/set_cover_position" "$(jq -n --arg entity_id "$entity_id" --argjson position "$open_percent" '{entity_id: $entity_id, position: $position}')" >/dev/null || success=false
+        resulting_state=$(jq -n --argjson percent "$open_percent" '{openPercent: $percent}')
+    elif [ "$action" = "set_lock" ]; then
+        local lock_state
+        lock_state=$(printf '%s' "$payload_json" | jq -r '.lock // true')
+        if [ "$lock_state" = "true" ]; then
+            ha_api_post "/services/lock/lock" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            resulting_state='{"isLocked":true}'
+        else
+            ha_api_post "/services/lock/unlock" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            resulting_state='{"isLocked":false}'
+        fi
+    elif [ "$action" = "set_thermostat_mode" ]; then
+        local hvac_mode
+        hvac_mode=$(printf '%s' "$payload_json" | jq -r '.mode // "off"')
+        case "$hvac_mode" in
+            heatcool)
+                hvac_mode="heat_cool"
+                ;;
+            fan-only)
+                hvac_mode="fan_only"
+                ;;
+        esac
+        ha_api_post "/services/climate/set_hvac_mode" "$(jq -n --arg entity_id "$entity_id" --arg hvac_mode "$hvac_mode" '{entity_id: $entity_id, hvac_mode: $hvac_mode}')" >/dev/null || success=false
+        resulting_state=$(jq -n --arg mode "$hvac_mode" '{mode: $mode}')
+    elif [ "$action" = "set_thermostat_setpoint" ]; then
+        local setpoint
+        setpoint=$(printf '%s' "$payload_json" | jq -r '.setpoint // 22')
+        ha_api_post "/services/climate/set_temperature" "$(jq -n --arg entity_id "$entity_id" --argjson temperature "$setpoint" '{entity_id: $entity_id, temperature: $temperature}')" >/dev/null || success=false
+        resulting_state=$(jq -n --argjson target "$setpoint" '{target_temperature: $target}')
+    elif [ "$action" = "set_volume" ]; then
+        local volume_percent
+        local volume_level
+        local muted
+        volume_percent=$(printf '%s' "$payload_json" | jq -r '.volume // 0')
+        volume_level=$(printf '%s' "$volume_percent" | awk '{v=$1/100; if (v<0) v=0; if (v>1) v=1; print v}')
+        ha_api_post "/services/media_player/volume_set" "$(jq -n --arg entity_id "$entity_id" --argjson volume_level "$volume_level" '{entity_id: $entity_id, volume_level: $volume_level}')" >/dev/null || success=false
+        if printf '%s' "$payload_json" | jq -e 'has("muted")' >/dev/null 2>&1; then
+            muted=$(printf '%s' "$payload_json" | jq -r '.muted // false')
+            ha_api_post "/services/media_player/volume_mute" "$(jq -n --arg entity_id "$entity_id" --argjson is_volume_muted "$muted" '{entity_id: $entity_id, is_volume_muted: $is_volume_muted}')" >/dev/null || success=false
+            resulting_state=$(jq -n --argjson volume "$volume_percent" --argjson muted "$muted" '{volume: $volume, muted: $muted}')
+        else
+            resulting_state=$(jq -n --argjson volume "$volume_percent" '{volume: $volume}')
+        fi
+    elif [ "$action" = "set_mute" ]; then
+        local muted
+        muted=$(printf '%s' "$payload_json" | jq -r '.muted // false')
+        ha_api_post "/services/media_player/volume_mute" "$(jq -n --arg entity_id "$entity_id" --argjson is_volume_muted "$muted" '{entity_id: $entity_id, is_volume_muted: $is_volume_muted}')" >/dev/null || success=false
+        resulting_state=$(jq -n --argjson muted "$muted" '{muted: $muted}')
+    elif [ "$action" = "activate_scene" ]; then
+        if [ "$domain" = "button" ]; then
+            ha_api_post "/services/button/press" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        else
+            ha_api_post "/services/scene/turn_on" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        fi
+        resulting_state='{"on":true}'
+    elif [ "$action" = "set_start_stop" ]; then
+        local should_start
+        should_start=$(printf '%s' "$payload_json" | jq -r '.start // true')
+        if [ "$should_start" = "true" ]; then
+            ha_api_post "/services/vacuum/start" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            resulting_state='{"on":true,"isRunning":true,"isPaused":false}'
+        else
+            ha_api_post "/services/vacuum/stop" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            resulting_state='{"on":false,"isRunning":false}'
+        fi
+    elif [ "$action" = "set_pause" ]; then
+        local should_pause
+        should_pause=$(printf '%s' "$payload_json" | jq -r '.pause // false')
+        if [ "$should_pause" = "true" ]; then
+            ha_api_post "/services/vacuum/pause" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            resulting_state='{"isPaused":true}'
+        else
+            ha_api_post "/services/vacuum/start" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            resulting_state='{"isPaused":false,"isRunning":true}'
+        fi
+    else
+        success=false
+        error_msg="Unsupported action"
+    fi
+
+    if [ "$success" = "false" ] && [ -z "$error_msg" ]; then
+        error_msg="Failed to apply command"
+    fi
+
+    local result_payload
+    result_payload=$(jq -n \
+        --argjson success "$success" \
+        --arg error "$error_msg" \
+        --argjson state "$resulting_state" \
+        '{success: $success, error: ($error | if . == "" then null else . end), state: $state}')
+
+    cloud_post "/api/internal/devices/google-home/commands/${command_id}/result" "$result_payload" "$DEVICE_TOKEN" >/dev/null
+}
+
+sync_google_commands() {
+    if [ "$FLEET_ACTIVE" -ne 1 ] || [ -z "$DEVICE_TOKEN" ]; then
+        return
+    fi
+
+    local response
+    response=$(cloud_post "/api/internal/devices/google-home/commands" '{}' "$DEVICE_TOKEN")
+    if [ -z "$response" ]; then
+        return
+    fi
+
+    while IFS= read -r command_item; do
+        [ -z "$command_item" ] && continue
+        execute_google_command "$command_item"
+    done < <(printf '%s' "$response" | jq -c '.commands[]?')
+}
+
+validate_google_sync_intervals() {
+    case "$GOOGLE_ENTITY_SYNC_INTERVAL" in
+        ''|*[!0-9]*)
+            GOOGLE_ENTITY_SYNC_INTERVAL=5
+            ;;
+        *)
+            if [ "$GOOGLE_ENTITY_SYNC_INTERVAL" -lt 1 ]; then
+                GOOGLE_ENTITY_SYNC_INTERVAL=1
+            fi
+            ;;
+    esac
+
+    case "$GOOGLE_COMMAND_SYNC_INTERVAL" in
+        ''|*[!0-9]*)
+            GOOGLE_COMMAND_SYNC_INTERVAL=1
+            ;;
+        *)
+            if [ "$GOOGLE_COMMAND_SYNC_INTERVAL" -lt 1 ]; then
+                GOOGLE_COMMAND_SYNC_INTERVAL=1
+            fi
+            ;;
+    esac
+}
+
+start_google_sync_loop() {
+    if [ "$FLEET_ACTIVE" -ne 1 ] || [ -z "$DEVICE_TOKEN" ]; then
+        return
+    fi
+
+    (
+        local entity_tick=0
+        local entity_interval="$GOOGLE_ENTITY_SYNC_INTERVAL"
+        if [ "$entity_interval" -lt 1 ]; then
+            entity_interval=1
+        fi
+
+        while true; do
+            if [ "$entity_tick" -le 0 ]; then
+                sync_google_entities
+                entity_tick="$entity_interval"
+            fi
+
+            sync_google_commands
+
+            sleep "$GOOGLE_COMMAND_SYNC_INTERVAL"
+
+            entity_tick=$((entity_tick - GOOGLE_COMMAND_SYNC_INTERVAL))
+            if [ "$entity_tick" -lt 0 ]; then
+                entity_tick=0
+            fi
+        done
+    ) &
+
+    GOOGLE_SYNC_PID=$!
+}
+
+save_device_token() {
+    if [ -z "$DEVICE_TOKEN" ]; then
+        return
+    fi
+
+    printf '%s' "$DEVICE_TOKEN" > "$DEVICE_TOKEN_PATH"
+    chmod 600 "$DEVICE_TOKEN_PATH" || true
+}
+
+save_device_ssh_remote_port() {
+    local remote_port="$1"
+    printf '%s' "$remote_port" > "$DEVICE_SSH_REMOTE_PORT_PATH"
+    chmod 600 "$DEVICE_SSH_REMOTE_PORT_PATH" || true
+}
+
+load_cached_device_ssh_remote_port() {
+    if [ ! -f "$DEVICE_SSH_REMOTE_PORT_PATH" ]; then
+        printf '0'
+        return
+    fi
+
+    local cached_port
+    cached_port=$(cat "$DEVICE_SSH_REMOTE_PORT_PATH" 2>/dev/null || true)
+
+    if is_valid_port "$cached_port"; then
+        printf '%s' "$cached_port"
+        return
+    fi
+
+    printf '0'
+}
+
+send_device_log() {
+    local level="$1"
+    local event_type="$2"
+    local message="$3"
+    local payload_json="$4"
+
+    if [ "$FLEET_ACTIVE" -ne 1 ] || [ -z "$DEVICE_TOKEN" ]; then
+        return
+    fi
+
+    local payload
+    if [ -n "$payload_json" ]; then
+        payload=$(jq -n \
+            --arg level "$level" \
+            --arg event_type "$event_type" \
+            --arg message "$message" \
+            --argjson payload "$payload_json" \
+            '{ level: $level, event_type: $event_type, message: $message, payload: $payload }')
+    else
+        payload=$(jq -n \
+            --arg level "$level" \
+            --arg event_type "$event_type" \
+            --arg message "$message" \
+            '{ level: $level, event_type: $event_type, message: $message }')
+    fi
+
+    cloud_post "/api/internal/devices/log" "$payload" "$DEVICE_TOKEN" >/dev/null
+}
+
+build_fleet_payload() {
+    local state="$1"
+    local local_ips_csv
+    local local_ips_json='[]'
+    local remote_port_json='null'
+
+    local_ips_csv=$(get_local_ips_csv)
+
+    if [ -n "$local_ips_csv" ]; then
+        local_ips_json=$(jq -n --arg csv "$local_ips_csv" '$csv | split(",")')
+    fi
+
+    if [ "$SSH_REMOTE_PORT" -gt 0 ]; then
+        remote_port_json="$SSH_REMOTE_PORT"
+    fi
+
+    jq -n \
+        --arg access_token "$ACCESS_TOKEN" \
+        --arg device_uid "$DEVICE_UID" \
+        --arg device_name "$DEVICE_NAME" \
+        --arg hostname "$DEVICE_HOSTNAME" \
+        --argjson local_ips "$local_ips_json" \
+        --argjson ssh_port "$SSH_LOCAL_PORT" \
+        --arg remote_user "root" \
+        --arg tunnel_host "$FRP_SERVER_ADDR" \
+        --argjson tunnel_port "$remote_port_json" \
+        --arg addon_version "apex-cloud-link" \
+        --arg agent_state "$state" \
+        '{
+            access_token: $access_token,
+            device_uid: $device_uid,
+            device_name: $device_name,
+            hostname: $hostname,
+            local_ips: $local_ips,
+            ssh_port: $ssh_port,
+            remote_user: $remote_user,
+            tunnel_host: $tunnel_host,
+            tunnel_port: $tunnel_port,
+            addon_version: $addon_version,
+            agent_state: $agent_state
+        }'
+}
+
+register_fleet_device() {
+    if [ "$FLEET_ACTIVE" -ne 1 ]; then
+        return
+    fi
+
+    local cached_token=''
+    if [ -f "$DEVICE_TOKEN_PATH" ]; then
+        cached_token=$(cat "$DEVICE_TOKEN_PATH" 2>/dev/null || true)
+    fi
+
+    local payload
+    local response
+    local next_interval
+    local assigned_remote_port
+
+    payload=$(build_fleet_payload "starting")
+    response=$(cloud_post "/api/internal/devices/register" "$payload" "")
+
+    if [ -n "$response" ]; then
+        DEVICE_TOKEN=$(printf '%s' "$response" | jq --raw-output '.device_token // empty')
+        next_interval=$(printf '%s' "$response" | jq --raw-output '.heartbeat_interval_seconds // empty')
+        assigned_remote_port=$(printf '%s' "$response" | jq --raw-output '.data.tunnel_port // empty')
+
+        case "$next_interval" in
+            ''|*[!0-9]*)
+                ;;
+            *)
+                HEARTBEAT_INTERVAL="$next_interval"
+                ;;
+        esac
+
+        if is_valid_port "$assigned_remote_port"; then
+            SSH_REMOTE_PORT="$assigned_remote_port"
+            save_device_ssh_remote_port "$assigned_remote_port"
+        fi
+    fi
+
+    if [ -z "$DEVICE_TOKEN" ] && [ -n "$cached_token" ]; then
+        DEVICE_TOKEN="$cached_token"
+        bashio::log.warning "Fleet registration unavailable, reusing cached device token."
+    fi
+
+    if [ -n "$DEVICE_TOKEN" ]; then
+        save_device_token
+        if [ "$SSH_REMOTE_PORT" -gt 0 ]; then
+            bashio::log.info "Fleet reporting active for device uid=${DEVICE_UID}, ssh remote port=${SSH_REMOTE_PORT}"
+        else
+            bashio::log.warning "Fleet reporting active for device uid=${DEVICE_UID}, but no SSH remote port assigned yet"
+        fi
+    else
+        bashio::log.warning "Fleet registration failed, continuing without heartbeat reporting."
+        FLEET_ACTIVE=0
+    fi
+}
+
+send_heartbeat() {
+    local state="$1"
+
+    if [ "$FLEET_ACTIVE" -ne 1 ] || [ -z "$DEVICE_TOKEN" ]; then
+        return
+    fi
+
+    local payload
+    local response
+    local next_interval
+    local assigned_remote_port
+
+    payload=$(build_fleet_payload "$state")
+    response=$(cloud_post "/api/internal/devices/heartbeat" "$payload" "$DEVICE_TOKEN")
+
+    if [ -n "$response" ]; then
+        next_interval=$(printf '%s' "$response" | jq --raw-output '.heartbeat_interval_seconds // empty')
+        assigned_remote_port=$(printf '%s' "$response" | jq --raw-output '.data.tunnel_port // empty')
+        case "$next_interval" in
+            ''|*[!0-9]*)
+                ;;
+            *)
+                HEARTBEAT_INTERVAL="$next_interval"
+                ;;
+        esac
+
+        if is_valid_port "$assigned_remote_port"; then
+            SSH_REMOTE_PORT="$assigned_remote_port"
+            save_device_ssh_remote_port "$assigned_remote_port"
+        fi
+    fi
+}
+
+start_heartbeat_loop() {
+    if [ "$FLEET_ACTIVE" -ne 1 ] || [ -z "$DEVICE_TOKEN" ]; then
+        return
+    fi
+
+    (
+        while true; do
+            send_heartbeat "running"
+            sleep "$HEARTBEAT_INTERVAL"
+        done
+    ) &
+
+    HEARTBEAT_PID=$!
+}
+
+cleanup() {
+    if [ -n "$GOOGLE_SYNC_PID" ]; then
+        kill "$GOOGLE_SYNC_PID" 2>/dev/null || true
+        wait "$GOOGLE_SYNC_PID" 2>/dev/null || true
+    fi
+
+    if [ -n "$HEARTBEAT_PID" ]; then
+        kill "$HEARTBEAT_PID" 2>/dev/null || true
+        wait "$HEARTBEAT_PID" 2>/dev/null || true
+    fi
+
+    if [ "$FLEET_ACTIVE" -eq 1 ] && [ -n "$DEVICE_TOKEN" ]; then
+        send_device_log "warn" "device.shutdown" "Cloud Link service stopped" ""
+        send_heartbeat "stopped"
+    fi
+}
+
+trap cleanup EXIT INT TERM
+
+if [ -z "$SUBDOMAIN" ] || [ -z "$ACCESS_TOKEN" ]; then
+    bashio::log.error "Subdomain or Access Token is missing"
+    bashio::log.error "Please register in Cloud Connect and configure the addon options"
+    sleep infinity
+fi
+
+if [ -z "$CLOUD_API_URL" ]; then
+    bashio::log.error "Cloud API URL is empty"
+    sleep infinity
+fi
+
+if ! [[ "$SUBDOMAIN" =~ ^[a-z0-9-]{3,20}$ ]]; then
+    bashio::log.error "Invalid subdomain format. Use 3-20 lowercase letters, digits, or hyphen"
+    sleep infinity
+fi
+
+DEVICE_HOSTNAME=$(hostname 2>/dev/null || echo "unknown-device")
+DEVICE_UID="cloudlink-$(sanitize_uid "$DEVICE_HOSTNAME")-${SUBDOMAIN}"
+DEVICE_NAME="$DEVICE_HOSTNAME"
+FLEET_ACTIVE=1
+SSH_REMOTE_PORT=$(load_cached_device_ssh_remote_port)
+
+if [ -z "$DEVICE_UID" ]; then
+    DEVICE_UID="cloudlink-$(sanitize_uid "$DEVICE_HOSTNAME")-${SUBDOMAIN}"
+fi
+
+if [ -z "$DEVICE_NAME" ]; then
+    DEVICE_NAME="$DEVICE_HOSTNAME"
+fi
+
+validate_google_sync_intervals
+
+bashio::log.info "Initializing Cloud Link for ${SUBDOMAIN}.cloud.apexinfosys.in"
+
+ARCH=$(bashio::info.arch)
+FRP_ARCH=""
+
+case $ARCH in
+    aarch64) FRP_ARCH="arm64" ;;
+    amd64) FRP_ARCH="amd64" ;;
+    armhf|armv7) FRP_ARCH="arm" ;;
+    i386) FRP_ARCH="386" ;;
+    *)
+        bashio::log.error "Unsupported architecture: $ARCH"
+        sleep infinity
+        ;;
+esac
+
+if [ -f "$FRPC_BIN" ]; then
+    CURRENT_VERSION=$("$FRPC_BIN" -v 2>/dev/null || echo "0")
+    if [ "$CURRENT_VERSION" != "$FRP_VERSION" ]; then
+        bashio::log.info "FRP version mismatch (${CURRENT_VERSION} vs ${FRP_VERSION}), downloading update"
+        rm -f "$FRPC_BIN"
+    fi
+fi
+
+if [ ! -f "$FRPC_BIN" ]; then
+    bashio::log.info "Downloading FRP client for ${FRP_ARCH}"
+    mkdir -p "$FRP_DIR"
+
+    wget -qO /tmp/frp.tar.gz "https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/frp_${FRP_VERSION}_linux_${FRP_ARCH}.tar.gz"
+    tar -xzf /tmp/frp.tar.gz -C /tmp/
+    mv "/tmp/frp_${FRP_VERSION}_linux_${FRP_ARCH}/frpc" "$FRPC_BIN"
+    chmod +x "$FRPC_BIN"
+
+    rm -rf /tmp/frp*
+    bashio::log.info "FRP client download complete"
+fi
+
+if [ "$FLEET_ACTIVE" -eq 1 ]; then
+    register_fleet_device
+fi
+
+cat << TOML_EOF > "$FRPC_CONFIG"
+serverAddr = "${FRP_SERVER_ADDR}"
+serverPort = ${FRP_SERVER_PORT}
+
+loginFailExit = false
+
+auth.method = "token"
+auth.token = "apexcloud_transport_v1"
+
+[metadatas]
+token = "${ACCESS_TOKEN}"
+
+[[proxies]]
+name = "apex_web_${SUBDOMAIN}"
+type = "http"
+localIP = "127.0.0.1"
+localPort = 1702
+customDomains = ["${SUBDOMAIN}.cloud.apexinfosys.in"]
+TOML_EOF
+
+if [ "$SSH_REMOTE_PORT" -gt 0 ]; then
+    cat << TOML_SSH_EOF >> "$FRPC_CONFIG"
+
+[[proxies]]
+name = "apex_ssh_${SUBDOMAIN}"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = ${SSH_LOCAL_PORT}
+remotePort = ${SSH_REMOTE_PORT}
+TOML_SSH_EOF
+
+    bashio::log.info "SSH TCP proxy enabled on ${FRP_SERVER_ADDR}:${SSH_REMOTE_PORT}"
+else
+    bashio::log.warning "SSH TCP proxy skipped because no remote port is assigned yet"
+fi
+
+if [ "$FLEET_ACTIVE" -eq 1 ] && [ -n "$DEVICE_TOKEN" ]; then
+    send_device_log "info" "device.start" "Cloud Link service starting" "$(jq -n --arg subdomain "$SUBDOMAIN" --arg frp_addr "$FRP_SERVER_ADDR" --arg frp_port "$FRP_SERVER_PORT" --arg ssh_remote_port "$SSH_REMOTE_PORT" '{subdomain: $subdomain, frp_addr: $frp_addr, frp_port: $frp_port, ssh_remote_port: $ssh_remote_port}')"
+    send_heartbeat "starting"
+    sync_google_entities
+    sync_google_commands
+    start_heartbeat_loop
+    start_google_sync_loop
+fi
+
+bashio::log.info "Configuration generated. Connecting to cloud"
+
+set +e
+"$FRPC_BIN" -c "$FRPC_CONFIG"
+FRPC_EXIT_CODE=$?
+set -e
+
+if [ "$FRPC_EXIT_CODE" -eq 0 ]; then
+    send_device_log "warn" "frpc.exit" "FRPC process exited cleanly" "$(jq -n --arg code "$FRPC_EXIT_CODE" '{exit_code: $code}')"
+else
+    send_device_log "error" "frpc.exit" "FRPC process exited with error" "$(jq -n --arg code "$FRPC_EXIT_CODE" '{exit_code: $code}')"
+fi
+
+exit "$FRPC_EXIT_CODE"
