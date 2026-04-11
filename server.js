@@ -3324,14 +3324,18 @@ async function collectGoogleReportableStateChangesForUser(userId, options = {}) 
         rows = await dbAll(
             `
                 SELECT
-                    entity_id,
-                    entity_type,
-                    online,
-                    state_json,
-                    last_reported_state_hash,
-                    exposed
-                FROM google_home_entities
-                WHERE user_id = ?
+                    ge.entity_id,
+                    ge.entity_type,
+                    ge.online,
+                    ge.state_json,
+                    ge.last_reported_state_hash,
+                    ge.exposed,
+                    ge.entity_last_seen_at,
+                    ge.updated_at,
+                    d.last_seen_at
+                FROM google_home_entities ge
+                INNER JOIN devices d ON d.id = ge.device_id
+                WHERE ge.user_id = ?
             `,
             [normalizedUserId]
         );
@@ -3341,14 +3345,18 @@ async function collectGoogleReportableStateChangesForUser(userId, options = {}) 
             rows = await dbAll(
                 `
                     SELECT
-                        entity_id,
-                        entity_type,
-                        online,
-                        state_json,
+                        ge.entity_id,
+                        ge.entity_type,
+                        ge.online,
+                        ge.state_json,
                         NULL AS last_reported_state_hash,
-                        exposed
-                    FROM google_home_entities
-                    WHERE user_id = ?
+                        ge.exposed,
+                        ge.entity_last_seen_at,
+                        ge.updated_at,
+                        d.last_seen_at
+                    FROM google_home_entities ge
+                    INNER JOIN devices d ON d.id = ge.device_id
+                    WHERE ge.user_id = ?
                 `,
                 [normalizedUserId]
             );
@@ -4935,7 +4943,7 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                                 successStates = { on: true, brightness: brightnessVal };
                             } else {
                                 // On/off only light — degrade: brightness > 0 = on, brightness = 0 = off
-                                action = 'turn_onoff';
+                                action = 'set_on';
                                 payload = { on: brightnessVal > 0 };
                                 successStates = { on: brightnessVal > 0 };
                             }
