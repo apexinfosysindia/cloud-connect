@@ -109,6 +109,28 @@
                             <p class="detail-copy">Link Apex Connect+ in Google Home app to manage exposed entities.</p>
                         </div>
                         <p class="detail-copy">When linked, choose only the entities you want exposed to Google Assistant.</p>
+                        <div id="googleSecurityPinSection" class="google-security-pin-section" style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border, #e2e2e2);">
+                            <span class="detail-label" style="font-size: 0.85rem;">Security PIN for Locks &amp; Alarms</span>
+                            <p class="detail-copy" style="font-size: 0.8rem; margin-bottom: 0.5rem;">Set a 4-8 digit PIN that Google Assistant will ask before locking/unlocking doors or arming/disarming alarms.</p>
+                            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                                <input type="password" id="googleSecurityPinInput" placeholder="Enter PIN (4-8 digits)" maxlength="8" pattern="\d{4,8}" style="flex: 1; padding: 0.4rem 0.6rem; font-size: 0.85rem; border: 1px solid var(--border, #ccc); border-radius: 4px; font-family: monospace;">
+                                <button id="googleSecurityPinSave" class="button button-primary" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">Save</button>
+                                <button id="googleSecurityPinClear" class="button button-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">Clear</button>
+                            </div>
+                            <p id="googleSecurityPinStatus" class="detail-copy" style="font-size: 0.75rem; margin-top: 0.25rem;"></p>
+                        </div>
+                        <div id="googleCameraConfigSection" class="google-camera-config-section" style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border, #e2e2e2);">
+                            <span class="detail-label" style="font-size: 0.85rem;">Camera Streaming</span>
+                            <p class="detail-copy" style="font-size: 0.8rem; margin-bottom: 0.5rem;">To stream cameras through Google Home, provide your Home Assistant external URL and a long-lived access token.</p>
+                            <div style="display: flex; flex-direction: column; gap: 0.4rem;">
+                                <input type="url" id="googleCameraExternalUrl" placeholder="https://your-ha.duckdns.org:8123" style="padding: 0.4rem 0.6rem; font-size: 0.85rem; border: 1px solid var(--border, #ccc); border-radius: 4px;">
+                                <input type="password" id="googleCameraToken" placeholder="Long-lived access token" style="padding: 0.4rem 0.6rem; font-size: 0.85rem; border: 1px solid var(--border, #ccc); border-radius: 4px; font-family: monospace;">
+                                <div style="display: flex; gap: 0.5rem;">
+                                    <button id="googleCameraConfigSave" class="button button-primary" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">Save Camera Config</button>
+                                </div>
+                            </div>
+                            <p id="googleCameraConfigStatus" class="detail-copy" style="font-size: 0.75rem; margin-top: 0.25rem;"></p>
+                        </div>
                     </article>
 
                     <article id="googleConsentCard" class="detail-card hidden">
