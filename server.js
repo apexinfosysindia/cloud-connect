@@ -7,7 +7,6 @@ const cookieParser = require('cookie-parser');
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
-const WebSocket = require('ws');
 
 const db = require('./db');
 
@@ -1576,107 +1575,27 @@ function buildGoogleDeviceAttributes(entityType, statePayload, traits) {
 }
 
 /**
- * Request an HLS camera stream from HA via WebSocket API.
- * Returns the full HLS stream URL or null if unavailable.
+ * Wait synchronously for a queued Google command result (polling DB).
+ * Used for commands like camera streaming that need the addon's response
+ * before replying to Google.
  */
-async function requestHaCameraStream(haExternalUrl, haToken, entityId) {
-    if (!haExternalUrl || !haToken || !entityId) {
-        return null;
+async function waitForGoogleCommandResult(commandId, timeoutMs = 10000) {
+    const pollInterval = 250;
+    const maxAttempts = Math.ceil(timeoutMs / pollInterval);
+    for (let i = 0; i < maxAttempts; i++) {
+        const cmd = await dbGet(
+            `SELECT status, result_json FROM google_home_command_queue WHERE id = ? LIMIT 1`,
+            [commandId]
+        );
+        if (cmd && cmd.status === 'completed' && cmd.result_json) {
+            try { return JSON.parse(cmd.result_json); } catch (_) { return null; }
+        }
+        if (cmd && (cmd.status === 'failed' || cmd.status === 'error')) {
+            return null;
+        }
+        await new Promise(r => setTimeout(r, pollInterval));
     }
-
-    // Construct WebSocket URL from HA external URL
-    let wsUrl;
-    try {
-        const parsed = new URL(haExternalUrl);
-        parsed.protocol = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
-        parsed.pathname = '/api/websocket';
-        wsUrl = parsed.toString();
-    } catch (_) {
-        console.error('CAMERA STREAM: Invalid HA external URL:', haExternalUrl);
-        return null;
-    }
-
-    return new Promise((resolve) => {
-        const timeout = setTimeout(() => {
-            try { ws.close(); } catch (_) {}
-            resolve(null);
-        }, 12000);
-
-        let msgId = 1;
-        let authenticated = false;
-        const ws = new WebSocket(wsUrl, { handshakeTimeout: 8000 });
-
-        ws.on('error', (err) => {
-            console.error('CAMERA STREAM WS ERROR:', err.message || err);
-            clearTimeout(timeout);
-            resolve(null);
-        });
-
-        ws.on('close', () => {
-            clearTimeout(timeout);
-        });
-
-        ws.on('message', (data) => {
-            let msg;
-            try {
-                msg = JSON.parse(data.toString());
-            } catch (_) {
-                return;
-            }
-
-            if (msg.type === 'auth_required') {
-                ws.send(JSON.stringify({
-                    type: 'auth',
-                    access_token: haToken
-                }));
-                return;
-            }
-
-            if (msg.type === 'auth_ok') {
-                authenticated = true;
-                // Request camera stream
-                const streamMsgId = msgId++;
-                ws.send(JSON.stringify({
-                    id: streamMsgId,
-                    type: 'camera/stream',
-                    entity_id: entityId
-                }));
-                return;
-            }
-
-            if (msg.type === 'auth_invalid') {
-                console.error('CAMERA STREAM: HA auth invalid:', msg.message);
-                clearTimeout(timeout);
-                ws.close();
-                resolve(null);
-                return;
-            }
-
-            if (msg.type === 'result') {
-                clearTimeout(timeout);
-                ws.close();
-                if (msg.success && msg.result) {
-                    // HA returns something like: { "url": "/api/hls/<token>/master_playlist.m3u8" }
-                    const streamPath = msg.result.url || '';
-                    if (streamPath) {
-                        // Build full URL from external URL + stream path
-                        try {
-                            const fullUrl = new URL(streamPath, haExternalUrl).toString();
-                            resolve(fullUrl);
-                        } catch (_) {
-                            resolve(null);
-                        }
-                    } else {
-                        resolve(null);
-                    }
-                } else {
-                    console.error('CAMERA STREAM: HA returned error:', msg.error?.message || 'unknown');
-                    resolve(null);
-                }
-                return;
-            }
-        });
-    });
+    return null;
 }
 
 function buildGoogleDeviceObject(entity, userSecurityPin) {
@@ -4682,66 +4601,11 @@ app.post('/api/account/google-home/security-pin', requirePortalUser, async (req,
     }
 });
 
-app.get('/api/account/google-home/camera-config', requirePortalUser, async (req, res) => {
-    try {
-        return res.status(200).json({
-            ha_external_url: req.portalUser.ha_external_url || '',
-            ha_camera_token_set: Boolean(req.portalUser.ha_camera_token)
-        });
-    } catch (error) {
-        console.error('ACCOUNT CAMERA CONFIG GET ERROR:', error);
-        return res.status(500).json({ error: 'Unable to get camera config' });
-    }
-});
-
-app.post('/api/account/google-home/camera-config', requirePortalUser, async (req, res) => {
-    try {
-        const externalUrl = sanitizeString(req.body?.ha_external_url, 500) || '';
-        const cameraToken = sanitizeString(req.body?.ha_camera_token, 500) || '';
-
-        // Validate URL if provided
-        if (externalUrl) {
-            try {
-                const parsed = new URL(externalUrl);
-                if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-                    return res.status(400).json({ error: 'External URL must use http or https' });
-                }
-            } catch (_) {
-                return res.status(400).json({ error: 'Invalid external URL format' });
-            }
-        }
-
-        const updates = [];
-        const values = [];
-
-        updates.push('ha_external_url = ?');
-        values.push(externalUrl || null);
-
-        if (cameraToken) {
-            updates.push('ha_camera_token = ?');
-            values.push(cameraToken);
-        }
-
-        values.push(req.portalUser.id);
-
-        await dbRun(
-            `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
-            values
-        );
-
-        scheduleGoogleRequestSyncForUser(req.portalUser.id, 'camera_config_updated');
-        return res.status(200).json({
-            message: 'Camera configuration saved',
-            ha_external_url: externalUrl,
-            ha_camera_token_set: Boolean(cameraToken || req.portalUser.ha_camera_token)
-        });
-    } catch (error) {
-        console.error('ACCOUNT CAMERA CONFIG SET ERROR:', error);
-        return res.status(500).json({ error: 'Unable to save camera config' });
-    }
-});
-
 app.get('/api/google/home/oauth', async (req, res) => {
+    const clientId = req.query?.client_id;
+    const redirectUri = req.query?.redirect_uri;
+    const state = req.query?.state;
+
     const portalTokenRaw = req.query?.portal_session_token;
     const queryPortalToken = typeof portalTokenRaw === 'string' ? portalTokenRaw.trim() : '';
     const cookiePortalToken = req.cookies?.[PORTAL_SESSION_COOKIE_NAME] || '';
@@ -5431,7 +5295,7 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                         } else if (commandName === 'action.devices.commands.mediaSeekToPosition') {
                             action = 'media_seek';
                             const seekPosition = Number(params?.absPositionMs || 0);
-                            payload = { seek_position: seekPosition / 1000 }; // Google sends ms, HA uses seconds
+                            payload = { seek_position: seekPosition / 1000 }; // Google sends ms, ApexOS uses seconds
                             successStates = {};
                         } else if (commandName === 'action.devices.commands.mediaSeekRelative') {
                             action = 'media_seek_relative';
@@ -5510,23 +5374,26 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                                 ...(payload.arm && payload.arm_level ? { currentArmLevel: payload.arm_level } : {})
                             };
                         } else if (commandName === 'action.devices.commands.GetCameraStream') {
-                            // Camera stream is handled directly — no addon command queue needed
-                            const haExternalUrl = req.googleUser.ha_external_url;
-                            const haToken = req.googleUser.ha_camera_token;
-
-                            if (!haExternalUrl || !haToken) {
-                                commandResults.push({
-                                    ids: [entityId],
-                                    status: 'ERROR',
-                                    errorCode: 'notSupported',
-                                    debugString: 'Camera streaming requires HA external URL and access token. Configure in dashboard.'
-                                });
-                                continue;
-                            }
-
+                            // Camera stream routed through addon command queue
+                            // Addon makes local WebSocket call via Supervisor API and returns stream path
                             try {
-                                const streamUrl = await requestHaCameraStream(haExternalUrl, haToken, entityId);
-                                if (streamUrl) {
+                                const queuedCmd = await queueGoogleCommandForEntity(req.googleUser.id, entity.device_id, entity.entity_id, 'get_camera_stream', {});
+                                if (!queuedCmd?.id) {
+                                    commandResults.push({
+                                        ids: [entityId],
+                                        status: 'ERROR',
+                                        errorCode: 'transientError',
+                                        debugString: 'Unable to queue camera stream request'
+                                    });
+                                    continue;
+                                }
+
+                                const result = await waitForGoogleCommandResult(queuedCmd.id, 10000);
+                                const streamPath = result?.state?.stream_path;
+
+                                if (streamPath) {
+                                    const subdomain = req.googleUser.subdomain;
+                                    const streamUrl = `https://${subdomain}.${CLOUD_BASE_DOMAIN}${streamPath}`;
                                     commandResults.push({
                                         ids: [entityId],
                                         status: 'SUCCESS',
@@ -5541,7 +5408,7 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                                         ids: [entityId],
                                         status: 'ERROR',
                                         errorCode: 'transientError',
-                                        debugString: 'Unable to get camera stream from Home Assistant'
+                                        debugString: 'Unable to start camera stream'
                                     });
                                 }
                             } catch (camErr) {

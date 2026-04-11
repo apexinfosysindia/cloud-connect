@@ -1346,6 +1346,60 @@ code {
     gap: 10px;
 }
 
+.google-pin-section {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+}
+
+.google-pin-section .detail-label {
+    display: block;
+    margin-bottom: 4px;
+}
+
+.google-pin-section .detail-copy {
+    margin-top: 4px;
+    margin-bottom: 10px;
+}
+
+.google-pin-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.google-pin-input {
+    flex: 1;
+    min-height: 40px;
+    font-family: "SFMono-Regular", SFMono-Regular, ui-monospace, Menlo, Consolas, monospace;
+    letter-spacing: 0.12em;
+}
+
+.google-pin-controls .button {
+    min-height: 40px;
+    padding: 0 14px;
+}
+
+.google-pin-status {
+    margin-top: 6px;
+    margin-bottom: 0;
+}
+
+@media (max-width: 560px) {
+    .google-pin-controls {
+        flex-wrap: wrap;
+    }
+
+    .google-pin-input {
+        width: 100%;
+        flex: none;
+    }
+
+    .google-pin-controls .button {
+        flex: 1;
+    }
+}
+
 @media (max-width: 560px) {
     #googleConsentCard {
         padding: 14px;

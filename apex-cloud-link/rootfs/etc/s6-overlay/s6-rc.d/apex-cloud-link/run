@@ -126,7 +126,7 @@ ha_api_get() {
 
     if [ -z "${SUPERVISOR_TOKEN:-}" ]; then
         if [ "$GOOGLE_WARNED_NO_SUPERVISOR_TOKEN" -eq 0 ]; then
-            bashio::log.warning "Google sync disabled: SUPERVISOR_TOKEN unavailable. Ensure addon has hassio_api/homeassistant_api permissions."
+            bashio::log.warning "Google sync disabled: SUPERVISOR_TOKEN unavailable. Ensure addon has required API permissions."
             GOOGLE_WARNED_NO_SUPERVISOR_TOKEN=1
         fi
         return
@@ -167,7 +167,7 @@ sync_google_entities() {
     states_json=$(ha_api_get "/states")
     if [ -z "$states_json" ]; then
         if [ "$GOOGLE_WARNED_STATE_FETCH" -eq 0 ]; then
-            bashio::log.warning "Google entity sync skipped: unable to fetch Home Assistant states from Supervisor API"
+            bashio::log.warning "Google entity sync skipped: unable to fetch states from Supervisor API"
             GOOGLE_WARNED_STATE_FETCH=1
         fi
         return
@@ -377,7 +377,7 @@ sync_google_entities() {
     entities_count=$(printf '%s' "$entities_json" | jq -r 'length' 2>/dev/null || printf '0')
     if [ "$entities_count" -eq 0 ]; then
         if [ "$GOOGLE_WARNED_EMPTY_ENTITY_SYNC" -eq 0 ]; then
-            bashio::log.warning "Google entity sync produced zero entities. Check Home Assistant states and addon API permissions."
+            bashio::log.warning "Google entity sync produced zero entities. Check states and addon API permissions."
             GOOGLE_WARNED_EMPTY_ENTITY_SYNC=1
         fi
         return
@@ -723,6 +723,37 @@ execute_google_command() {
         wh_mode=$(printf '%s' "$payload_json" | jq -r '.mode // "off"')
         ha_api_post "/services/water_heater/set_operation_mode" "$(jq -n --arg entity_id "$entity_id" --arg operation_mode "$wh_mode" '{entity_id: $entity_id, operation_mode: $operation_mode}')" >/dev/null || success=false
         resulting_state=$(jq -n --arg m "$wh_mode" '{operation_mode: $m}')
+    elif [ "$action" = "get_camera_stream" ]; then
+        local stream_path
+        stream_path=$(python3 -c "
+import json, os, sys
+try:
+    from websocket import create_connection
+    token = os.environ.get('SUPERVISOR_TOKEN', '')
+    entity_id = sys.argv[1]
+    ws = create_connection('ws://supervisor/core/websocket', timeout=10)
+    msg = json.loads(ws.recv())
+    if msg.get('type') == 'auth_required':
+        ws.send(json.dumps({'type': 'auth', 'access_token': token}))
+    msg = json.loads(ws.recv())
+    if msg.get('type') != 'auth_ok':
+        sys.exit(1)
+    ws.send(json.dumps({'id': 1, 'type': 'camera/stream', 'entity_id': entity_id}))
+    msg = json.loads(ws.recv())
+    ws.close()
+    if msg.get('success') and msg.get('result', {}).get('url'):
+        print(msg['result']['url'])
+    else:
+        sys.exit(1)
+except Exception:
+    sys.exit(1)
+" "$entity_id" 2>/dev/null)
+        if [ -n "$stream_path" ]; then
+            resulting_state=$(jq -n --arg path "$stream_path" '{stream_path: $path}')
+        else
+            success=false
+            error_msg="Unable to start camera stream"
+        fi
     else
         success=false
         error_msg="Unsupported action"
