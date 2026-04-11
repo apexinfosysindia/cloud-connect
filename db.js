@@ -192,6 +192,7 @@ const DEVICE_SCHEMA_STATEMENTS = [
     'CREATE INDEX IF NOT EXISTS idx_google_home_entities_user_reported_hash ON google_home_entities(user_id, last_reported_state_hash)',
     'CREATE INDEX IF NOT EXISTS idx_google_home_command_queue_device_status_expiry ON google_home_command_queue(device_id, status, expires_at)',
     'CREATE INDEX IF NOT EXISTS idx_google_home_command_queue_user_status ON google_home_command_queue(user_id, status)',
+    'CREATE INDEX IF NOT EXISTS idx_google_home_command_queue_dedup ON google_home_command_queue(device_id, entity_id, action, status)',
     'CREATE INDEX IF NOT EXISTS idx_google_home_sync_snapshots_user_device ON google_home_sync_snapshots(user_id, device_id)',
     'ALTER TABLE devices ADD COLUMN admin_name_override INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE users ADD COLUMN google_home_enabled INTEGER NOT NULL DEFAULT 0',
@@ -329,6 +330,8 @@ const db = new sqlite3.Database(dbPath, (err) => {
     } else {
         console.log('Connected to the SQLite database.');
         db.serialize(() => {
+            db.run('PRAGMA journal_mode = WAL');
+            db.run('PRAGMA busy_timeout = 5000');
             db.run('PRAGMA foreign_keys = ON');
             initDb();
         });
