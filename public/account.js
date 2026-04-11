@@ -456,7 +456,6 @@
                 }
                 startGoogleEntitiesAutoRefresh(userData);
                 void loadSecurityPinStatus(userData);
-                void loadCameraConfigStatus(userData);
             } else {
                 if (googleHomeStatus) {
                     googleHomeStatus.textContent = accessEnabled
@@ -1171,58 +1170,6 @@
             const data = await res.json();
             if (res.ok) {
                 pinStatus.textContent = data.has_pin ? 'PIN is set. Lock and alarm commands will require this PIN.' : 'No PIN set.';
-            }
-        } catch (_) {
-            // ignore
-        }
-    }
-
-    // Camera config handlers
-    const cameraUrlInput = document.getElementById('googleCameraExternalUrl');
-    const cameraTokenInput = document.getElementById('googleCameraToken');
-    const cameraConfigSaveBtn = document.getElementById('googleCameraConfigSave');
-    const cameraConfigStatus = document.getElementById('googleCameraConfigStatus');
-
-    if (cameraConfigSaveBtn && cameraUrlInput) {
-        cameraConfigSaveBtn.addEventListener('click', async () => {
-            const userData = JSON.parse(localStorage.getItem('apex_user') || 'null');
-            if (!userData?.portal_session_token) {
-                showAlert('Please log in again to continue.');
-                return;
-            }
-            const externalUrl = cameraUrlInput.value.trim();
-            const cameraToken = cameraTokenInput ? cameraTokenInput.value.trim() : '';
-            cameraConfigSaveBtn.disabled = true;
-            try {
-                const res = await fetch('/api/account/google-home/camera-config', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        portal_session_token: userData.portal_session_token,
-                        ha_external_url: externalUrl,
-                        ha_camera_token: cameraToken
-                    })
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || 'Unable to save camera config');
-                if (cameraTokenInput) cameraTokenInput.value = '';
-                if (cameraConfigStatus) cameraConfigStatus.textContent = 'Camera configuration saved.' + (data.ha_camera_token_set ? ' Token is set.' : '');
-            } catch (err) {
-                if (cameraConfigStatus) cameraConfigStatus.textContent = err.message;
-            } finally {
-                cameraConfigSaveBtn.disabled = false;
-            }
-        });
-    }
-
-    async function loadCameraConfigStatus(userData) {
-        if (!cameraConfigStatus || !userData?.portal_session_token || !userData.google_home_linked) return;
-        try {
-            const res = await fetch('/api/account/google-home/camera-config?portal_session_token=' + encodeURIComponent(userData.portal_session_token));
-            const data = await res.json();
-            if (res.ok) {
-                if (cameraUrlInput && data.ha_external_url) cameraUrlInput.value = data.ha_external_url;
-                cameraConfigStatus.textContent = data.ha_camera_token_set ? 'Token is set. Camera streaming is configured.' : 'No camera token set yet.';
             }
         } catch (_) {
             // ignore

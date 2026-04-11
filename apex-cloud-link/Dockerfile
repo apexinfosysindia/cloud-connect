@@ -5,7 +5,8 @@ FROM ${BUILD_FROM}
 ENV LANG C.UTF-8
 
 # Install tooling for config parsing and fleet reporting
-RUN apk add --no-cache jq wget tar curl iproute2
+RUN apk add --no-cache jq wget tar curl iproute2 python3 py3-pip && \
+    pip3 install --no-cache-dir --break-system-packages websocket-client
 
 RUN find /etc /package -path "*/base-addon-banner/up" -exec sh -c 'echo -e "#!/command/with-contenv bash\nexit 0" > "$1"' _ {} +
 
