@@ -1184,10 +1184,10 @@ function supportsGoogleCommandForEntityType(entityType, commandName, statePayloa
             }
             return cmds;
         },
-        scene: () => new Set(['action.devices.commands.activateScene']),
-        button: () => new Set(['action.devices.commands.activateScene']),
+        scene: () => new Set(['action.devices.commands.ActivateScene']),
+        button: () => new Set(['action.devices.commands.ActivateScene']),
         automation: () => new Set(['action.devices.commands.OnOff']),
-        script: () => new Set(['action.devices.commands.activateScene']),
+        script: () => new Set(['action.devices.commands.ActivateScene']),
         vacuum: () => {
             const cmds = new Set();
             if (hasFeature(8192) || sf === 0) {
@@ -2127,6 +2127,8 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
             }
         }
     } else {
+        const defaultExposed = (entityType === 'automation' || entityType === 'script') ? 0 : 1;
+
         const insertWithLastSeenSql = `
             INSERT INTO google_home_entities (
                 user_id,
@@ -2142,7 +2144,7 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
         const insertFallbackSql = `
@@ -2159,7 +2161,7 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
         const insertWithLastSeenAndHashSql = `
@@ -2178,7 +2180,7 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
         const insertFallbackAndHashSql = `
@@ -2196,24 +2198,24 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
         try {
             if (googleEntityLastSeenColumnSupported && googleStateHashColumnSupported) {
-                await dbRun(insertWithLastSeenAndHashSql, [userId, deviceId, entityId, displayName, entityType, roomHint, online, nowIso, stateJson, stateHash, nowIso, nowIso]);
+                await dbRun(insertWithLastSeenAndHashSql, [userId, deviceId, entityId, displayName, entityType, roomHint, defaultExposed, online, nowIso, stateJson, stateHash, nowIso, nowIso]);
             } else if (googleEntityLastSeenColumnSupported && !googleStateHashColumnSupported) {
-                await dbRun(insertWithLastSeenSql, [userId, deviceId, entityId, displayName, entityType, roomHint, online, nowIso, stateJson, nowIso, nowIso]);
+                await dbRun(insertWithLastSeenSql, [userId, deviceId, entityId, displayName, entityType, roomHint, defaultExposed, online, nowIso, stateJson, nowIso, nowIso]);
             } else if (!googleEntityLastSeenColumnSupported && googleStateHashColumnSupported) {
-                await dbRun(insertFallbackAndHashSql, [userId, deviceId, entityId, displayName, entityType, roomHint, online, stateJson, stateHash, nowIso, nowIso]);
+                await dbRun(insertFallbackAndHashSql, [userId, deviceId, entityId, displayName, entityType, roomHint, defaultExposed, online, stateJson, stateHash, nowIso, nowIso]);
             } else {
-                await dbRun(insertFallbackSql, [userId, deviceId, entityId, displayName, entityType, roomHint, online, stateJson, nowIso, nowIso]);
+                await dbRun(insertFallbackSql, [userId, deviceId, entityId, displayName, entityType, roomHint, defaultExposed, online, stateJson, nowIso, nowIso]);
             }
         } catch (error) {
             if (isMissingGoogleEntityLastSeenColumnError(error) || isMissingGoogleStateHashColumnError(error)) {
                 googleEntityLastSeenColumnSupported = false;
                 googleStateHashColumnSupported = false;
-                await dbRun(insertFallbackSql, [userId, deviceId, entityId, displayName, entityType, roomHint, online, stateJson, nowIso, nowIso]);
+                await dbRun(insertFallbackSql, [userId, deviceId, entityId, displayName, entityType, roomHint, defaultExposed, online, stateJson, nowIso, nowIso]);
             } else {
                 throw error;
             }
@@ -5349,7 +5351,7 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                             action = 'set_input';
                             payload = { source: matchedSource };
                             successStates = { currentInput: inputKey };
-                        } else if (commandName === 'action.devices.commands.activateScene') {
+                        } else if (commandName === 'action.devices.commands.ActivateScene') {
                             action = 'activate_scene';
                             payload = { deactivate: Boolean(params?.deactivate) };
                             successStates = {};
