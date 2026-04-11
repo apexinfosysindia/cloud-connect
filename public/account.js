@@ -571,12 +571,6 @@
             return;
         }
 
-        if (userData.google_home_enabled !== true) {
-            googleOAuthRedirectInFlight = false;
-            showAlert('Google Home link is not active. Start linking again from Google Home app.');
-            return;
-        }
-
         googleOAuthRedirectInFlight = true;
         try {
             const response = await fetch('/api/google/home/oauth/continue', {
