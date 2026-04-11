@@ -14,6 +14,9 @@ const USERS_TABLE_SCHEMA = `
         google_home_enabled INTEGER NOT NULL DEFAULT 0,
         google_home_linked INTEGER NOT NULL DEFAULT 0,
         google_home_linked_at DATETIME,
+        google_home_security_pin TEXT,
+        ha_external_url TEXT,
+        ha_camera_token TEXT,
         razorpay_customer_id TEXT,
         razorpay_subscription_id TEXT,
         razorpay_payment_id TEXT,
@@ -198,7 +201,10 @@ const DEVICE_SCHEMA_STATEMENTS = [
     'ALTER TABLE google_home_entities ADD COLUMN state_hash TEXT',
     'ALTER TABLE google_home_entities ADD COLUMN last_reported_state_hash TEXT',
     'ALTER TABLE google_home_entities ADD COLUMN last_reported_at DATETIME',
-    'CREATE INDEX IF NOT EXISTS idx_google_home_entities_user_last_seen ON google_home_entities(user_id, entity_last_seen_at)'
+    'CREATE INDEX IF NOT EXISTS idx_google_home_entities_user_last_seen ON google_home_entities(user_id, entity_last_seen_at)',
+    'ALTER TABLE users ADD COLUMN google_home_security_pin TEXT',
+    'ALTER TABLE users ADD COLUMN ha_external_url TEXT',
+    'ALTER TABLE users ADD COLUMN ha_camera_token TEXT'
 ];
 
 const USERS_REBUILD_COLUMNS = [
@@ -211,6 +217,9 @@ const USERS_REBUILD_COLUMNS = [
     'google_home_enabled',
     'google_home_linked',
     'google_home_linked_at',
+    'google_home_security_pin',
+    'ha_external_url',
+    'ha_camera_token',
     'razorpay_customer_id',
     'razorpay_subscription_id',
     'razorpay_payment_id',
@@ -260,6 +269,9 @@ function buildUsersTableRebuildSql(existingColumns = []) {
         google_home_enabled INTEGER NOT NULL DEFAULT 0,
         google_home_linked INTEGER NOT NULL DEFAULT 0,
         google_home_linked_at DATETIME,
+        google_home_security_pin TEXT,
+        ha_external_url TEXT,
+        ha_camera_token TEXT,
         razorpay_customer_id TEXT,
         razorpay_subscription_id TEXT,
         razorpay_payment_id TEXT,

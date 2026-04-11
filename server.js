@@ -7,6 +7,7 @@ const cookieParser = require('cookie-parser');
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
+const WebSocket = require('ws');
 
 const db = require('./db');
 
@@ -830,7 +831,9 @@ function mapGoogleDomainToEntityType(entityId, fallbackType = 'switch') {
     const domain = normalizedEntityId.includes('.') ? normalizedEntityId.split('.')[0] : '';
 
     if (domain === 'light') return 'light';
-    if (domain === 'switch' || domain === 'input_boolean' || domain === 'automation' || domain === 'script') return 'switch';
+    if (domain === 'switch' || domain === 'input_boolean') return 'switch';
+    if (domain === 'automation') return 'automation';
+    if (domain === 'script') return 'script';
     if (domain === 'fan') return 'fan';
     if (domain === 'cover') return 'cover';
     if (domain === 'lock') return 'lock';
@@ -844,6 +847,7 @@ function mapGoogleDomainToEntityType(entityId, fallbackType = 'switch') {
     if (domain === 'water_heater') return 'water_heater';
     if (domain === 'binary_sensor') return 'binary_sensor';
     if (domain === 'sensor') return 'sensor';
+    if (domain === 'camera') return 'camera';
 
     return fallbackType;
 }
@@ -1060,6 +1064,27 @@ function resolveGoogleTraitsFromCapabilities(entityType, statePayload) {
         };
     }
 
+    if (entityType === 'automation') {
+        return {
+            type: 'action.devices.types.SWITCH',
+            traits: ['action.devices.traits.OnOff']
+        };
+    }
+
+    if (entityType === 'script') {
+        return {
+            type: 'action.devices.types.SCENE',
+            traits: ['action.devices.traits.Scene']
+        };
+    }
+
+    if (entityType === 'camera') {
+        return {
+            type: 'action.devices.types.CAMERA',
+            traits: ['action.devices.traits.CameraStream']
+        };
+    }
+
     return {
         type: 'action.devices.types.SWITCH',
         traits: ['action.devices.traits.OnOff']
@@ -1145,6 +1170,16 @@ function supportsGoogleCommandForEntityType(entityType, commandName, statePayloa
             if (hasFeature(1) || hasFeature(16384) || hasFeature(32) || hasFeature(16) || hasFeature(4096)) {
                 cmds.add('action.devices.commands.mediaControl');
             }
+            if (hasFeature(2)) {
+                cmds.add('action.devices.commands.mediaSeekToPosition');
+                cmds.add('action.devices.commands.mediaSeekRelative');
+            }
+            if (hasFeature(524288)) {
+                cmds.add('action.devices.commands.Shuffle');
+            }
+            if (hasFeature(262144)) {
+                cmds.add('action.devices.commands.SetRepeat');
+            }
             if (hasFeature(2048)) {
                 cmds.add('action.devices.commands.SetInput');
             }
@@ -1152,6 +1187,8 @@ function supportsGoogleCommandForEntityType(entityType, commandName, statePayloa
         },
         scene: () => new Set(['action.devices.commands.activateScene']),
         button: () => new Set(['action.devices.commands.activateScene']),
+        automation: () => new Set(['action.devices.commands.OnOff']),
+        script: () => new Set(['action.devices.commands.activateScene']),
         vacuum: () => {
             const cmds = new Set();
             if (hasFeature(8192) || sf === 0) {
@@ -1192,6 +1229,9 @@ function supportsGoogleCommandForEntityType(entityType, commandName, statePayloa
             'action.devices.commands.OnOff',
             'action.devices.commands.ThermostatSetMode',
             'action.devices.commands.ThermostatTemperatureSetpoint'
+        ]),
+        camera: () => new Set([
+            'action.devices.commands.GetCameraStream'
         ])
     };
 
@@ -1321,6 +1361,10 @@ function buildGoogleDeviceAttributes(entityType, statePayload, traits) {
             if (hasFeature(4096)) transportCommands.push('STOP');
             if (hasFeature(32)) transportCommands.push('NEXT');
             if (hasFeature(16)) transportCommands.push('PREVIOUS');
+            if (hasFeature(2)) transportCommands.push('SEEK_TO_POSITION');   // SEEK feature
+            if (hasFeature(2)) transportCommands.push('SEEK_RELATIVE');      // SEEK feature
+            if (hasFeature(524288)) transportCommands.push('SHUFFLE');       // SHUFFLE_SET feature
+            if (hasFeature(262144)) transportCommands.push('SET_REPEAT');    // REPEAT_SET feature
             attrs.transportControlSupported = transportCommands.map(cmd => ({ command: cmd }));
         }
         if (hasTrait('MediaState')) {
@@ -1339,7 +1383,7 @@ function buildGoogleDeviceAttributes(entityType, statePayload, traits) {
         return attrs;
     }
 
-    if (entityType === 'scene' || entityType === 'button') {
+    if (entityType === 'scene' || entityType === 'button' || entityType === 'script') {
         attrs.sceneReversible = false;
         return attrs;
     }
@@ -1522,16 +1566,126 @@ function buildGoogleDeviceAttributes(entityType, statePayload, traits) {
         return attrs;
     }
 
+    if (entityType === 'camera') {
+        attrs.cameraStreamSupportedProtocols = ['hls'];
+        attrs.cameraStreamNeedAuthToken = false;
+        return attrs;
+    }
+
     return attrs;
 }
 
-function buildGoogleDeviceObject(entity) {
+/**
+ * Request an HLS camera stream from HA via WebSocket API.
+ * Returns the full HLS stream URL or null if unavailable.
+ */
+async function requestHaCameraStream(haExternalUrl, haToken, entityId) {
+    if (!haExternalUrl || !haToken || !entityId) {
+        return null;
+    }
+
+    // Construct WebSocket URL from HA external URL
+    let wsUrl;
+    try {
+        const parsed = new URL(haExternalUrl);
+        parsed.protocol = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
+        parsed.pathname = '/api/websocket';
+        wsUrl = parsed.toString();
+    } catch (_) {
+        console.error('CAMERA STREAM: Invalid HA external URL:', haExternalUrl);
+        return null;
+    }
+
+    return new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+            try { ws.close(); } catch (_) {}
+            resolve(null);
+        }, 12000);
+
+        let msgId = 1;
+        let authenticated = false;
+        const ws = new WebSocket(wsUrl, { handshakeTimeout: 8000 });
+
+        ws.on('error', (err) => {
+            console.error('CAMERA STREAM WS ERROR:', err.message || err);
+            clearTimeout(timeout);
+            resolve(null);
+        });
+
+        ws.on('close', () => {
+            clearTimeout(timeout);
+        });
+
+        ws.on('message', (data) => {
+            let msg;
+            try {
+                msg = JSON.parse(data.toString());
+            } catch (_) {
+                return;
+            }
+
+            if (msg.type === 'auth_required') {
+                ws.send(JSON.stringify({
+                    type: 'auth',
+                    access_token: haToken
+                }));
+                return;
+            }
+
+            if (msg.type === 'auth_ok') {
+                authenticated = true;
+                // Request camera stream
+                const streamMsgId = msgId++;
+                ws.send(JSON.stringify({
+                    id: streamMsgId,
+                    type: 'camera/stream',
+                    entity_id: entityId
+                }));
+                return;
+            }
+
+            if (msg.type === 'auth_invalid') {
+                console.error('CAMERA STREAM: HA auth invalid:', msg.message);
+                clearTimeout(timeout);
+                ws.close();
+                resolve(null);
+                return;
+            }
+
+            if (msg.type === 'result') {
+                clearTimeout(timeout);
+                ws.close();
+                if (msg.success && msg.result) {
+                    // HA returns something like: { "url": "/api/hls/<token>/master_playlist.m3u8" }
+                    const streamPath = msg.result.url || '';
+                    if (streamPath) {
+                        // Build full URL from external URL + stream path
+                        try {
+                            const fullUrl = new URL(streamPath, haExternalUrl).toString();
+                            resolve(fullUrl);
+                        } catch (_) {
+                            resolve(null);
+                        }
+                    } else {
+                        resolve(null);
+                    }
+                } else {
+                    console.error('CAMERA STREAM: HA returned error:', msg.error?.message || 'unknown');
+                    resolve(null);
+                }
+                return;
+            }
+        });
+    });
+}
+
+function buildGoogleDeviceObject(entity, userSecurityPin) {
     const statePayload = parseJsonSafe(entity?.state_json, {}) || {};
     const mapped = resolveGoogleTraitsFromCapabilities(entity.entity_type, statePayload);
     const roomHint = sanitizeString(entity.room_hint, 120);
     const attributes = buildGoogleDeviceAttributes(entity.entity_type, statePayload, mapped.traits);
 
-    return {
+    const deviceObj = {
         id: entity.entity_id,
         type: mapped.type,
         traits: mapped.traits,
@@ -1551,6 +1705,16 @@ function buildGoogleDeviceObject(entity) {
         },
         attributes
     };
+
+    // Add PIN challenge for security-sensitive devices
+    if (userSecurityPin && (entity.entity_type === 'alarm_control_panel' || entity.entity_type === 'lock')) {
+        deviceObj.attributes = {
+            ...deviceObj.attributes,
+            pinNeeded: true
+        };
+    }
+
+    return deviceObj;
 }
 
 function parseGoogleEntityState(entity) {
@@ -1655,7 +1819,7 @@ function parseGoogleEntityState(entity) {
         return state;
     }
 
-    if (entity.entity_type === 'scene' || entity.entity_type === 'button') {
+    if (entity.entity_type === 'scene' || entity.entity_type === 'button' || entity.entity_type === 'script') {
         return {
             online: entity.online !== 0
         };
@@ -1851,6 +2015,19 @@ function parseGoogleEntityState(entity) {
             thermostatMode: normalizeGoogleThermostatMode(mode),
             thermostatTemperatureAmbient: Number.isFinite(ambient) ? ambient : 0,
             thermostatTemperatureSetpoint: Number.isFinite(target) ? target : (Number.isFinite(ambient) ? ambient : 50)
+        };
+    }
+
+    if (entity.entity_type === 'automation') {
+        return {
+            online: entity.online !== 0,
+            on: Boolean(statePayload.on)
+        };
+    }
+
+    if (entity.entity_type === 'camera') {
+        return {
+            online: entity.online !== 0
         };
     }
 
@@ -4464,10 +4641,107 @@ app.post('/api/account/google-home/entities/:entityId/expose', requirePortalUser
     }
 });
 
+app.get('/api/account/google-home/security-pin', requirePortalUser, async (req, res) => {
+    try {
+        const hasPin = Boolean(req.portalUser.google_home_security_pin);
+        return res.status(200).json({ has_pin: hasPin });
+    } catch (error) {
+        console.error('ACCOUNT GOOGLE HOME SECURITY PIN GET ERROR:', error);
+        return res.status(500).json({ error: 'Unable to check security PIN' });
+    }
+});
+
+app.post('/api/account/google-home/security-pin', requirePortalUser, async (req, res) => {
+    try {
+        const pin = sanitizeString(req.body?.pin, 20);
+
+        if (!pin) {
+            // Clear the PIN
+            await dbRun(
+                `UPDATE users SET google_home_security_pin = NULL WHERE id = ?`,
+                [req.portalUser.id]
+            );
+            scheduleGoogleRequestSyncForUser(req.portalUser.id, 'security_pin_cleared');
+            return res.status(200).json({ message: 'Security PIN cleared', has_pin: false });
+        }
+
+        if (!/^\d{4,8}$/.test(pin)) {
+            return res.status(400).json({ error: 'PIN must be 4 to 8 digits' });
+        }
+
+        await dbRun(
+            `UPDATE users SET google_home_security_pin = ? WHERE id = ?`,
+            [pin, req.portalUser.id]
+        );
+
+        scheduleGoogleRequestSyncForUser(req.portalUser.id, 'security_pin_set');
+        return res.status(200).json({ message: 'Security PIN saved', has_pin: true });
+    } catch (error) {
+        console.error('ACCOUNT GOOGLE HOME SECURITY PIN SET ERROR:', error);
+        return res.status(500).json({ error: 'Unable to save security PIN' });
+    }
+});
+
+app.get('/api/account/google-home/camera-config', requirePortalUser, async (req, res) => {
+    try {
+        return res.status(200).json({
+            ha_external_url: req.portalUser.ha_external_url || '',
+            ha_camera_token_set: Boolean(req.portalUser.ha_camera_token)
+        });
+    } catch (error) {
+        console.error('ACCOUNT CAMERA CONFIG GET ERROR:', error);
+        return res.status(500).json({ error: 'Unable to get camera config' });
+    }
+});
+
+app.post('/api/account/google-home/camera-config', requirePortalUser, async (req, res) => {
+    try {
+        const externalUrl = sanitizeString(req.body?.ha_external_url, 500) || '';
+        const cameraToken = sanitizeString(req.body?.ha_camera_token, 500) || '';
+
+        // Validate URL if provided
+        if (externalUrl) {
+            try {
+                const parsed = new URL(externalUrl);
+                if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+                    return res.status(400).json({ error: 'External URL must use http or https' });
+                }
+            } catch (_) {
+                return res.status(400).json({ error: 'Invalid external URL format' });
+            }
+        }
+
+        const updates = [];
+        const values = [];
+
+        updates.push('ha_external_url = ?');
+        values.push(externalUrl || null);
+
+        if (cameraToken) {
+            updates.push('ha_camera_token = ?');
+            values.push(cameraToken);
+        }
+
+        values.push(req.portalUser.id);
+
+        await dbRun(
+            `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
+            values
+        );
+
+        scheduleGoogleRequestSyncForUser(req.portalUser.id, 'camera_config_updated');
+        return res.status(200).json({
+            message: 'Camera configuration saved',
+            ha_external_url: externalUrl,
+            ha_camera_token_set: Boolean(cameraToken || req.portalUser.ha_camera_token)
+        });
+    } catch (error) {
+        console.error('ACCOUNT CAMERA CONFIG SET ERROR:', error);
+        return res.status(500).json({ error: 'Unable to save camera config' });
+    }
+});
+
 app.get('/api/google/home/oauth', async (req, res) => {
-    const clientId = sanitizeString(req.query?.client_id, 255);
-    const redirectUri = sanitizeString(req.query?.redirect_uri, 1000);
-    const state = sanitizeString(req.query?.state, 1000) || '';
     const portalTokenRaw = req.query?.portal_session_token;
     const queryPortalToken = typeof portalTokenRaw === 'string' ? portalTokenRaw.trim() : '';
     const cookiePortalToken = req.cookies?.[PORTAL_SESSION_COOKIE_NAME] || '';
@@ -4840,7 +5114,8 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
 
         if (intent === 'action.devices.SYNC') {
             const entities = await getGoogleEntitiesForUser(req.googleUser.id, { includeDisabled: false });
-            const devices = entities.map((entity) => buildGoogleDeviceObject(withEffectiveGoogleOnline(entity)));
+            const userPin = req.googleUser.google_home_security_pin || null;
+            const devices = entities.map((entity) => buildGoogleDeviceObject(withEffectiveGoogleOnline(entity), userPin));
 
             return res.status(200).json({
                 requestId,
@@ -4943,6 +5218,38 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                                 errorCode: 'notSupported'
                             });
                             continue;
+                        }
+
+                        // Security PIN challenge for lock and alarm commands
+                        const userSecurityPin = req.googleUser.google_home_security_pin || null;
+                        const needsPin = userSecurityPin && (
+                            commandName === 'action.devices.commands.ArmDisarm' ||
+                            commandName === 'action.devices.commands.LockUnlock'
+                        );
+                        if (needsPin) {
+                            const challenge = execution?.challenge || params?.challenge;
+                            if (!challenge || !challenge.pin) {
+                                commandResults.push({
+                                    ids: [entityId],
+                                    status: 'ERROR',
+                                    errorCode: 'challengeNeeded',
+                                    challengeNeeded: {
+                                        type: 'pinNeeded'
+                                    }
+                                });
+                                continue;
+                            }
+                            if (String(challenge.pin) !== String(userSecurityPin)) {
+                                commandResults.push({
+                                    ids: [entityId],
+                                    status: 'ERROR',
+                                    errorCode: 'challengeNeeded',
+                                    challengeNeeded: {
+                                        type: 'challengeFailedPinNeeded'
+                                    }
+                                });
+                                continue;
+                            }
                         }
 
                         let action = null;
@@ -5121,6 +5428,28 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                             }
                             payload = {};
                             successStates = {};
+                        } else if (commandName === 'action.devices.commands.mediaSeekToPosition') {
+                            action = 'media_seek';
+                            const seekPosition = Number(params?.absPositionMs || 0);
+                            payload = { seek_position: seekPosition / 1000 }; // Google sends ms, HA uses seconds
+                            successStates = {};
+                        } else if (commandName === 'action.devices.commands.mediaSeekRelative') {
+                            action = 'media_seek_relative';
+                            const relMs = Number(params?.relativePositionMs || 0);
+                            const currentPos = Number(entityStatePayload.media_position || 0);
+                            const newPos = Math.max(0, currentPos + (relMs / 1000));
+                            payload = { seek_position: newPos }; // Compute absolute position from relative
+                            successStates = {};
+                        } else if (commandName === 'action.devices.commands.Shuffle') {
+                            action = 'media_shuffle';
+                            payload = { shuffle: Boolean(params?.shuffle) };
+                            successStates = {};
+                        } else if (commandName === 'action.devices.commands.SetRepeat') {
+                            action = 'media_repeat';
+                            const repeatMode = Boolean(params?.isOn);
+                            const isSingle = Boolean(params?.isSingle);
+                            payload = { repeat: repeatMode ? (isSingle ? 'one' : 'all') : 'off' };
+                            successStates = {};
                         } else if (commandName === 'action.devices.commands.SetInput') {
                             const inputKey = params?.newInput || '';
                             const sourceList = Array.isArray(entityStatePayload.source_list) ? entityStatePayload.source_list : [];
@@ -5180,6 +5509,50 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                                 isArmed: payload.arm,
                                 ...(payload.arm && payload.arm_level ? { currentArmLevel: payload.arm_level } : {})
                             };
+                        } else if (commandName === 'action.devices.commands.GetCameraStream') {
+                            // Camera stream is handled directly — no addon command queue needed
+                            const haExternalUrl = req.googleUser.ha_external_url;
+                            const haToken = req.googleUser.ha_camera_token;
+
+                            if (!haExternalUrl || !haToken) {
+                                commandResults.push({
+                                    ids: [entityId],
+                                    status: 'ERROR',
+                                    errorCode: 'notSupported',
+                                    debugString: 'Camera streaming requires HA external URL and access token. Configure in dashboard.'
+                                });
+                                continue;
+                            }
+
+                            try {
+                                const streamUrl = await requestHaCameraStream(haExternalUrl, haToken, entityId);
+                                if (streamUrl) {
+                                    commandResults.push({
+                                        ids: [entityId],
+                                        status: 'SUCCESS',
+                                        states: {
+                                            online: true,
+                                            cameraStreamAccessUrl: streamUrl,
+                                            cameraStreamProtocol: 'hls'
+                                        }
+                                    });
+                                } else {
+                                    commandResults.push({
+                                        ids: [entityId],
+                                        status: 'ERROR',
+                                        errorCode: 'transientError',
+                                        debugString: 'Unable to get camera stream from Home Assistant'
+                                    });
+                                }
+                            } catch (camErr) {
+                                console.error('CAMERA STREAM EXECUTE ERROR:', camErr);
+                                commandResults.push({
+                                    ids: [entityId],
+                                    status: 'ERROR',
+                                    errorCode: 'transientError'
+                                });
+                            }
+                            continue;
                         } else {
                             commandResults.push({
                                 ids: [entityId],

@@ -177,7 +177,7 @@ sync_google_entities() {
 
     local entities_json='[]'
     entities_json=$(printf '%s' "$states_json" | jq -c '
-            map(select(.entity_id | test("^(switch|light|sensor|fan|cover|lock|climate|media_player|scene|button|vacuum|humidifier|alarm_control_panel|water_heater|binary_sensor|input_boolean|automation|script)\\.")))
+            map(select(.entity_id | test("^(switch|light|sensor|fan|cover|lock|climate|media_player|scene|button|vacuum|humidifier|alarm_control_panel|water_heater|binary_sensor|input_boolean|automation|script|camera)\\.")))
             | map(select(
                 if (.entity_id | startswith("sensor."))
                 then (
@@ -217,6 +217,9 @@ sync_google_entities() {
                         elif ($s.entity_id | startswith("water_heater.")) then "water_heater"
                         elif ($s.entity_id | startswith("binary_sensor.")) then "binary_sensor"
                         elif ($s.entity_id | startswith("sensor.")) then "sensor"
+                        elif ($s.entity_id | startswith("automation.")) then "automation"
+                        elif ($s.entity_id | startswith("script.")) then "script"
+                        elif ($s.entity_id | startswith("camera.")) then "camera"
                         else "switch"
                         end
                     ),
@@ -346,6 +349,19 @@ sync_google_entities() {
                             device_class: $dc,
                             unit_of_measurement: ($s.attributes.unit_of_measurement // null),
                             temperature: (if (($dc // "") == "temperature") then (($s.state | tonumber?) // 0) else null end)
+                        }
+                        elif ($s.entity_id | startswith("automation.")) then {
+                            on: ($s.state == "on"),
+                            supported_features: $sf
+                        }
+                        elif ($s.entity_id | startswith("script.")) then {
+                            activated: false
+                        }
+                        elif ($s.entity_id | startswith("camera.")) then {
+                            is_streaming: ($s.state == "streaming"),
+                            supported_features: $sf,
+                            device_class: $dc,
+                            frontend_stream_type: ($s.attributes.frontend_stream_type // "hls")
                         }
                         else {
                             on: ($s.state == "on"),
@@ -591,6 +607,26 @@ execute_google_command() {
     elif [ "$action" = "media_previous" ]; then
         ha_api_post "/services/media_player/media_previous_track" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
         resulting_state='{}'
+    elif [ "$action" = "media_seek" ]; then
+        local seek_pos
+        seek_pos=$(printf '%s' "$payload_json" | jq -r '.seek_position // 0')
+        ha_api_post "/services/media_player/media_seek" "$(jq -n --arg entity_id "$entity_id" --argjson pos "$seek_pos" '{entity_id: $entity_id, seek_position: $pos}')" >/dev/null || success=false
+        resulting_state='{}'
+    elif [ "$action" = "media_seek_relative" ]; then
+        local seek_pos
+        seek_pos=$(printf '%s' "$payload_json" | jq -r '.seek_position // 0')
+        ha_api_post "/services/media_player/media_seek" "$(jq -n --arg entity_id "$entity_id" --argjson pos "$seek_pos" '{entity_id: $entity_id, seek_position: $pos}')" >/dev/null || success=false
+        resulting_state='{}'
+    elif [ "$action" = "media_shuffle" ]; then
+        local shuffle_val
+        shuffle_val=$(printf '%s' "$payload_json" | jq -r '.shuffle // false')
+        ha_api_post "/services/media_player/shuffle_set" "$(jq -n --arg entity_id "$entity_id" --argjson shuf "$shuffle_val" '{entity_id: $entity_id, shuffle: $shuf}')" >/dev/null || success=false
+        resulting_state='{}'
+    elif [ "$action" = "media_repeat" ]; then
+        local repeat_mode
+        repeat_mode=$(printf '%s' "$payload_json" | jq -r '.repeat // "off"')
+        ha_api_post "/services/media_player/repeat_set" "$(jq -n --arg entity_id "$entity_id" --arg rep "$repeat_mode" '{entity_id: $entity_id, repeat: $rep}')" >/dev/null || success=false
+        resulting_state='{}'
     elif [ "$action" = "set_input" ]; then
         local source_name
         source_name=$(printf '%s' "$payload_json" | jq -r '.source // ""')
@@ -599,6 +635,8 @@ execute_google_command() {
     elif [ "$action" = "activate_scene" ]; then
         if [ "$domain" = "button" ]; then
             ha_api_post "/services/button/press" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        elif [ "$domain" = "script" ]; then
+            ha_api_post "/services/script/turn_on" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
         else
             ha_api_post "/services/scene/turn_on" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
         fi
