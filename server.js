@@ -2374,10 +2374,11 @@ async function queueGoogleCommandForEntity(userId, deviceId, entityId, action, p
 
     // Supersede any pending commands for the same entity+action (slider deduplication)
     // This prevents rapid slider adjustments from queueing multiple obsolete commands
+    // Uses 'expired' status (allowed by DB CHECK constraint) to mark obsolete pending commands
     await dbRun(
         `
             UPDATE google_home_command_queue
-            SET status = 'superseded',
+            SET status = 'expired',
                 updated_at = ?
             WHERE device_id = ?
               AND entity_id = ?
@@ -3435,6 +3436,31 @@ async function collectGoogleReportableStateChangesForUser(userId, options = {}) 
     }
 
     const force = Boolean(options.force);
+
+    // Collect entity IDs with recent active commands to suppress stale Report State.
+    // When a command is queued, the EXECUTE handler returns optimistic state to Google.
+    // If Report State fires before the device updates, it would revert Google to the old state.
+    // Suppress Report State for entities with pending/dispatched commands (within last 8 seconds).
+    let recentCommandEntityIds = new Set();
+    try {
+        const recentCutoff = new Date(Date.now() - 8000).toISOString();
+        const recentCmdRows = await dbAll(
+            `
+                SELECT DISTINCT entity_id
+                FROM google_home_command_queue
+                WHERE user_id = ?
+                  AND status IN ('pending', 'dispatched')
+                  AND created_at >= ?
+            `,
+            [normalizedUserId, recentCutoff]
+        );
+        recentCommandEntityIds = new Set(
+            (recentCmdRows || []).map(r => sanitizeEntityId(r.entity_id)).filter(Boolean)
+        );
+    } catch (_) {
+        // Non-critical — proceed without suppression
+    }
+
     let rows;
     try {
         rows = await dbAll(
@@ -3495,7 +3521,7 @@ async function collectGoogleReportableStateChangesForUser(userId, options = {}) 
         const stateHash = computeGoogleStateHash(parsedState);
         const lastReportedHash = row.last_reported_state_hash || null;
 
-        if (row.exposed === 1 && (force || stateHash !== lastReportedHash)) {
+        if (row.exposed === 1 && (force || stateHash !== lastReportedHash) && !recentCommandEntityIds.has(entityId)) {
             states[entityId] = parsedState;
             hashes[entityId] = stateHash;
         }
