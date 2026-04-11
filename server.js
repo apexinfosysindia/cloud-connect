@@ -998,6 +998,19 @@ function resolveGoogleTraitsFromCapabilities(entityType, statePayload) {
     }
 
     if (entityType === 'sensor' || entityType === 'sensor_temperature') {
+        const sensorDc = dc || statePayload?.device_class || 'temperature';
+        // Temperature and humidity use dedicated traits; other sensors use SensorState
+        if (sensorDc === 'temperature') {
+            return {
+                type: 'action.devices.types.SENSOR',
+                traits: ['action.devices.traits.TemperatureSetting']
+            };
+        } else if (sensorDc === 'humidity') {
+            return {
+                type: 'action.devices.types.SENSOR',
+                traits: ['action.devices.traits.HumiditySetting']
+            };
+        }
         return {
             type: 'action.devices.types.SENSOR',
             traits: ['action.devices.traits.SensorState']
@@ -1085,12 +1098,9 @@ function supportsGoogleCommandForEntityType(entityType, commandName, statePayloa
     const allowed = {
         light: () => {
             const cmds = new Set([
-                'action.devices.commands.OnOff'
+                'action.devices.commands.OnOff',
+                'action.devices.commands.BrightnessAbsolute' // Always allow — gracefully degrades to on/off for non-dimmable lights
             ]);
-            const hasBrightness = colorModes.length > 0 && !colorModes.every(m => m === 'onoff');
-            if (hasBrightness) {
-                cmds.add('action.devices.commands.BrightnessAbsolute');
-            }
             const hasColor = colorModes.some(m => ['hs', 'xy', 'rgb', 'rgbw', 'rgbww'].includes(m));
             const hasColorTemp = colorModes.includes('color_temp');
             if (hasColor || hasColorTemp) {
@@ -1360,27 +1370,22 @@ function buildGoogleDeviceAttributes(entityType, statePayload, traits) {
 
     if (entityType === 'sensor' || entityType === 'sensor_temperature') {
         const sensorDc = dc || statePayload?.device_class || 'temperature';
-        const sensorStates = [];
 
         if (sensorDc === 'temperature') {
             const unitRaw = statePayload?.unit_of_measurement || '°C';
             const isFahrenheit = /F/.test(unitRaw);
-            sensorStates.push({
-                name: 'TemperatureAmbient',
-                numericCapabilities: {
-                    rawValueUnit: isFahrenheit ? 'FAHRENHEIT' : 'CELSIUS',
-                    rawValueRange: { minValue: -40, maxValue: 130 }
-                }
-            });
+            attrs.queryOnlyTemperatureSetting = true;
+            attrs.thermostatTemperatureUnit = isFahrenheit ? 'F' : 'C';
+            return attrs;
         } else if (sensorDc === 'humidity') {
-            sensorStates.push({
-                name: 'HumidityAmbient',
-                numericCapabilities: {
-                    rawValueUnit: 'PERCENT',
-                    rawValueRange: { minValue: 0, maxValue: 100 }
-                }
-            });
-        } else if (sensorDc === 'pm25') {
+            attrs.queryOnlyHumiditySetting = true;
+            return attrs;
+        }
+
+        // All other sensors use SensorState with valid Google sensor names
+        const sensorStates = [];
+
+        if (sensorDc === 'pm25') {
             sensorStates.push({
                 name: 'PM2.5',
                 numericCapabilities: {
@@ -1429,11 +1434,12 @@ function buildGoogleDeviceAttributes(entityType, statePayload, traits) {
                 }
             });
         } else {
+            // Unknown sensor type — default to AirQuality as a safe SensorState name
             sensorStates.push({
-                name: 'TemperatureAmbient',
+                name: 'AirQuality',
                 numericCapabilities: {
-                    rawValueUnit: 'CELSIUS',
-                    rawValueRange: { minValue: -40, maxValue: 130 }
+                    rawValueUnit: 'AQI',
+                    rawValueRange: { minValue: 0, maxValue: 500 }
                 }
             });
         }
@@ -1721,21 +1727,25 @@ function parseGoogleEntityState(entity) {
     if (entity.entity_type === 'sensor' || entity.entity_type === 'sensor_temperature') {
         const sensorDc = dc || statePayload.device_class || 'temperature';
         const state = { online: entity.online !== 0 };
-        const sensorData = [];
 
         if (sensorDc === 'temperature') {
+            // TemperatureSetting trait — use thermostatTemperatureAmbient
             const temperature = Number(statePayload.temperature != null ? statePayload.temperature : statePayload.value);
-            sensorData.push({
-                name: 'TemperatureAmbient',
-                rawValue: Number.isFinite(temperature) ? temperature : 0
-            });
+            state.thermostatMode = 'off';
+            state.thermostatTemperatureAmbient = Number.isFinite(temperature) ? temperature : 0;
+            state.thermostatTemperatureSetpoint = state.thermostatTemperatureAmbient;
+            return state;
         } else if (sensorDc === 'humidity') {
+            // HumiditySetting trait — use humidityAmbientPercent
             const humidity = Number(statePayload.value);
-            sensorData.push({
-                name: 'HumidityAmbient',
-                rawValue: Number.isFinite(humidity) ? humidity : 0
-            });
-        } else if (sensorDc === 'pm25') {
+            state.humidityAmbientPercent = Number.isFinite(humidity) ? Math.max(0, Math.min(100, Math.round(humidity))) : 0;
+            return state;
+        }
+
+        // All other sensors use SensorState trait with currentSensorStateData
+        const sensorData = [];
+
+        if (sensorDc === 'pm25') {
             const val = Number(statePayload.value);
             sensorData.push({ name: 'PM2.5', rawValue: Number.isFinite(val) ? val : 0 });
         } else if (sensorDc === 'pm10') {
@@ -1754,11 +1764,9 @@ function parseGoogleEntityState(entity) {
             const val = Number(statePayload.value);
             sensorData.push({ name: 'AirQuality', rawValue: Number.isFinite(val) ? val : 0 });
         } else {
-            const temperature = Number(statePayload.temperature != null ? statePayload.temperature : statePayload.value);
-            sensorData.push({
-                name: 'TemperatureAmbient',
-                rawValue: Number.isFinite(temperature) ? temperature : 0
-            });
+            // Unknown sensor — default to AirQuality
+            const val = Number(statePayload.value);
+            sensorData.push({ name: 'AirQuality', rawValue: Number.isFinite(val) ? val : 0 });
         }
 
         state.currentSensorStateData = sensorData;
@@ -4918,9 +4926,19 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                             payload = { on: Boolean(params?.on) };
                             successStates = { on: payload.on };
                         } else if (commandName === 'action.devices.commands.BrightnessAbsolute') {
-                            action = 'set_brightness';
-                            payload = { brightness: Math.max(0, Math.min(100, Number(params?.brightness || 0))) };
-                            successStates = { on: true, brightness: payload.brightness };
+                            const brightnessVal = Math.max(0, Math.min(100, Number(params?.brightness || 0)));
+                            const entityColorModes = Array.isArray(entityStatePayload.supported_color_modes) ? entityStatePayload.supported_color_modes : [];
+                            const hasBrightness = entityColorModes.length > 0 && !entityColorModes.every(m => m === 'onoff');
+                            if (hasBrightness) {
+                                action = 'set_brightness';
+                                payload = { brightness: brightnessVal };
+                                successStates = { on: true, brightness: brightnessVal };
+                            } else {
+                                // On/off only light — degrade: brightness > 0 = on, brightness = 0 = off
+                                action = 'turn_onoff';
+                                payload = { on: brightnessVal > 0 };
+                                successStates = { on: brightnessVal > 0 };
+                            }
                         } else if (commandName === 'action.devices.commands.ColorAbsolute') {
                             const color = params?.color || {};
                             if (color.spectrumHSV || color.spectrumHsv) {
@@ -4932,9 +4950,9 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                                     brightness_255: Math.round((Number(hsv.value || 1)) * 255)
                                 };
                                 successStates = { color: { spectrumHsv: hsv } };
-                            } else if (color.temperatureK) {
+                            } else if (color.temperature || color.temperatureK) {
                                 action = 'set_color_temp';
-                                payload = { color_temp_kelvin: Number(color.temperatureK || 3000) };
+                                payload = { color_temp_kelvin: Number(color.temperature || color.temperatureK || 3000) };
                                 successStates = { color: { temperatureK: payload.color_temp_kelvin } };
                             } else {
                                 commandResults.push({
