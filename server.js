@@ -1572,6 +1572,7 @@ function parseGoogleEntityState(entity) {
             const percentage = Number(statePayload.percentage) || 0;
             const speedIndex = Math.max(1, Math.round(percentage / percentageStep));
             state.currentFanSpeedSetting = String(speedIndex);
+            state.currentFanSpeedPercent = Math.max(0, Math.min(100, Math.round(percentage)));
         } else if (hasFeature(8) && statePayload.preset_mode) {
             state.currentFanSpeedSetting = statePayload.preset_mode;
         } else {
@@ -1697,9 +1698,13 @@ function parseGoogleEntityState(entity) {
         };
         const hasBrightness = colorModes.length > 0 && !colorModes.every(m => m === 'onoff');
         if (hasBrightness) {
-            state.brightness = Number.isFinite(Number(statePayload.brightness))
+            const rawBrightness = Number.isFinite(Number(statePayload.brightness))
                 ? Math.max(0, Math.min(100, Math.round(Number(statePayload.brightness))))
                 : 0;
+            // A light that is ON cannot have 0% brightness — use 100 as fallback
+            // This prevents stale brightness=0 (from off state) from being reported
+            // when the light was just turned on but addon hasn't synced yet
+            state.brightness = (state.on && rawBrightness === 0) ? 100 : rawBrightness;
         }
         const hasColor = colorModes.some(m => ['hs', 'xy', 'rgb', 'rgbw', 'rgbww'].includes(m));
         const hasColorTemp = colorModes.includes('color_temp');
@@ -2270,6 +2275,21 @@ async function queueGoogleCommandForEntity(userId, deviceId, entityId, action, p
     if (!normalizedEntityId) {
         return null;
     }
+
+    // Supersede any pending commands for the same entity+action (slider deduplication)
+    // This prevents rapid slider adjustments from queueing multiple obsolete commands
+    await dbRun(
+        `
+            UPDATE google_home_command_queue
+            SET status = 'superseded',
+                updated_at = ?
+            WHERE device_id = ?
+              AND entity_id = ?
+              AND action = ?
+              AND status = 'pending'
+        `,
+        [nowIso, deviceId, normalizedEntityId, normalizedAction]
+    );
 
     const insertResult = await dbRun(
         `
@@ -4933,6 +4953,16 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                             action = 'set_on';
                             payload = { on: Boolean(params?.on) };
                             successStates = { on: payload.on };
+                            // For dimmable lights turning on, include brightness in successStates
+                            // to prevent Google from showing stale 0% brightness
+                            if (entity.entity_type === 'light' && payload.on) {
+                                const entityColorModes = Array.isArray(entityStatePayload.supported_color_modes) ? entityStatePayload.supported_color_modes : [];
+                                const hasBrightness = entityColorModes.length > 0 && !entityColorModes.every(m => m === 'onoff');
+                                if (hasBrightness) {
+                                    const storedBrightness = Number(entityStatePayload.brightness) || 0;
+                                    successStates.brightness = storedBrightness > 0 ? storedBrightness : 100;
+                                }
+                            }
                         } else if (commandName === 'action.devices.commands.BrightnessAbsolute') {
                             const brightnessVal = Math.max(0, Math.min(100, Number(params?.brightness || 0)));
                             const entityColorModes = Array.isArray(entityStatePayload.supported_color_modes) ? entityStatePayload.supported_color_modes : [];
@@ -4982,13 +5012,19 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                             } else if (hasSetSpeed && percentageStep > 0 && params?.fanSpeedPercent !== undefined) {
                                 action = 'set_fan_speed_percent';
                                 payload = { percentage: Math.max(0, Math.min(100, Math.round(Number(params.fanSpeedPercent)))) };
-                                successStates = { currentFanSpeedSetting: String(Math.round(payload.percentage / percentageStep)) };
+                                successStates = {
+                                    currentFanSpeedSetting: String(Math.max(1, Math.round(payload.percentage / percentageStep))),
+                                    currentFanSpeedPercent: payload.percentage
+                                };
                             } else if (hasSetSpeed && percentageStep > 0 && params?.fanSpeed) {
                                 const speedIndex = Number(params.fanSpeed) || 1;
                                 const pct = Math.round(speedIndex * percentageStep);
                                 action = 'set_fan_speed_percent';
                                 payload = { percentage: Math.max(0, Math.min(100, pct)) };
-                                successStates = { currentFanSpeedSetting: String(speedIndex) };
+                                successStates = {
+                                    currentFanSpeedSetting: String(speedIndex),
+                                    currentFanSpeedPercent: payload.percentage
+                                };
                             } else if (!hasSetSpeed && (sfEntity & 8) !== 0) {
                                 action = 'set_fan_preset';
                                 payload = { preset_mode: String(params?.fanSpeed || '') };
