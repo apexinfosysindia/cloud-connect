@@ -847,6 +847,13 @@ function mapGoogleDomainToEntityType(entityId, fallbackType = 'switch') {
     if (domain === 'binary_sensor') return 'binary_sensor';
     if (domain === 'sensor') return 'sensor';
     if (domain === 'camera') return 'camera';
+    if (domain === 'group') return 'group';
+    if (domain === 'input_button') return 'input_button';
+    if (domain === 'input_select') return 'input_select';
+    if (domain === 'select') return 'select';
+    if (domain === 'valve') return 'valve';
+    if (domain === 'lawn_mower') return 'lawn_mower';
+    if (domain === 'event') return 'event';
 
     return fallbackType;
 }
@@ -868,6 +875,10 @@ function resolveGoogleTraitsFromCapabilities(entityType, statePayload) {
         if (hasColor || hasColorTemp) {
             traits.push('action.devices.traits.ColorSetting');
         }
+        const effectList = Array.isArray(statePayload?.effect_list) ? statePayload.effect_list : [];
+        if (effectList.length > 0) {
+            traits.push('action.devices.traits.Modes');
+        }
         return { type: 'action.devices.types.LIGHT', traits };
     }
 
@@ -877,6 +888,10 @@ function resolveGoogleTraitsFromCapabilities(entityType, statePayload) {
         const hasPresetMode = hasFeature(8);
         if (hasSetSpeed || hasPresetMode || sf === 0) {
             traits.push('action.devices.traits.FanSpeed');
+        }
+        const presetModes = Array.isArray(statePayload?.preset_modes) ? statePayload.preset_modes : [];
+        if (hasPresetMode && presetModes.length > 0) {
+            traits.push('action.devices.traits.Modes');
         }
         return { type: 'action.devices.types.FAN', traits };
     }
@@ -888,7 +903,8 @@ function resolveGoogleTraitsFromCapabilities(entityType, statePayload) {
         else if (dc === 'gate') deviceType = 'action.devices.types.GATE';
         else if (dc === 'window') deviceType = 'action.devices.types.WINDOW';
         else if (dc === 'curtain') deviceType = 'action.devices.types.CURTAIN';
-        else if (dc === 'awning' || dc === 'shutter') deviceType = 'action.devices.types.BLINDS';
+        else if (dc === 'awning') deviceType = 'action.devices.types.AWNING';
+        else if (dc === 'shutter') deviceType = 'action.devices.types.SHUTTER';
 
         const traits = ['action.devices.traits.OpenClose'];
         const hasTilt = hasFeature(128);
@@ -906,9 +922,16 @@ function resolveGoogleTraitsFromCapabilities(entityType, statePayload) {
     }
 
     if (entityType === 'climate') {
+        const traits = ['action.devices.traits.TemperatureSetting'];
+        const hasFanMode = hasFeature(8);
+        const hasPresetMode = hasFeature(16);
+        const hasSwingMode = hasFeature(32);
+        if (hasFanMode || hasPresetMode || hasSwingMode) {
+            traits.push('action.devices.traits.Modes');
+        }
         return {
             type: 'action.devices.types.THERMOSTAT',
-            traits: ['action.devices.traits.TemperatureSetting']
+            traits
         };
     }
 
@@ -943,6 +966,11 @@ function resolveGoogleTraitsFromCapabilities(entityType, statePayload) {
         const sourceList = Array.isArray(statePayload?.source_list) ? statePayload.source_list : [];
         if (hasSelectSource && sourceList.length > 0) {
             traits.push('action.devices.traits.InputSelector');
+        }
+        const hasSelectSoundMode = hasFeature(65536);
+        const soundModeList = Array.isArray(statePayload?.sound_mode_list) ? statePayload.sound_mode_list : [];
+        if (hasSelectSoundMode && soundModeList.length > 0) {
+            traits.push('action.devices.traits.Modes');
         }
         if (traits.length === 0) {
             traits.push('action.devices.traits.OnOff');
@@ -1022,9 +1050,25 @@ function resolveGoogleTraitsFromCapabilities(entityType, statePayload) {
 
     if (entityType === 'binary_sensor') {
         if (dc === 'door' || dc === 'window' || dc === 'garage_door' || dc === 'opening') {
+            let bsType = 'action.devices.types.SENSOR';
+            if (dc === 'door') bsType = 'action.devices.types.DOOR';
+            else if (dc === 'window') bsType = 'action.devices.types.WINDOW';
+            else if (dc === 'garage_door') bsType = 'action.devices.types.GARAGE';
             return {
-                type: 'action.devices.types.SENSOR',
+                type: bsType,
                 traits: ['action.devices.traits.OpenClose']
+            };
+        }
+        if (dc === 'smoke') {
+            return {
+                type: 'action.devices.types.SMOKE_DETECTOR',
+                traits: ['action.devices.traits.SensorState']
+            };
+        }
+        if (dc === 'co' || dc === 'carbon_monoxide') {
+            return {
+                type: 'action.devices.types.CARBON_MONOXIDE_DETECTOR',
+                traits: ['action.devices.traits.SensorState']
             };
         }
         return {
@@ -1037,12 +1081,17 @@ function resolveGoogleTraitsFromCapabilities(entityType, statePayload) {
         const deviceType = dc === 'dehumidifier'
             ? 'action.devices.types.DEHUMIDIFIER'
             : 'action.devices.types.HUMIDIFIER';
+        const traits = [
+            'action.devices.traits.OnOff',
+            'action.devices.traits.HumiditySetting'
+        ];
+        const availableModes = Array.isArray(statePayload?.available_modes) ? statePayload.available_modes : [];
+        if (availableModes.length > 0) {
+            traits.push('action.devices.traits.Modes');
+        }
         return {
             type: deviceType,
-            traits: [
-                'action.devices.traits.OnOff',
-                'action.devices.traits.HumiditySetting'
-            ]
+            traits
         };
     }
 
@@ -1058,7 +1107,7 @@ function resolveGoogleTraitsFromCapabilities(entityType, statePayload) {
             type: 'action.devices.types.WATERHEATER',
             traits: [
                 'action.devices.traits.OnOff',
-                'action.devices.traits.TemperatureSetting'
+                'action.devices.traits.TemperatureControl'
             ]
         };
     }
@@ -1081,6 +1130,56 @@ function resolveGoogleTraitsFromCapabilities(entityType, statePayload) {
         return {
             type: 'action.devices.types.CAMERA',
             traits: ['action.devices.traits.CameraStream']
+        };
+    }
+
+    if (entityType === 'switch') {
+        const deviceType = dc === 'outlet' ? 'action.devices.types.OUTLET' : 'action.devices.types.SWITCH';
+        return { type: deviceType, traits: ['action.devices.traits.OnOff'] };
+    }
+
+    if (entityType === 'group') {
+        return {
+            type: 'action.devices.types.SWITCH',
+            traits: ['action.devices.traits.OnOff']
+        };
+    }
+
+    if (entityType === 'input_button') {
+        return {
+            type: 'action.devices.types.SCENE',
+            traits: ['action.devices.traits.Scene']
+        };
+    }
+
+    if (entityType === 'select' || entityType === 'input_select') {
+        return {
+            type: 'action.devices.types.SENSOR',
+            traits: ['action.devices.traits.Modes']
+        };
+    }
+
+    if (entityType === 'valve') {
+        const hasSetPosition = hasFeature(4);
+        const traits = ['action.devices.traits.OpenClose'];
+        return { type: 'action.devices.types.VALVE', traits };
+    }
+
+    if (entityType === 'lawn_mower') {
+        const traits = ['action.devices.traits.StartStop'];
+        return { type: 'action.devices.types.MOWER', traits };
+    }
+
+    if (entityType === 'event') {
+        if (dc === 'doorbell') {
+            return {
+                type: 'action.devices.types.DOORBELL',
+                traits: ['action.devices.traits.ObjectDetection']
+            };
+        }
+        return {
+            type: 'action.devices.types.SENSOR',
+            traits: ['action.devices.traits.SensorState']
         };
     }
 
@@ -1130,6 +1229,10 @@ function supportsGoogleCommandForEntityType(entityType, commandName, statePayloa
             if (hasColor || hasColorTemp) {
                 cmds.add('action.devices.commands.ColorAbsolute');
             }
+            const effectList = Array.isArray(sp.effect_list) ? sp.effect_list : [];
+            if (effectList.length > 0) {
+                cmds.add('action.devices.commands.SetModes');
+            }
             return cmds;
         },
         switch: () => new Set(['action.devices.commands.OnOff']),
@@ -1139,6 +1242,13 @@ function supportsGoogleCommandForEntityType(entityType, commandName, statePayloa
             const hasPresetMode = hasFeature(8);
             if (hasSetSpeed || hasPresetMode || sf === 0) {
                 cmds.add('action.devices.commands.SetFanSpeed');
+                if (hasSetSpeed) {
+                    cmds.add('action.devices.commands.SetFanSpeedRelative');
+                }
+            }
+            const presetModes = Array.isArray(sp.preset_modes) ? sp.preset_modes : [];
+            if (hasPresetMode && presetModes.length > 0) {
+                cmds.add('action.devices.commands.SetModes');
             }
             return cmds;
         },
@@ -1147,14 +1257,23 @@ function supportsGoogleCommandForEntityType(entityType, commandName, statePayloa
             if (hasFeature(128)) {
                 cmds.add('action.devices.commands.RotateAbsolute');
             }
+            if (hasFeature(4)) {
+                cmds.add('action.devices.commands.OpenCloseRelative');
+            }
             return cmds;
         },
         lock: () => new Set(['action.devices.commands.LockUnlock']),
-        climate: () => new Set([
-            'action.devices.commands.ThermostatSetMode',
-            'action.devices.commands.ThermostatTemperatureSetpoint',
-            'action.devices.commands.ThermostatTemperatureSetRange'
-        ]),
+        climate: () => {
+            const cmds = new Set([
+                'action.devices.commands.ThermostatSetMode',
+                'action.devices.commands.ThermostatTemperatureSetpoint',
+                'action.devices.commands.ThermostatTemperatureSetRange'
+            ]);
+            if (hasFeature(8) || hasFeature(16) || hasFeature(32)) {
+                cmds.add('action.devices.commands.SetModes');
+            }
+            return cmds;
+        },
         media_player: () => {
             const cmds = new Set();
             if (hasFeature(128) || hasFeature(256) || sf === 0) {
@@ -1162,6 +1281,7 @@ function supportsGoogleCommandForEntityType(entityType, commandName, statePayloa
             }
             if (hasFeature(4) || hasFeature(1024) || sf === 0) {
                 cmds.add('action.devices.commands.setVolume');
+                cmds.add('action.devices.commands.volumeRelative');
             }
             if (hasFeature(8) || sf === 0) {
                 cmds.add('action.devices.commands.mute');
@@ -1181,6 +1301,10 @@ function supportsGoogleCommandForEntityType(entityType, commandName, statePayloa
             }
             if (hasFeature(2048)) {
                 cmds.add('action.devices.commands.SetInput');
+            }
+            const soundModeList = Array.isArray(sp.sound_mode_list) ? sp.sound_mode_list : [];
+            if (hasFeature(65536) && soundModeList.length > 0) {
+                cmds.add('action.devices.commands.SetModes');
             }
             return cmds;
         },
@@ -1226,12 +1350,30 @@ function supportsGoogleCommandForEntityType(entityType, commandName, statePayloa
         ]),
         water_heater: () => new Set([
             'action.devices.commands.OnOff',
-            'action.devices.commands.ThermostatSetMode',
-            'action.devices.commands.ThermostatTemperatureSetpoint'
+            'action.devices.commands.SetTemperature'
         ]),
         camera: () => new Set([
             'action.devices.commands.GetCameraStream'
-        ])
+        ]),
+        group: () => new Set(['action.devices.commands.OnOff']),
+        input_button: () => new Set(['action.devices.commands.ActivateScene']),
+        select: () => new Set(['action.devices.commands.SetModes']),
+        input_select: () => new Set(['action.devices.commands.SetModes']),
+        valve: () => {
+            const cmds = new Set(['action.devices.commands.OpenClose']);
+            if (hasFeature(4)) {
+                cmds.add('action.devices.commands.OpenCloseRelative');
+            }
+            return cmds;
+        },
+        lawn_mower: () => {
+            const cmds = new Set([
+                'action.devices.commands.StartStop',
+                'action.devices.commands.PauseUnpause'
+            ]);
+            return cmds;
+        },
+        event: () => new Set()
     };
 
     const resolver = allowed[normalizeGoogleEntityType(entityType)];
@@ -1266,6 +1408,22 @@ function buildGoogleDeviceAttributes(entityType, statePayload, traits) {
                 };
             }
             attrs.commandOnlyColorSetting = false;
+        }
+        if (hasTrait('Modes')) {
+            const effectList = Array.isArray(statePayload?.effect_list) ? statePayload.effect_list : [];
+            if (effectList.length > 0) {
+                attrs.availableModes = [{
+                    name: 'effect',
+                    name_values: [{ name_synonym: ['effect', 'light effect'], lang: 'en' }],
+                    settings: effectList.map(e => ({
+                        setting_name: e,
+                        setting_values: [{ setting_synonym: [e], lang: 'en' }]
+                    })),
+                    ordered: false
+                }];
+                attrs.commandOnlyModes = false;
+                attrs.queryOnlyModes = false;
+            }
         }
         return attrs;
     }
@@ -1314,6 +1472,22 @@ function buildGoogleDeviceAttributes(entityType, statePayload, traits) {
             attrs.reversible = false;
             attrs.commandOnlyFanSpeed = false;
         }
+        if (hasTrait('Modes')) {
+            const presetModes = Array.isArray(statePayload?.preset_modes) ? statePayload.preset_modes : [];
+            if (presetModes.length > 0) {
+                attrs.availableModes = [{
+                    name: 'preset_mode',
+                    name_values: [{ name_synonym: ['preset', 'preset mode'], lang: 'en' }],
+                    settings: presetModes.map(m => ({
+                        setting_name: m,
+                        setting_values: [{ setting_synonym: [m], lang: 'en' }]
+                    })),
+                    ordered: false
+                }];
+                attrs.commandOnlyModes = false;
+                attrs.queryOnlyModes = false;
+            }
+        }
         return attrs;
     }
 
@@ -1343,6 +1517,59 @@ function buildGoogleDeviceAttributes(entityType, statePayload, traits) {
         const hvacModes = Array.isArray(statePayload?.hvac_modes) ? statePayload.hvac_modes : [];
         if (hvacModes.some(m => m === 'heat_cool' || m === 'auto')) {
             attrs.bufferRangeCelsius = 2;
+        }
+        if (hasTrait('Modes')) {
+            const climateModes = [];
+            const hasFanMode = hasFeature(8);
+            const hasPresetMode = hasFeature(16);
+            const hasSwingMode = hasFeature(32);
+            if (hasFanMode) {
+                const fanModes = Array.isArray(statePayload?.fan_modes) ? statePayload.fan_modes : [];
+                if (fanModes.length > 0) {
+                    climateModes.push({
+                        name: 'fan_mode',
+                        name_values: [{ name_synonym: ['fan mode', 'fan speed', 'fan'], lang: 'en' }],
+                        settings: fanModes.map(m => ({
+                            setting_name: m,
+                            setting_values: [{ setting_synonym: [m], lang: 'en' }]
+                        })),
+                        ordered: false
+                    });
+                }
+            }
+            if (hasPresetMode) {
+                const presetModes = Array.isArray(statePayload?.preset_modes) ? statePayload.preset_modes : [];
+                if (presetModes.length > 0) {
+                    climateModes.push({
+                        name: 'preset_mode',
+                        name_values: [{ name_synonym: ['preset', 'preset mode'], lang: 'en' }],
+                        settings: presetModes.map(m => ({
+                            setting_name: m,
+                            setting_values: [{ setting_synonym: [m], lang: 'en' }]
+                        })),
+                        ordered: false
+                    });
+                }
+            }
+            if (hasSwingMode) {
+                const swingModes = Array.isArray(statePayload?.swing_modes) ? statePayload.swing_modes : [];
+                if (swingModes.length > 0) {
+                    climateModes.push({
+                        name: 'swing_mode',
+                        name_values: [{ name_synonym: ['swing mode', 'swing', 'vane'], lang: 'en' }],
+                        settings: swingModes.map(m => ({
+                            setting_name: m,
+                            setting_values: [{ setting_synonym: [m], lang: 'en' }]
+                        })),
+                        ordered: false
+                    });
+                }
+            }
+            if (climateModes.length > 0) {
+                attrs.availableModes = climateModes;
+                attrs.commandOnlyModes = false;
+                attrs.queryOnlyModes = false;
+            }
         }
         return attrs;
     }
@@ -1379,10 +1606,26 @@ function buildGoogleDeviceAttributes(entityType, statePayload, traits) {
             attrs.commandOnlyInputSelector = false;
             attrs.orderedInputs = false;
         }
+        if (hasTrait('Modes')) {
+            const soundModeList = Array.isArray(statePayload?.sound_mode_list) ? statePayload.sound_mode_list : [];
+            if (soundModeList.length > 0) {
+                attrs.availableModes = [{
+                    name: 'sound_mode',
+                    name_values: [{ name_synonym: ['sound mode', 'sound', 'audio mode'], lang: 'en' }],
+                    settings: soundModeList.map(m => ({
+                        setting_name: m,
+                        setting_values: [{ setting_synonym: [m], lang: 'en' }]
+                    })),
+                    ordered: false
+                }];
+                attrs.commandOnlyModes = false;
+                attrs.queryOnlyModes = false;
+            }
+        }
         return attrs;
     }
 
-    if (entityType === 'scene' || entityType === 'button' || entityType === 'script') {
+    if (entityType === 'scene' || entityType === 'button' || entityType === 'script' || entityType === 'input_button') {
         attrs.sceneReversible = false;
         return attrs;
     }
@@ -1529,6 +1772,22 @@ function buildGoogleDeviceAttributes(entityType, statePayload, traits) {
         };
         attrs.commandOnlyHumiditySetting = false;
         attrs.queryOnlyHumiditySetting = false;
+        if (hasTrait('Modes')) {
+            const availableModes = Array.isArray(statePayload?.available_modes) ? statePayload.available_modes : [];
+            if (availableModes.length > 0) {
+                attrs.availableModes = [{
+                    name: 'mode',
+                    name_values: [{ name_synonym: ['mode'], lang: 'en' }],
+                    settings: availableModes.map(m => ({
+                        setting_name: m,
+                        setting_values: [{ setting_synonym: [m], lang: 'en' }]
+                    })),
+                    ordered: false
+                }];
+                attrs.commandOnlyModes = false;
+                attrs.queryOnlyModes = false;
+            }
+        }
         return attrs;
     }
 
@@ -1547,20 +1806,57 @@ function buildGoogleDeviceAttributes(entityType, statePayload, traits) {
     }
 
     if (entityType === 'water_heater') {
-        const operationList = Array.isArray(statePayload?.operation_list) ? statePayload.operation_list : [];
-        const modes = operationList.length > 0
-            ? operationList.map(m => normalizeGoogleThermostatMode(m)).filter(Boolean)
-            : ['off', 'heat'];
-        attrs.availableThermostatModes = modes.join(',');
         const unit = statePayload?.temperature_unit || 'C';
-        attrs.thermostatTemperatureUnit = unit === 'F' ? 'F' : 'C';
+        attrs.temperatureUnitForUX = unit === 'F' ? 'F' : 'C';
         const minTemp = Number(statePayload?.min_temp);
         const maxTemp = Number(statePayload?.max_temp);
         if (Number.isFinite(minTemp) && Number.isFinite(maxTemp)) {
-            attrs.thermostatTemperatureRange = {
-                minThresholdCelsius: unit === 'F' ? Math.round((minTemp - 32) * 5 / 9) : minTemp,
-                maxThresholdCelsius: unit === 'F' ? Math.round((maxTemp - 32) * 5 / 9) : maxTemp
+            const minC = unit === 'F' ? Math.round((minTemp - 32) * 5 / 9) : minTemp;
+            const maxC = unit === 'F' ? Math.round((maxTemp - 32) * 5 / 9) : maxTemp;
+            attrs.temperatureRange = {
+                minThresholdCelsius: minC,
+                maxThresholdCelsius: maxC
             };
+        }
+        attrs.commandOnlyTemperatureControl = false;
+        attrs.queryOnlyTemperatureControl = false;
+        return attrs;
+    }
+
+    if (entityType === 'select' || entityType === 'input_select') {
+        const options = Array.isArray(statePayload?.options) ? statePayload.options : [];
+        if (options.length > 0) {
+            attrs.availableModes = [{
+                name: 'option',
+                name_values: [{ name_synonym: ['option'], lang: 'en' }],
+                settings: options.map(opt => ({
+                    setting_name: opt,
+                    setting_values: [{ setting_synonym: [opt], lang: 'en' }]
+                })),
+                ordered: false
+            }];
+        }
+        attrs.queryOnlyModes = false;
+        attrs.commandOnlyModes = false;
+        return attrs;
+    }
+
+    if (entityType === 'valve') {
+        const hasSetPosition = hasFeature(4);
+        attrs.discreteOnlyOpenClose = !hasSetPosition;
+        attrs.queryOnlyOpenClose = false;
+        return attrs;
+    }
+
+    if (entityType === 'lawn_mower') {
+        const hasPause = hasFeature(2);
+        attrs.pausable = hasPause;
+        return attrs;
+    }
+
+    if (entityType === 'event') {
+        if (dc === 'doorbell') {
+            attrs.queryOnlyObjectDetection = true;
         }
         return attrs;
     }
@@ -1618,9 +1914,10 @@ function buildGoogleDeviceObject(entity, userSecurityPin) {
             device_id: entity.device_id
         },
         deviceInfo: {
-            manufacturer: 'Apex Infosys',
-            model: entity.entity_type || 'generic',
-            hwVersion: entity.addon_version || 'apex-cloud-link'
+            manufacturer: statePayload._manufacturer || 'Apex Infosys',
+            model: statePayload._model || entity.entity_type || 'generic',
+            hwVersion: entity.addon_version || 'apex-cloud-link',
+            ...(statePayload._sw_version ? { swVersion: statePayload._sw_version } : {})
         },
         attributes
     };
@@ -1661,6 +1958,10 @@ function parseGoogleEntityState(entity) {
         } else {
             const speed = Number(statePayload.speed || 0);
             state.currentFanSpeedSetting = String(Math.max(1, Math.min(3, Math.round(speed || 1))));
+        }
+        const presetModes = Array.isArray(statePayload.preset_modes) ? statePayload.preset_modes : [];
+        if (hasFeature(8) && presetModes.length > 0 && statePayload.preset_mode) {
+            state.currentModeSettings = { preset_mode: statePayload.preset_mode };
         }
         return state;
     }
@@ -1710,6 +2011,20 @@ function parseGoogleEntityState(entity) {
             }
         }
 
+        const modeSettings = {};
+        if (statePayload.fan_mode) {
+            modeSettings.fan_mode = statePayload.fan_mode;
+        }
+        if (statePayload.preset_mode) {
+            modeSettings.preset_mode = statePayload.preset_mode;
+        }
+        if (statePayload.swing_mode) {
+            modeSettings.swing_mode = statePayload.swing_mode;
+        }
+        if (Object.keys(modeSettings).length > 0) {
+            state.currentModeSettings = modeSettings;
+        }
+
         return state;
     }
 
@@ -1735,10 +2050,13 @@ function parseGoogleEntityState(entity) {
         if (hasFeature(2048) && statePayload.source) {
             state.currentInput = statePayload.source.toLowerCase().replace(/[^a-z0-9_]/g, '_');
         }
+        if (hasFeature(65536) && statePayload.sound_mode) {
+            state.currentModeSettings = { sound_mode: statePayload.sound_mode };
+        }
         return state;
     }
 
-    if (entity.entity_type === 'scene' || entity.entity_type === 'button' || entity.entity_type === 'script') {
+    if (entity.entity_type === 'scene' || entity.entity_type === 'button' || entity.entity_type === 'script' || entity.entity_type === 'input_button') {
         return {
             online: entity.online !== 0
         };
@@ -1808,6 +2126,9 @@ function parseGoogleEntityState(entity) {
             } else if (hasColorTemp && statePayload.color_temp_kelvin) {
                 state.color = { temperatureK: Number(statePayload.color_temp_kelvin) || 3000 };
             }
+        }
+        if (statePayload.effect) {
+            state.currentModeSettings = { effect: statePayload.effect };
         }
         return state;
     }
@@ -1897,6 +2218,9 @@ function parseGoogleEntityState(entity) {
         if (statePayload.current_humidity != null) {
             state.humidityAmbientPercent = Math.max(0, Math.min(100, Math.round(Number(statePayload.current_humidity) || 0)));
         }
+        if (statePayload.mode) {
+            state.currentModeSettings = { mode: statePayload.mode };
+        }
         return state;
     }
 
@@ -1927,13 +2251,59 @@ function parseGoogleEntityState(entity) {
     if (entity.entity_type === 'water_heater') {
         const ambient = statePayload.current_temperature != null ? Number(statePayload.current_temperature) : null;
         const target = statePayload.target_temperature != null ? Number(statePayload.target_temperature) : null;
-        const mode = statePayload.operation_mode || 'off';
-        return {
+        const state = {
             online: entity.online !== 0,
             on: Boolean(statePayload.on),
-            thermostatMode: normalizeGoogleThermostatMode(mode),
-            thermostatTemperatureAmbient: Number.isFinite(ambient) ? ambient : 0,
-            thermostatTemperatureSetpoint: Number.isFinite(target) ? target : (Number.isFinite(ambient) ? ambient : 50)
+            temperatureSetpointCelsius: Number.isFinite(target) ? target : (Number.isFinite(ambient) ? ambient : 50)
+        };
+        if (Number.isFinite(ambient)) {
+            state.temperatureAmbientCelsius = ambient;
+        }
+        return state;
+    }
+
+    if (entity.entity_type === 'group') {
+        return {
+            online: entity.online !== 0,
+            on: Boolean(statePayload.on)
+        };
+    }
+
+    if (entity.entity_type === 'input_button') {
+        return {
+            online: entity.online !== 0
+        };
+    }
+
+    if (entity.entity_type === 'select' || entity.entity_type === 'input_select') {
+        const state = {
+            online: entity.online !== 0
+        };
+        if (statePayload.current_option) {
+            state.currentModeSettings = { option: statePayload.current_option };
+        }
+        return state;
+    }
+
+    if (entity.entity_type === 'valve') {
+        const openPercent = Number(statePayload.openPercent || 0);
+        return {
+            online: entity.online !== 0,
+            openPercent: Math.max(0, Math.min(100, Math.round(openPercent)))
+        };
+    }
+
+    if (entity.entity_type === 'lawn_mower') {
+        return {
+            online: entity.online !== 0,
+            isRunning: Boolean(statePayload.isRunning),
+            isPaused: Boolean(statePayload.isPaused)
+        };
+    }
+
+    if (entity.entity_type === 'event') {
+        return {
+            online: entity.online !== 0
         };
     }
 
@@ -2029,7 +2399,12 @@ async function upsertGoogleEntityFromDevice(userId, deviceId, payload) {
     const entityType = mapGoogleDomainToEntityType(entityId, normalizeGoogleEntityType(payload?.entity_type));
     const roomHint = sanitizeString(payload?.room_hint, 120);
     const online = payload?.online === false ? 0 : 1;
-    const stateJson = JSON.stringify(payload?.state || {}).slice(0, 8000);
+    const stateObj = payload?.state || {};
+    // Merge device registry info into state for storage
+    if (payload?.manufacturer) stateObj._manufacturer = String(payload.manufacturer).slice(0, 120);
+    if (payload?.model) stateObj._model = String(payload.model).slice(0, 120);
+    if (payload?.sw_version) stateObj._sw_version = String(payload.sw_version).slice(0, 60);
+    const stateJson = JSON.stringify(stateObj).slice(0, 8000);
     const entityState = parseGoogleEntityState({
         entity_type: entityType,
         online,
@@ -5233,11 +5608,48 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                                 payload = { speed: String(params?.fanSpeed || '1') };
                                 successStates = { currentFanSpeedSetting: payload.speed };
                             }
+                        } else if (commandName === 'action.devices.commands.SetFanSpeedRelative') {
+                            const sfEntity = Number(entityStatePayload.supported_features) || 0;
+                            const hasSetSpeed = (sfEntity & 1) !== 0;
+                            const percentageStep = Number(entityStatePayload.percentage_step) || 0;
+                            if (hasSetSpeed && percentageStep > 0) {
+                                const currentPct = Number(entityStatePayload.percentage) || 0;
+                                const relWeight = Number(params?.fanSpeedRelativeWeight ?? 0);
+                                const relPercent = Number(params?.fanSpeedRelativePercent ?? 0);
+                                let newPct;
+                                if (relPercent !== 0) {
+                                    newPct = currentPct + relPercent;
+                                } else {
+                                    newPct = currentPct + (relWeight * percentageStep);
+                                }
+                                newPct = Math.max(0, Math.min(100, Math.round(newPct)));
+                                action = 'set_fan_speed_percent';
+                                payload = { percentage: newPct };
+                                successStates = {
+                                    currentFanSpeedSetting: String(Math.max(1, Math.round(newPct / percentageStep))),
+                                    currentFanSpeedPercent: newPct
+                                };
+                            } else {
+                                commandResults.push({
+                                    ids: [entityId],
+                                    status: 'ERROR',
+                                    errorCode: 'notSupported'
+                                });
+                                continue;
+                            }
                         } else if (commandName === 'action.devices.commands.OpenClose') {
                             const openPercent = Math.max(0, Math.min(100, Number(params?.openPercent ?? 0)));
                             const sfEntity = Number(entityStatePayload.supported_features) || 0;
                             const hasSetPosition = (sfEntity & 4) !== 0;
-                            if (hasSetPosition || sfEntity === 0) {
+                            if (entity.entity_type === 'valve') {
+                                if (hasSetPosition) {
+                                    action = 'set_valve_position';
+                                    payload = { openPercent };
+                                } else {
+                                    action = 'set_valve_open_close';
+                                    payload = { open: openPercent > 0 };
+                                }
+                            } else if (hasSetPosition || sfEntity === 0) {
                                 action = 'set_open_percent';
                                 payload = { openPercent };
                             } else {
@@ -5245,6 +5657,18 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                                 payload = { open: openPercent > 0 };
                             }
                             successStates = { openPercent };
+                        } else if (commandName === 'action.devices.commands.OpenCloseRelative') {
+                            const relPercent = Number(params?.openRelativePercent ?? 0);
+                            const currentOpen = Number(entityStatePayload.openPercent ?? 50);
+                            const newOpen = Math.max(0, Math.min(100, Math.round(currentOpen + relPercent)));
+                            if (entity.entity_type === 'valve') {
+                                action = 'set_valve_position';
+                                payload = { openPercent: newOpen };
+                            } else {
+                                action = 'set_open_percent';
+                                payload = { openPercent: newOpen };
+                            }
+                            successStates = { openPercent: newOpen };
                         } else if (commandName === 'action.devices.commands.RotateAbsolute') {
                             action = 'set_tilt';
                             const tilt = Math.max(0, Math.min(100, Number(params?.rotationPercent ?? 0)));
@@ -5256,23 +5680,13 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                             successStates = { isLocked: payload.lock };
                         } else if (commandName === 'action.devices.commands.ThermostatSetMode') {
                             const mode = normalizeGoogleThermostatMode(params?.thermostatMode);
-                            if (entity.entity_type === 'water_heater') {
-                                action = 'set_water_heater_mode';
-                                payload = { mode };
-                            } else {
-                                action = 'set_thermostat_mode';
-                                payload = { mode };
-                            }
+                            action = 'set_thermostat_mode';
+                            payload = { mode };
                             successStates = { thermostatMode: mode };
                         } else if (commandName === 'action.devices.commands.ThermostatTemperatureSetpoint') {
                             const setpoint = Number(params?.thermostatTemperatureSetpoint || 22);
-                            if (entity.entity_type === 'water_heater') {
-                                action = 'set_water_heater_temperature';
-                                payload = { temperature: setpoint };
-                            } else {
-                                action = 'set_thermostat_setpoint';
-                                payload = { setpoint };
-                            }
+                            action = 'set_thermostat_setpoint';
+                            payload = { setpoint };
                             successStates = { thermostatTemperatureSetpoint: setpoint };
                         } else if (commandName === 'action.devices.commands.ThermostatTemperatureSetRange') {
                             action = 'set_thermostat_setpoint_range';
@@ -5284,6 +5698,11 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                                 thermostatTemperatureSetpointLow: payload.heat_setpoint,
                                 thermostatTemperatureSetpointHigh: payload.cool_setpoint
                             };
+                        } else if (commandName === 'action.devices.commands.SetTemperature') {
+                            const tempSetpoint = Number(params?.temperature || 50);
+                            action = 'set_water_heater_temperature';
+                            payload = { temperature: tempSetpoint };
+                            successStates = { temperatureSetpointCelsius: tempSetpoint };
                         } else if (commandName === 'action.devices.commands.setVolume') {
                             action = 'set_volume';
                             payload = {
@@ -5294,6 +5713,14 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                             }
                             successStates = { currentVolume: payload.volume };
                             if (payload.muted !== undefined) successStates.isMuted = payload.muted;
+                        } else if (commandName === 'action.devices.commands.volumeRelative') {
+                            const relSteps = Number(params?.relativeSteps ?? 0);
+                            const currentVol = Number(entityStatePayload.volume || 0);
+                            const stepSize = Number(entityStatePayload.volume_step) || 5;
+                            const newVol = Math.max(0, Math.min(100, Math.round(currentVol + (relSteps * stepSize))));
+                            action = 'set_volume';
+                            payload = { volume: newVol };
+                            successStates = { currentVolume: newVol };
                         } else if (commandName === 'action.devices.commands.mute') {
                             action = 'set_mute';
                             payload = { muted: Boolean(params?.mute) };
@@ -5356,13 +5783,36 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                             payload = { deactivate: Boolean(params?.deactivate) };
                             successStates = {};
                         } else if (commandName === 'action.devices.commands.StartStop') {
-                            action = 'set_start_stop';
-                            payload = { start: Boolean(params?.start) };
-                            successStates = { isRunning: payload.start };
+                            if (entity.entity_type === 'lawn_mower') {
+                                if (Boolean(params?.start)) {
+                                    action = 'lawn_mower_start';
+                                    payload = {};
+                                } else {
+                                    const sfEntity = Number(entityStatePayload.supported_features) || 0;
+                                    const hasDock = (sfEntity & 4) !== 0;
+                                    action = hasDock ? 'lawn_mower_dock' : 'lawn_mower_pause';
+                                    payload = {};
+                                }
+                            } else {
+                                action = 'set_start_stop';
+                                payload = { start: Boolean(params?.start) };
+                            }
+                            successStates = { isRunning: Boolean(params?.start) };
                         } else if (commandName === 'action.devices.commands.PauseUnpause') {
-                            action = 'set_pause';
-                            payload = { pause: Boolean(params?.pause) };
-                            successStates = { isPaused: payload.pause };
+                            if (entity.entity_type === 'lawn_mower') {
+                                if (Boolean(params?.pause)) {
+                                    action = 'lawn_mower_pause';
+                                    payload = {};
+                                } else {
+                                    action = 'lawn_mower_start';
+                                    payload = {};
+                                }
+                                successStates = { isPaused: Boolean(params?.pause) };
+                            } else {
+                                action = 'set_pause';
+                                payload = { pause: Boolean(params?.pause) };
+                                successStates = { isPaused: Boolean(params?.pause) };
+                            }
                         } else if (commandName === 'action.devices.commands.Dock') {
                             action = 'dock';
                             payload = {};
@@ -5376,13 +5826,55 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                             payload = { humidity: Math.max(0, Math.min(100, Number(params?.humiditySetpointPercent || 50))) };
                             successStates = { humiditySetpointPercent: payload.humidity };
                         } else if (commandName === 'action.devices.commands.SetModes') {
+                            const updateModeSettings = params?.updateModeSettings || {};
                             if (entity.entity_type === 'humidifier') {
-                                const updateModeSettings = params?.updateModeSettings || {};
                                 const modeName = Object.keys(updateModeSettings)[0] || '';
                                 const modeValue = updateModeSettings[modeName] || '';
                                 action = 'set_humidifier_mode';
                                 payload = { mode: modeValue };
-                                successStates = {};
+                                successStates = { currentModeSettings: { mode: modeValue } };
+                            } else if (entity.entity_type === 'select' || entity.entity_type === 'input_select') {
+                                const selectedOption = updateModeSettings.option || '';
+                                action = 'set_select_option';
+                                payload = { option: selectedOption };
+                                successStates = { currentModeSettings: { option: selectedOption } };
+                            } else if (entity.entity_type === 'climate') {
+                                // Climate supports fan_mode, preset_mode, swing_mode
+                                const modeName = Object.keys(updateModeSettings)[0] || '';
+                                const modeValue = updateModeSettings[modeName] || '';
+                                if (modeName === 'fan_mode') {
+                                    action = 'set_climate_fan_mode';
+                                    payload = { fan_mode: modeValue };
+                                } else if (modeName === 'preset_mode') {
+                                    action = 'set_climate_preset_mode';
+                                    payload = { preset_mode: modeValue };
+                                } else if (modeName === 'swing_mode') {
+                                    action = 'set_climate_swing_mode';
+                                    payload = { swing_mode: modeValue };
+                                } else {
+                                    commandResults.push({
+                                        ids: [entityId],
+                                        status: 'ERROR',
+                                        errorCode: 'notSupported'
+                                    });
+                                    continue;
+                                }
+                                successStates = { currentModeSettings: { [modeName]: modeValue } };
+                            } else if (entity.entity_type === 'media_player') {
+                                const modeValue = updateModeSettings.sound_mode || '';
+                                action = 'set_sound_mode';
+                                payload = { sound_mode: modeValue };
+                                successStates = { currentModeSettings: { sound_mode: modeValue } };
+                            } else if (entity.entity_type === 'light') {
+                                const effectValue = updateModeSettings.effect || '';
+                                action = 'set_light_effect';
+                                payload = { effect: effectValue };
+                                successStates = { currentModeSettings: { effect: effectValue } };
+                            } else if (entity.entity_type === 'fan') {
+                                const presetValue = updateModeSettings.preset_mode || '';
+                                action = 'set_fan_preset';
+                                payload = { preset_mode: presetValue };
+                                successStates = { currentModeSettings: { preset_mode: presetValue } };
                             } else {
                                 commandResults.push({
                                     ids: [entityId],
