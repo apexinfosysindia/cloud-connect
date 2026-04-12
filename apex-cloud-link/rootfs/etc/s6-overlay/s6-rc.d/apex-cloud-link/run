@@ -175,23 +175,60 @@ sync_google_entities() {
 
     GOOGLE_WARNED_STATE_FETCH=0
 
-    # Fetch entity registry and device registry for real manufacturer/model/sw_version
-    local entity_registry_json device_registry_json device_info_map='{}' 
-    entity_registry_json=$(ha_api_get "/config/entity_registry" 2>/dev/null) || entity_registry_json=''
-    device_registry_json=$(ha_api_get "/config/device_registry" 2>/dev/null) || device_registry_json=''
+    # Fetch entity + device registries via WebSocket API for real manufacturer/model/sw_version
+    # (REST endpoints /api/config/entity_registry and /api/config/device_registry do not exist;
+    #  these are WebSocket-only APIs: config/entity_registry/list, config/device_registry/list)
+    local device_info_map='{}'
+    if [ -n "${SUPERVISOR_TOKEN:-}" ]; then
+        device_info_map=$(python3 -c "
+import json, os, sys
+try:
+    from websocket import create_connection
+    token = os.environ.get('SUPERVISOR_TOKEN', '')
+    ws = create_connection('ws://supervisor/core/websocket', timeout=8)
+    msg = json.loads(ws.recv())
+    if msg.get('type') == 'auth_required':
+        ws.send(json.dumps({'type': 'auth', 'access_token': token}))
+    msg = json.loads(ws.recv())
+    if msg.get('type') != 'auth_ok':
+        ws.close()
+        print('{}')
+        sys.exit(0)
+    # Fetch entity registry
+    ws.send(json.dumps({'id': 1, 'type': 'config/entity_registry/list'}))
+    ent_resp = json.loads(ws.recv())
+    # Fetch device registry
+    ws.send(json.dumps({'id': 2, 'type': 'config/device_registry/list'}))
+    dev_resp = json.loads(ws.recv())
+    ws.close()
+    entities = ent_resp.get('result', []) if ent_resp.get('success') else []
+    devices = dev_resp.get('result', []) if dev_resp.get('success') else []
+    # Build device_id -> {manufacturer, model, sw_version} lookup
+    dev_map = {}
+    for d in devices:
+        did = d.get('id', '')
+        if did:
+            dev_map[did] = {
+                'manufacturer': d.get('manufacturer') or None,
+                'model': d.get('model') or None,
+                'sw_version': d.get('sw_version') or None
+            }
+    # Build entity_id -> device info map
+    result = {}
+    for e in entities:
+        eid = e.get('entity_id', '')
+        did = e.get('device_id', '')
+        if eid and did and did in dev_map:
+            result[eid] = dev_map[did]
+    print(json.dumps(result))
+except Exception:
+    print('{}')
+" 2>/dev/null) || device_info_map='{}'
+    fi
 
-    if [ -n "$entity_registry_json" ] && [ -n "$device_registry_json" ]; then
-        # Build a map: entity_id -> {manufacturer, model, sw_version}
-        device_info_map=$(printf '%s\n%s' "$entity_registry_json" "$device_registry_json" | jq -sc '
-            (.[0] // []) as $entities
-            | (.[1] // []) as $devices
-            | ($devices | map({(.id // ""): {manufacturer: (.manufacturer // null), model: (.model // null), sw_version: (.sw_version // null)}}) | add // {}) as $dev_map
-            | reduce ($entities[] // empty) as $e ({}; 
-                if ($e.device_id // "") != "" and ($dev_map[$e.device_id] // null) != null then
-                    . + {($e.entity_id): $dev_map[$e.device_id]}
-                else . end
-            )
-        ' 2>/dev/null) || device_info_map='{}'
+    # Safety: ensure device_info_map is valid JSON object, never empty/malformed
+    if ! printf '%s' "$device_info_map" | jq -e 'type == "object"' >/dev/null 2>&1; then
+        device_info_map='{}'
     fi
 
     local entities_json='[]'
@@ -211,7 +248,6 @@ sync_google_entities() {
                 elif (.entity_id | startswith("event."))
                 then (
                     ((.attributes.device_class // "") | tostring) | test("^(doorbell)$")
-                )
                 )
                 else true
                 end
@@ -439,7 +475,7 @@ sync_google_entities() {
                     sw_version: (($devinfo[$s.entity_id].sw_version // null) | if . == "" then null else . end)
                 }
             )
-        ' 2>/dev/null || printf '[]')
+        ' 2>/tmp/google_entity_jq_err || { bashio::log.warning "Google entity jq pipeline failed: $(cat /tmp/google_entity_jq_err 2>/dev/null | head -1)"; printf '[]'; })
 
     local entities_count
     entities_count=$(printf '%s' "$entities_json" | jq -r 'length' 2>/dev/null || printf '0')
@@ -502,10 +538,15 @@ execute_google_command() {
     local error_msg=''
     local resulting_state='{}'
 
-    command_id=$(printf '%s' "$command_json" | jq -r '.id // 0')
-    entity_id=$(printf '%s' "$command_json" | jq -r '.entity_id // empty')
-    action=$(printf '%s' "$command_json" | jq -r '.action // empty')
-    payload_json=$(printf '%s' "$command_json" | jq -c '.payload // {}')
+    command_id=$(printf '%s' "$command_json" | jq -r '.id // 0' 2>/dev/null) || command_id=0
+    entity_id=$(printf '%s' "$command_json" | jq -r '.entity_id // empty' 2>/dev/null) || entity_id=''
+    action=$(printf '%s' "$command_json" | jq -r '.action // empty' 2>/dev/null) || action=''
+    payload_json=$(printf '%s' "$command_json" | jq -c '.payload // {}' 2>/dev/null) || payload_json='{}'
+
+    # Ensure command_id is numeric for arithmetic comparison
+    case "$command_id" in
+        ''|*[!0-9]*) command_id=0 ;;
+    esac
 
     if [ -z "$entity_id" ] || [ -z "$action" ] || [ "$command_id" -le 0 ]; then
         return
@@ -889,13 +930,17 @@ except Exception:
     fi
 
     local result_payload
+    # Ensure resulting_state is valid JSON for --argjson
+    if ! printf '%s' "$resulting_state" | jq -e '.' >/dev/null 2>&1; then
+        resulting_state='{}'
+    fi
     result_payload=$(jq -n \
         --argjson success "$success" \
         --arg error "$error_msg" \
         --argjson state "$resulting_state" \
-        '{success: $success, error: ($error | if . == "" then null else . end), state: $state}')
+        '{success: $success, error: ($error | if . == "" then null else . end), state: $state}' 2>/dev/null) || result_payload='{"success":false,"error":"result_payload_build_failed","state":{}}'
 
-    cloud_post "/api/internal/devices/google-home/commands/${command_id}/result" "$result_payload" "$DEVICE_TOKEN" >/dev/null
+    cloud_post "/api/internal/devices/google-home/commands/${command_id}/result" "$result_payload" "$DEVICE_TOKEN" >/dev/null 2>/dev/null || true
 }
 
 sync_google_commands() {
@@ -945,6 +990,13 @@ start_google_sync_loop() {
     fi
 
     (
+        # Disable set -e inside sync loop: individual sync/command failures must NOT
+        # kill the entire loop. Without this, any unprotected jq parse error, arithmetic
+        # comparison with non-numeric input, or transient API failure causes the subshell
+        # to exit permanently — stopping all entity syncs and command polling while the
+        # heartbeat (separate subshell) keeps the device appearing online.
+        set +e
+
         local entity_tick=0
         local entity_interval="$GOOGLE_ENTITY_SYNC_INTERVAL"
         if [ "$entity_interval" -lt 1 ]; then
@@ -953,11 +1005,11 @@ start_google_sync_loop() {
 
         while true; do
             if [ "$entity_tick" -le 0 ]; then
-                sync_google_entities
+                sync_google_entities || bashio::log.warning "Google entity sync iteration failed (non-fatal, will retry)"
                 entity_tick="$entity_interval"
             fi
 
-            sync_google_commands
+            sync_google_commands || bashio::log.warning "Google command sync iteration failed (non-fatal, will retry)"
 
             sleep "$GOOGLE_COMMAND_SYNC_INTERVAL"
 
@@ -1169,8 +1221,9 @@ start_heartbeat_loop() {
     fi
 
     (
+        set +e
         while true; do
-            send_heartbeat "running"
+            send_heartbeat "running" || bashio::log.warning "Heartbeat send failed (non-fatal, will retry)"
             sleep "$HEARTBEAT_INTERVAL"
         done
     ) &
@@ -1309,8 +1362,15 @@ fi
 if [ "$FLEET_ACTIVE" -eq 1 ] && [ -n "$DEVICE_TOKEN" ]; then
     send_device_log "info" "device.start" "Cloud Link service starting" "$(jq -n --arg subdomain "$SUBDOMAIN" --arg frp_addr "$FRP_SERVER_ADDR" --arg frp_port "$FRP_SERVER_PORT" --arg ssh_remote_port "$SSH_REMOTE_PORT" '{subdomain: $subdomain, frp_addr: $frp_addr, frp_port: $frp_port, ssh_remote_port: $ssh_remote_port}')"
     send_heartbeat "starting"
-    sync_google_entities
-    sync_google_commands
+    # Initial entity sync with retry — HA Core may not be fully ready at addon start
+    sync_google_entities || bashio::log.warning "Initial entity sync failed (non-fatal, sync loop will retry)"
+    if [ "$GOOGLE_WARNED_EMPTY_ENTITY_SYNC" -eq 1 ]; then
+        bashio::log.info "Retrying initial entity sync in 5s..."
+        sleep 5
+        GOOGLE_WARNED_EMPTY_ENTITY_SYNC=0
+        sync_google_entities || bashio::log.warning "Initial entity sync retry also failed (non-fatal)"
+    fi
+    sync_google_commands || true
     start_heartbeat_loop
     start_google_sync_loop
 fi
