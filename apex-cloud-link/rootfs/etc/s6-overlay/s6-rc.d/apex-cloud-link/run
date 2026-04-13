@@ -542,6 +542,20 @@ except Exception:
         case "$CLOUD_POST_STATUS" in
             2??)
                 ;;
+            502|503|504|000)
+                # Transient error — retry once after 3s backoff
+                bashio::log.warning "Google entity sync batch got transient status=${CLOUD_POST_STATUS}, retrying in 3s..."
+                sleep 3
+                cloud_post_capture "/api/internal/devices/google-home/entities" "$payload" "$DEVICE_TOKEN"
+                case "$CLOUD_POST_STATUS" in
+                    2??)
+                        ;;
+                    *)
+                        bashio::log.warning "Google entity sync batch retry failed with status=${CLOUD_POST_STATUS} body=${CLOUD_POST_BODY}"
+                        return
+                        ;;
+                esac
+                ;;
             *)
                 bashio::log.warning "Google entity sync batch failed with status=${CLOUD_POST_STATUS} body=${CLOUD_POST_BODY}"
                 return
@@ -555,6 +569,19 @@ except Exception:
     cloud_post_capture "/api/internal/devices/google-home/entities" "$payload" "$DEVICE_TOKEN"
     case "$CLOUD_POST_STATUS" in
         2??)
+            ;;
+        502|503|504|000)
+            bashio::log.warning "Google entity sync snapshot commit got transient status=${CLOUD_POST_STATUS}, retrying in 3s..."
+            sleep 3
+            cloud_post_capture "/api/internal/devices/google-home/entities" "$payload" "$DEVICE_TOKEN"
+            case "$CLOUD_POST_STATUS" in
+                2??)
+                    ;;
+                *)
+                    bashio::log.warning "Google entity sync snapshot commit retry failed with status=${CLOUD_POST_STATUS} body=${CLOUD_POST_BODY}"
+                    return
+                    ;;
+            esac
             ;;
         *)
             bashio::log.warning "Google entity sync snapshot commit failed with status=${CLOUD_POST_STATUS} body=${CLOUD_POST_BODY}"
