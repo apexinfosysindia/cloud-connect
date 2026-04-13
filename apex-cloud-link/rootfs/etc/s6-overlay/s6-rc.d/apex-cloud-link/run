@@ -175,12 +175,15 @@ sync_google_entities() {
 
     GOOGLE_WARNED_STATE_FETCH=0
 
-    # Fetch entity + device registries via WebSocket API for real manufacturer/model/sw_version
+    # Fetch entity + device + area registries via WebSocket API for device info and room hints
     # (REST endpoints /api/config/entity_registry and /api/config/device_registry do not exist;
-    #  these are WebSocket-only APIs: config/entity_registry/list, config/device_registry/list)
+    #  these are WebSocket-only APIs: config/entity_registry/list, config/device_registry/list,
+    #  config/area_registry/list)
     local device_info_map='{}'
+    local area_map='{}'
     if [ -n "${SUPERVISOR_TOKEN:-}" ]; then
-        device_info_map=$(python3 -c "
+        local ws_result
+        ws_result=$(python3 -c "
 import json, os, sys
 try:
     from websocket import create_connection
@@ -192,7 +195,7 @@ try:
     msg = json.loads(ws.recv())
     if msg.get('type') != 'auth_ok':
         ws.close()
-        print('{}')
+        print(json.dumps({'device_info': {}, 'areas': {}}))
         sys.exit(0)
     # Fetch entity registry
     ws.send(json.dumps({'id': 1, 'type': 'config/entity_registry/list'}))
@@ -200,10 +203,21 @@ try:
     # Fetch device registry
     ws.send(json.dumps({'id': 2, 'type': 'config/device_registry/list'}))
     dev_resp = json.loads(ws.recv())
+    # Fetch area registry
+    ws.send(json.dumps({'id': 3, 'type': 'config/area_registry/list'}))
+    area_resp = json.loads(ws.recv())
     ws.close()
     entities = ent_resp.get('result', []) if ent_resp.get('success') else []
     devices = dev_resp.get('result', []) if dev_resp.get('success') else []
-    # Build device_id -> {manufacturer, model, sw_version} lookup
+    areas = area_resp.get('result', []) if area_resp.get('success') else []
+    # Build area_id -> area_name lookup
+    area_name_map = {}
+    for a in areas:
+        aid = a.get('area_id', '')
+        aname = a.get('name', '')
+        if aid and aname:
+            area_name_map[aid] = aname
+    # Build device_id -> {manufacturer, model, sw_version, area_id} lookup
     dev_map = {}
     for d in devices:
         did = d.get('id', '')
@@ -211,28 +225,49 @@ try:
             dev_map[did] = {
                 'manufacturer': d.get('manufacturer') or None,
                 'model': d.get('model') or None,
-                'sw_version': d.get('sw_version') or None
+                'sw_version': d.get('sw_version') or None,
+                'area_id': d.get('area_id') or None
             }
-    # Build entity_id -> device info map
-    result = {}
+    # Build entity_id -> device info map and entity_id -> area_name map
+    dev_result = {}
+    area_result = {}
     for e in entities:
         eid = e.get('entity_id', '')
         did = e.get('device_id', '')
+        # Device info
         if eid and did and did in dev_map:
-            result[eid] = dev_map[did]
-    print(json.dumps(result))
+            dev_result[eid] = {
+                'manufacturer': dev_map[did]['manufacturer'],
+                'model': dev_map[did]['model'],
+                'sw_version': dev_map[did]['sw_version']
+            }
+        # Area: entity's own area_id takes priority, then device's area_id
+        if eid:
+            ent_area = e.get('area_id') or None
+            dev_area = dev_map.get(did, {}).get('area_id') if did else None
+            resolved_area = ent_area or dev_area
+            if resolved_area and resolved_area in area_name_map:
+                area_result[eid] = area_name_map[resolved_area]
+    print(json.dumps({'device_info': dev_result, 'areas': area_result}))
 except Exception:
-    print('{}')
-" 2>/dev/null) || device_info_map='{}'
+    print(json.dumps({'device_info': {}, 'areas': {}}))
+" 2>/dev/null) || ws_result='{"device_info":{},"areas":{}}'
+
+        # Parse the combined result
+        device_info_map=$(printf '%s' "$ws_result" | jq -c '.device_info // {}' 2>/dev/null) || device_info_map='{}'
+        area_map=$(printf '%s' "$ws_result" | jq -c '.areas // {}' 2>/dev/null) || area_map='{}'
     fi
 
-    # Safety: ensure device_info_map is valid JSON object, never empty/malformed
+    # Safety: ensure device_info_map and area_map are valid JSON objects
     if ! printf '%s' "$device_info_map" | jq -e 'type == "object"' >/dev/null 2>&1; then
         device_info_map='{}'
     fi
+    if ! printf '%s' "$area_map" | jq -e 'type == "object"' >/dev/null 2>&1; then
+        area_map='{}'
+    fi
 
     local entities_json='[]'
-    entities_json=$(printf '%s' "$states_json" | jq -c --argjson devinfo "$device_info_map" '
+    entities_json=$(printf '%s' "$states_json" | jq -c --argjson devinfo "$device_info_map" --argjson areamap "$area_map" '
             map(select(.entity_id | test("^(switch|light|sensor|fan|cover|lock|climate|media_player|scene|button|vacuum|humidifier|alarm_control_panel|water_heater|binary_sensor|input_boolean|automation|script|camera|group|input_button|input_select|select|valve|lawn_mower|event)\\.")))
             | map(select(
                 if (.entity_id | startswith("sensor."))
@@ -243,7 +278,7 @@ except Exception:
                 )
                 elif (.entity_id | startswith("binary_sensor."))
                 then (
-                    ((.attributes.device_class // "") | tostring) | test("^(door|window|garage_door|opening|motion|occupancy|smoke|moisture|co|carbon_monoxide)$")
+                    ((.attributes.device_class // "") | tostring) | test("^(door|window|garage_door|opening|motion|occupancy|smoke|moisture|co|carbon_monoxide|gas)$")
                 )
                 elif (.entity_id | startswith("event."))
                 then (
@@ -260,7 +295,7 @@ except Exception:
                 | {
                     entity_id: $s.entity_id,
                     display_name: ($s.attributes.friendly_name // $s.entity_id),
-                    room_hint: ($s.attributes.area_name // ""),
+                    room_hint: ($areamap[$s.entity_id] // ""),
                     online: ($state_text != "unavailable"),
                     entity_type: (
                         if ($s.entity_id | startswith("light.")) then "light"
@@ -565,6 +600,8 @@ execute_google_command() {
                 ha_api_post "/services/button/press" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
             elif [ "$domain" = "input_button" ]; then
                 ha_api_post "/services/input_button/press" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            elif [ "$domain" = "group" ]; then
+                ha_api_post "/services/homeassistant/turn_on" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
             else
                 ha_api_post "/services/${domain}/turn_on" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
             fi
@@ -572,6 +609,8 @@ execute_google_command() {
         else
             if [ "$domain" = "scene" ] || [ "$domain" = "button" ] || [ "$domain" = "input_button" ]; then
                 success=true
+            elif [ "$domain" = "group" ]; then
+                ha_api_post "/services/homeassistant/turn_off" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
             else
                 ha_api_post "/services/${domain}/turn_off" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
             fi
