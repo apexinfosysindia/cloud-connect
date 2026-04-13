@@ -628,6 +628,8 @@ execute_google_command() {
         if [ "$desired_on" = "true" ]; then
             if [ "$domain" = "scene" ]; then
                 ha_api_post "/services/scene/turn_on" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            elif [ "$domain" = "script" ]; then
+                ha_api_post "/services/script/turn_on" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
             elif [ "$domain" = "button" ]; then
                 ha_api_post "/services/button/press" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
             elif [ "$domain" = "input_button" ]; then
@@ -639,7 +641,7 @@ execute_google_command() {
             fi
             resulting_state='{"on":true}'
         else
-            if [ "$domain" = "scene" ] || [ "$domain" = "button" ] || [ "$domain" = "input_button" ]; then
+            if [ "$domain" = "scene" ] || [ "$domain" = "script" ] || [ "$domain" = "button" ] || [ "$domain" = "input_button" ]; then
                 success=true
             elif [ "$domain" = "group" ]; then
                 ha_api_post "/services/homeassistant/turn_off" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
