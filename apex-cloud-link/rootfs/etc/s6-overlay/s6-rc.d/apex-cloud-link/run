@@ -296,7 +296,12 @@ except Exception:
                     entity_id: $s.entity_id,
                     display_name: ($s.attributes.friendly_name // $s.entity_id),
                     room_hint: ($areamap[$s.entity_id] // ""),
-                    online: ($state_text != "unavailable"),
+                    online: (
+                        if ($s.entity_id | (startswith("scene.") or startswith("script.") or startswith("button.") or startswith("input_button.")))
+                        then true
+                        else ($state_text != "unavailable")
+                        end
+                    ),
                     entity_type: (
                         if ($s.entity_id | startswith("light.")) then "light"
                         elif ($s.entity_id | startswith("fan.")) then "fan"
