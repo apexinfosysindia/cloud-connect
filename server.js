@@ -2313,12 +2313,6 @@ function parseGoogleEntityState(entity) {
         };
     }
 
-    if (entity.entity_type === 'input_button') {
-        return {
-            online: entity.online !== 0
-        };
-    }
-
     if (entity.entity_type === 'select' || entity.entity_type === 'input_select') {
         const state = {
             online: entity.online !== 0
