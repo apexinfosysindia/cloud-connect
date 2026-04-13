@@ -482,6 +482,12 @@ function isEntityFresh(entityLastSeenAt) {
     return (Date.now() - lastSeenEpoch) <= (getEntityFreshWindowSeconds() * 1000);
 }
 
+// Stateless entity types (scenes, scripts, buttons) are software-defined and should
+// always be considered online when the HA device is connected and the entity is fresh.
+// Their HA state ("unavailable") is not meaningful for online/offline determination.
+// This matches how HA core (NabuCasa) handles these entity types.
+const STATELESS_ENTITY_TYPES = new Set(['scene', 'script', 'button', 'input_button']);
+
 function isEntityEffectivelyOnline(entityRow) {
     if (!entityRow) {
         return false;
@@ -495,6 +501,12 @@ function isEntityEffectivelyOnline(entityRow) {
     const entityFresh = isEntityFresh(entityRow.entity_last_seen_at || entityRow.updated_at);
     if (!entityFresh) {
         return false;
+    }
+
+    // Stateless entities (scenes, scripts, buttons) are always online when device is
+    // connected and entity is fresh — skip the stored online flag check
+    if (entityRow.entity_type && STATELESS_ENTITY_TYPES.has(entityRow.entity_type)) {
+        return true;
     }
 
     return Number(entityRow.online) !== 0;
@@ -1634,7 +1646,7 @@ function buildGoogleDeviceAttributes(entityType, statePayload, traits) {
     }
 
     if (entityType === 'scene' || entityType === 'button' || entityType === 'script' || entityType === 'input_button') {
-        attrs.sceneReversible = false;
+        // HA core returns empty attributes for scenes — Google defaults sceneReversible to false
         return attrs;
     }
 
@@ -5440,9 +5452,7 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                 const entity = entitiesMap.get(entityId);
                 if (!entity) {
                     devicesState[entityId] = {
-                        online: false,
-                        status: 'ERROR',
-                        errorCode: 'deviceOffline'
+                        online: false
                     };
                     continue;
                 }
@@ -5450,9 +5460,7 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                 const effectiveEntity = entity;
                 if (effectiveEntity.online !== 1) {
                     devicesState[entityId] = {
-                        online: false,
-                        status: 'ERROR',
-                        errorCode: 'deviceOffline'
+                        online: false
                     };
                     continue;
                 }
@@ -6811,7 +6819,8 @@ app.get('/api/google/home/entity-debug', async (req, res) => {
                 online: row.stored_entity_online,
                 last_seen_at: row.last_seen_at,
                 entity_last_seen_at: row.entity_last_seen_at,
-                updated_at: row.updated_at
+                updated_at: row.updated_at,
+                entity_type: row.entity_type
             }),
             device_id: row.device_id,
             device_uid: row.device_uid,
