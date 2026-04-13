@@ -1098,7 +1098,7 @@ function resolveGoogleTraitsFromCapabilities(entityType, statePayload) {
     if (entityType === 'alarm_control_panel') {
         return {
             type: 'action.devices.types.SECURITYSYSTEM',
-            traits: ['action.devices.traits.ArmDisarm']
+            traits: ['action.devices.traits.ArmDisarm', 'action.devices.traits.StatusReport']
         };
     }
 
@@ -1759,6 +1759,20 @@ function buildGoogleDeviceAttributes(entityType, statePayload, traits) {
                     availableStates: ['occupied', 'unoccupied']
                 }
             }];
+        } else if (dc === 'co' || dc === 'carbon_monoxide') {
+            attrs.sensorStatesSupported = [{
+                name: 'CarbonMonoxideLevel',
+                descriptiveCapabilities: {
+                    availableStates: ['carbon monoxide detected', 'no carbon monoxide detected']
+                }
+            }];
+        } else if (dc === 'gas') {
+            attrs.sensorStatesSupported = [{
+                name: 'SmokeLevel',
+                descriptiveCapabilities: {
+                    availableStates: ['smoke detected', 'no smoke detected']
+                }
+            }];
         }
         return attrs;
     }
@@ -1835,9 +1849,9 @@ function buildGoogleDeviceAttributes(entityType, statePayload, traits) {
                 })),
                 ordered: false
             }];
+            attrs.queryOnlyModes = false;
+            attrs.commandOnlyModes = false;
         }
-        attrs.queryOnlyModes = false;
-        attrs.commandOnlyModes = false;
         return attrs;
     }
 
@@ -2202,6 +2216,16 @@ function parseGoogleEntityState(entity) {
             state.currentSensorStateData = [{
                 name: 'OccupancyDetecting',
                 currentSensorState: isOn ? 'occupied' : 'unoccupied'
+            }];
+        } else if (dc === 'co' || dc === 'carbon_monoxide') {
+            state.currentSensorStateData = [{
+                name: 'CarbonMonoxideLevel',
+                currentSensorState: isOn ? 'carbon monoxide detected' : 'no carbon monoxide detected'
+            }];
+        } else if (dc === 'gas') {
+            state.currentSensorStateData = [{
+                name: 'SmokeLevel',
+                currentSensorState: isOn ? 'smoke detected' : 'no smoke detected'
             }];
         }
         return state;
@@ -5382,7 +5406,7 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
         if (intent === 'action.devices.SYNC') {
             const entities = await getGoogleEntitiesForUser(req.googleUser.id, { includeDisabled: false });
             const userPin = req.googleUser.google_home_security_pin || null;
-            const devices = entities.map((entity) => buildGoogleDeviceObject(withEffectiveGoogleOnline(entity), userPin));
+            const devices = entities.map((entity) => buildGoogleDeviceObject(entity, userPin));
 
             return res.status(200).json({
                 requestId,
@@ -5415,7 +5439,7 @@ app.post('/api/google/home/fulfillment', requireGoogleBearer, async (req, res) =
                     continue;
                 }
 
-                const effectiveEntity = withEffectiveGoogleOnline(entity);
+                const effectiveEntity = entity;
                 if (effectiveEntity.online !== 1) {
                     devicesState[entityId] = {
                         online: false,
