@@ -8,6 +8,14 @@ const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 
+// Prevent unhandled errors from crashing the process (Caddy returns 502 when Node is down)
+process.on('uncaughtException', (error) => {
+    console.error('UNCAUGHT EXCEPTION (process kept alive):', error);
+});
+process.on('unhandledRejection', (reason) => {
+    console.error('UNHANDLED REJECTION (process kept alive):', reason);
+});
+
 const db = require('./db');
 
 const CUSTOMER_PORTAL_HOST = process.env.CUSTOMER_PORTAL_HOST || 'oasis.apexinfosys.in';
