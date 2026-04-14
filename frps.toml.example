@@ -1,6 +1,11 @@
 # ----------------------------------------------------
 # FRP Server (FRPS) Configuration
 # ----------------------------------------------------
+# Copy this to frps.toml and fill in real values, OR
+# set FRPS_AUTH_TOKEN and FRPS_DASHBOARD_PASSWORD as
+# environment variables — the deploy workflow generates
+# frps.toml from this template via envsubst.
+# ----------------------------------------------------
 
 bindPort = 7000
 vhostHTTPPort = 8080
@@ -12,7 +17,7 @@ transport.tcpMux = true
 # Optional Dashboard
 webServer.port = 7500
 webServer.user = "admin"
-webServer.password = "change_this_secure_password"
+webServer.password = "${FRPS_DASHBOARD_PASSWORD}"
 
 # ----------------------------------------------------
 # Authentication & Webhook
@@ -20,7 +25,7 @@ webServer.password = "change_this_secure_password"
 # Shared FRP auth token for transport-level login.
 # User-level authorization still happens in the webhook using metas.token.
 auth.method = "token"
-auth.token = "apexcloud_transport_v1"
+auth.token = "${FRPS_AUTH_TOKEN}"
 
 [[httpPlugins]]
 name = "user-auth"

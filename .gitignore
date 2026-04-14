@@ -78,12 +78,18 @@ database.sqlite
 *.db-*
 .deploy-version
 
+# FRP server config (generated from frps.toml.example at deploy time)
+frps.toml
+
 # Certificates and private keys
 *.pem
 *.key
 *.crt
 *.p12
 *.pfx
+
+# Backup files
+*.bak
 
 # OS-specific files
 .DS_Store
