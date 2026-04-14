@@ -1,22 +1,22 @@
 {
-  "name": "Apex Cloud Link",
-  "version": "1.2.8",
-  "slug": "apex_cloud_link",
-  "description": "Secure, automated remote access for your ApexOS instance.",
-  "url": "https://github.com/apexinfosysindia/addons/apex-cloud-link",
-  "arch": ["aarch64", "amd64", "armhf", "armv7", "i386"],
-  "startup": "application",
-  "boot": "auto",
-  "host_network": true,
-  "hassio_api": true,
-  "homeassistant_api": true,
-  "init": false,
-  "options": {
-    "subdomain": "",
-    "access_token": ""
-  },
-  "schema": {
-    "subdomain": "str",
-    "access_token": "str"
-  }
+    "name": "Apex Cloud Link",
+    "version": "1.2.8",
+    "slug": "apex_cloud_link",
+    "description": "Secure, automated remote access for your ApexOS instance.",
+    "url": "https://github.com/apexinfosysindia/addons/apex-cloud-link",
+    "arch": ["aarch64", "amd64", "armhf", "armv7", "i386"],
+    "startup": "application",
+    "boot": "auto",
+    "host_network": true,
+    "hassio_api": true,
+    "homeassistant_api": true,
+    "init": false,
+    "options": {
+        "subdomain": "",
+        "access_token": ""
+    },
+    "schema": {
+        "subdomain": "str",
+        "access_token": "str"
+    }
 }

@@ -1,25 +1,35 @@
 # Cloud Connect
+
 Control plane for ApexOS Cloud Connect: customer signup, billing, admin approvals, and secure remote access orchestration.
+
 ## Overview
+
 This repository contains the Cloud Connect control plane:
+
 - Node.js + SQLite backend
 - customer portal UI
 - admin dashboard
 - Razorpay billing flow
 - Caddy config
 - FRP server config
+
 ## Current Behavior
+
 - New users sign up into `payment_pending`.
 - Remote access is enabled only for users in `active` or `trial`.
 - Paid activation happens after successful Razorpay checkout and verification.
 - Free 12-month trials are no longer automatic.
 - Free trials are intended to be granted manually from the admin dashboard.
+
 ## Architecture
+
 High-level request flow:
 `Browser -> Caddy -> FRPS -> FRPC -> ApexOS`
 Control plane flow:
 `Portal UI -> Express API -> SQLite / Razorpay`
+
 ## Repository Layout
+
 ```text
 .
 ├── README.md
@@ -31,7 +41,9 @@ Control plane flow:
     ├── index.html
     └── admin.html
 ```
+
 ## Portal Features
+
 - Customer signup and login
 - Razorpay subscription checkout and payment verification
 - Razorpay webhook processing
@@ -43,10 +55,13 @@ Control plane flow:
 - Device heartbeat tracking (online/offline, local IPs, last seen)
 - Device and admin access logs for auditability
 - Admin-only connect command generation for remote SSH
+
 ## Admin Dashboard
+
 Path:
+
 - `/admin.html`
-Capabilities:
+  Capabilities:
 - View all users
 - Approve a 365-day trial
 - Set user status to `active`
@@ -56,32 +71,40 @@ Capabilities:
 - View live/offline device fleet state
 - Inspect recent device events and admin connect actions
 - Generate short-lived admin SSH connect commands per device
-Required environment variables:
+  Required environment variables:
 - `ADMIN_EMAIL`
 - `ADMIN_PASSWORD`
 - `ADMIN_SESSION_SECRET` (min 32 chars)
 - `PORTAL_SESSION_SECRET` (min 32 chars)
 
 ## Device Fleet API (Internal + Admin)
+
 Internal device endpoints:
+
 - `POST /api/internal/devices/register`
 - `POST /api/internal/devices/heartbeat`
 - `POST /api/internal/devices/log`
 
 Admin endpoints:
+
 - `GET /api/admin/fleet`
 - `GET /api/admin/fleet/:id/logs`
 - `POST /api/admin/fleet/:id/connect`
 
 All admin fleet routes require admin bearer auth.
+
 ## User Statuses
+
 - `payment_pending`: account created, billing not completed, remote access disabled
 - `active`: paid subscription active, remote access enabled
 - `trial`: admin-approved free trial, remote access enabled
 - `expired`: remote access disabled
 - `suspended`: remote access disabled
+
 ## Environment Variables
+
 Set these in `.env` on the VPS:
+
 ```env
 PORT=3000
 RAZORPAY_KEY_ID=
@@ -110,29 +133,42 @@ DEVICE_TUNNEL_HOST=cloud.apexinfosys.in
 DEVICE_TUNNEL_PORT_MIN=22000
 DEVICE_TUNNEL_PORT_MAX=22999
 ```
+
 ## Local Development
+
 Install dependencies:
+
 ```bash
 npm install
 ```
+
 Start the portal:
+
 ```bash
 node server.js
 ```
+
 The portal serves:
+
 - `/`: customer portal
 - `/admin.html`: admin dashboard
-SQLite database file:
+  SQLite database file:
 - `database.sqlite`
+
 ## Live VPS Paths
+
 The repo keeps source copies of the edge configs, but the live services use:
+
 - Caddy: `/etc/caddy/Caddyfile`
 - FRPS: `/etc/frp/frps.toml`
-The repo copies are:
+  The repo copies are:
 - `Caddyfile`
 - `frps.toml`
+
 ## Deployment Notes
+
 Typical production restart flow:
+
 ```bash
 cd /opt/cloud-connect
 npm ci --omit=dev
@@ -141,24 +177,31 @@ sudo caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 sudo systemctl restart frps
 ```
+
 ## ApexOS Add-on
+
 The separate `apex-cloud-link` add-on repo:
+
 - accepts `subdomain` and `access_token`
 - downloads `frpc`
 - connects to `cloud.apexinfosys.in:7000`
 - registers the customer domain through FRP
 - automatically registers into admin fleet tracking and sends heartbeats/logs
 - automatically receives and uses assigned SSH tunnel port from Cloud Connect
-Remote access only succeeds when the portal authorizes the token and the account is `active` or `trial`.
+  Remote access only succeeds when the portal authorizes the token and the account is `active` or `trial`.
 
 Optional admin SSH publish settings:
+
 - None required. `apex-cloud-link` now auto-registers and receives assigned SSH tunnel port from Cloud Connect.
 
 ## Method B: Single-Port Admin SSH (ProxyCommand)
+
 Cloud Connect now generates admin connect commands in explicit dual-key format:
+
 - `ssh -o "ProxyCommand=ssh -i ~/.ssh/jump_key -W %h:%p <jump-user>@<jump-host>" -i ~/.ssh/device_key -p <assigned-port> root@127.0.0.1`
 
 Current internal defaults in code:
+
 - jump host: `cloud.apexinfosys.in`
 - jump user: `fleetadmin`
 - jump port: `22`
@@ -167,45 +210,54 @@ Current internal defaults in code:
 This keeps per-device FRP TCP ports private to the FRPS host and exposes only the jump-host SSH port publicly.
 
 Production requirements:
+
 - Set FRPS `proxyBindAddr = "127.0.0.1"` in `/etc/frp/frps.toml`
 - Create a restricted jump user on VPS (example: `fleetadmin`)
 - Open only jump-host SSH port (`22` or `443`) in cloud firewall/NSG
 - Keep FRP assigned port range closed from public internet
 
 ## Google Home (MVP)
+
 Cloud Connect now includes a private Google Home Cloud-to-Cloud MVP:
+
 - OAuth authorize endpoint: `GET /api/google/home/oauth`
 - OAuth token endpoint: `POST /api/google/home/token`
 - Fulfillment endpoint: `POST /api/google/home/fulfillment`
 - Account controls: enable/disable Google Home and entity exposure from customer dashboard
 
 Proactive Homegraph updates (new):
+
 - `requestSync` is triggered on OAuth link, entity inventory changes, and exposure toggles
 - `reportStateAndNotification` is sent for changed entity states (debounced)
 - SYNC device payload now advertises `willReportState: true` when Homegraph credentials are configured
 
 Online model (production-safe hybrid):
+
 - Effective entity online status uses `device_online && entity_fresh && entity_available`
 - `entity_available` comes from addon state (`state != unavailable`)
 - `entity_fresh` is time-window based (derived from heartbeat window) to prevent stale entity drift
 - Empty or invalid entity sync payloads are ignored (non-destructive)
 
 Internal Homegraph debug/ops endpoints:
+
 - `GET /api/google/home/homegraph-debug`
 - `POST /api/internal/google/homegraph/request-sync` (requires `Authorization: Bearer $GOOGLE_HOMEGRAPH_ADMIN_TOKEN`)
 - `POST /api/internal/google/homegraph/report-state` (requires `Authorization: Bearer $GOOGLE_HOMEGRAPH_ADMIN_TOKEN`)
 
 Security hardening notes:
+
 - Set strong secrets for `PORTAL_SESSION_SECRET` and `ADMIN_SESSION_SECRET` (minimum 32 chars). The server exits if these are missing.
 - Debug endpoints are disabled by default. Enable only when needed with `GOOGLE_DEBUG_ENDPOINTS_ENABLED=1`.
 - Set `ALLOWED_CORS_ORIGINS` explicitly for your portal/admin domains.
 
 Addon integration:
+
 - Addon syncs entities via `POST /api/internal/devices/google-home/entities`
 - Addon polls queued commands via `POST /api/internal/devices/google-home/commands`
 - Addon posts command results via `POST /api/internal/devices/google-home/commands/:id/result`
 
 MVP entity support:
+
 - `switch.*`, `input_boolean.*`, `automation.*`, `script.*` -> On/Off
 - `light.*` -> On/Off + Brightness
 - `fan.*` -> On/Off + Fan speed
@@ -218,24 +270,32 @@ MVP entity support:
 - `sensor.*` (temperature-like) -> ambient temperature state
 
 Automatic addon behavior:
+
 - Fleet reporting is always on
 - Device identity is derived from hostname
 - SSH user is fixed to `root`
 - SSH local port is fixed to `22`
 - Tunnel host is set by Cloud Connect (`DEVICE_TUNNEL_HOST`, defaults to `CLOUD_BASE_DOMAIN`)
 - Tunnel port is auto-assigned by Cloud Connect from `DEVICE_TUNNEL_PORT_MIN..DEVICE_TUNNEL_PORT_MAX`
+
 ## Billing Notes
+
 - Checkout is Razorpay subscription-based.
 - Payment activation is verified both from the browser callback and Razorpay webhooks.
 - Pending users do not get their tunnel access token in the portal UI.
 - If you want to grant free access, do it from the admin dashboard instead of signup.
+
 ## Suggested Git Strategy
+
 Recommended production flow:
+
 - GitHub as source of truth
 - GitHub Actions deployment to the VPS over SSH
 - Tag stable releases for rollback
 - Keep `.env` and `database.sqlite` only on the VPS
+
 ## Security Notes
+
 - Do not commit `.env`
 - Do not commit `database.sqlite`
 - Rotate `webServer.password` in `frps.toml`

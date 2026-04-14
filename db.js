@@ -254,9 +254,9 @@ function selectExpressionForColumn(columnName, existingColumnsSet) {
 function buildUsersTableRebuildSql(existingColumns = []) {
     const existingColumnsSet = new Set(existingColumns);
     const targetColumns = USERS_REBUILD_COLUMNS.join(',\n        ');
-    const selectColumns = USERS_REBUILD_COLUMNS
-        .map((columnName) => selectExpressionForColumn(columnName, existingColumnsSet))
-        .join(',\n        ');
+    const selectColumns = USERS_REBUILD_COLUMNS.map((columnName) =>
+        selectExpressionForColumn(columnName, existingColumnsSet)
+    ).join(',\n        ');
 
     return `
     BEGIN TRANSACTION;
@@ -339,61 +339,59 @@ const db = new sqlite3.Database(dbPath, (err) => {
 });
 
 function initDb() {
-    db.get(
-        `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'`,
-        (err, row) => {
-            if (err) {
-                console.error('Error reading users table schema:', err.message);
-                return;
-            }
+    db.get(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'`, (err, row) => {
+        if (err) {
+            console.error('Error reading users table schema:', err.message);
+            return;
+        }
 
-            if (!row) {
-                db.run(USERS_TABLE_SCHEMA, (createErr) => {
-                    if (createErr) {
-                        console.error('Error creating users table:', createErr.message);
-                    } else {
-                        console.log('Users table ready.');
-                        initDeviceTables();
-                    }
-                });
-                return;
-            }
+        if (!row) {
+            db.run(USERS_TABLE_SCHEMA, (createErr) => {
+                if (createErr) {
+                    console.error('Error creating users table:', createErr.message);
+                } else {
+                    console.log('Users table ready.');
+                    initDeviceTables();
+                }
+            });
+            return;
+        }
 
-            const currentSql = row.sql || '';
-            const needsRebuild = [
+        const currentSql = row.sql || '';
+        const needsRebuild =
+            [
                 'payment_pending',
                 'razorpay_payment_id',
                 'razorpay_subscription_status',
                 'trial_approved_at',
                 'activated_at'
             ].some((fragment) => !currentSql.includes(fragment)) ||
-                currentSql.includes('access_token TEXT UNIQUE NOT NULL') ||
-                currentSql.includes('subdomain TEXT UNIQUE NOT NULL');
+            currentSql.includes('access_token TEXT UNIQUE NOT NULL') ||
+            currentSql.includes('subdomain TEXT UNIQUE NOT NULL');
 
-            if (!needsRebuild) {
-                console.log('Users table ready.');
-                initDeviceTables();
+        if (!needsRebuild) {
+            console.log('Users table ready.');
+            initDeviceTables();
+            return;
+        }
+
+        db.all(`PRAGMA table_info(users)`, (infoErr, columns) => {
+            if (infoErr) {
+                console.error('Error reading users table columns:', infoErr.message);
                 return;
             }
 
-            db.all(`PRAGMA table_info(users)`, (infoErr, columns) => {
-                if (infoErr) {
-                    console.error('Error reading users table columns:', infoErr.message);
-                    return;
+            const rebuildSql = buildUsersTableRebuildSql((columns || []).map((column) => column.name));
+            db.exec(rebuildSql, (migrationErr) => {
+                if (migrationErr) {
+                    console.error('Error migrating users table:', migrationErr.message);
+                } else {
+                    console.log('Users table migrated.');
+                    initDeviceTables();
                 }
-
-                const rebuildSql = buildUsersTableRebuildSql((columns || []).map((column) => column.name));
-                db.exec(rebuildSql, (migrationErr) => {
-                    if (migrationErr) {
-                        console.error('Error migrating users table:', migrationErr.message);
-                    } else {
-                        console.log('Users table migrated.');
-                        initDeviceTables();
-                    }
-                });
             });
-        }
-    );
+        });
+    });
 }
 
 module.exports = db;

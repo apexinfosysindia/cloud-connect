@@ -1,0 +1,108 @@
+const crypto = require('crypto');
+const express = require('express');
+const bcrypt = require('bcryptjs');
+
+module.exports = function ({ dbAll, utils, auth, billing }) {
+    const router = express.Router();
+    const { asyncHandler } = utils;
+
+    router.post(
+        '/api/admin/login',
+        asyncHandler(async (req, res) => {
+            const { email, password } = req.body;
+
+            try {
+                auth.ensureAdminConfigured();
+            } catch (error) {
+                return res.status(500).json({ error: error.message });
+            }
+
+            if (email !== process.env.ADMIN_EMAIL) {
+                return res.status(401).json({ error: 'Invalid admin credentials' });
+            }
+
+            const adminPasswordHash = process.env.ADMIN_PASSWORD_HASH;
+            let passwordValid = false;
+
+            if (adminPasswordHash) {
+                passwordValid = await bcrypt.compare(password, adminPasswordHash);
+            } else if (process.env.ADMIN_PASSWORD) {
+                const expectedBuffer = Buffer.from(process.env.ADMIN_PASSWORD);
+                const receivedBuffer = Buffer.from(password || '');
+                passwordValid =
+                    expectedBuffer.length === receivedBuffer.length &&
+                    crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
+            }
+
+            if (!passwordValid) {
+                return res.status(401).json({ error: 'Invalid admin credentials' });
+            }
+
+            res.status(200).json({
+                message: 'Admin login successful',
+                email,
+                token: auth.createAdminToken(email)
+            });
+        })
+    );
+
+    router.get('/api/admin/me', auth.requireAdmin, (req, res) => {
+        res.status(200).json({
+            email: req.admin.email
+        });
+    });
+
+    router.get(
+        '/api/admin/users',
+        auth.requireAdmin,
+        asyncHandler(async (req, res) => {
+            const rows = await dbAll(`
+            SELECT *
+            FROM users
+            ORDER BY
+                CASE status
+                    WHEN 'payment_pending' THEN 0
+                    WHEN 'trial' THEN 1
+                    WHEN 'active' THEN 2
+                    WHEN 'suspended' THEN 3
+                    WHEN 'expired' THEN 4
+                    ELSE 5
+                END,
+                created_at DESC
+        `);
+
+            res.status(200).json({
+                users: rows.map(auth.serializeAdminUser)
+            });
+        })
+    );
+
+    router.post(
+        '/api/admin/users/:id/status',
+        auth.requireAdmin,
+        asyncHandler(async (req, res) => {
+            const { id } = req.params;
+            const { status, trial_days } = req.body;
+            const allowedStatuses = ['active', 'trial', 'suspended'];
+
+            if (!allowedStatuses.includes(status)) {
+                return res.status(400).json({ error: 'Invalid status' });
+            }
+
+            const updatedUser = await billing.updateUserStatus(Number(id), status, {
+                trialDays: Number(trial_days) || 365
+            });
+
+            if (!updatedUser) {
+                return res.status(404).json({ error: 'User not found' });
+            }
+
+            res.status(200).json({
+                message: 'User status updated',
+                user: auth.serializeAdminUser(updatedUser)
+            });
+        })
+    );
+
+    return router;
+};
