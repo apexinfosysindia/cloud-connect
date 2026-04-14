@@ -135,6 +135,7 @@ const generalApiRateLimiter = rateLimit({
     max: 100, // 100 requests per minute per IP
     standardHeaders: true,
     legacyHeaders: false,
+    skip: (req) => req.path.startsWith('/internal/'),
     message: { error: 'Too many requests. Please slow down.' }
 });
 
