@@ -63,7 +63,9 @@ app.use(cookieParser());
 app.use(
     helmet({
         contentSecurityPolicy: false, // Disabled: static HTML pages use inline scripts/styles
-        crossOriginEmbedderPolicy: false // Disabled: pages load external resources (fonts, CDN scripts)
+        crossOriginEmbedderPolicy: false, // Disabled: pages load external resources (fonts, CDN scripts)
+        crossOriginOpenerPolicy: false, // Disabled: Razorpay checkout uses popups for 3D Secure / UPI verification
+        crossOriginResourcePolicy: false // Disabled: Razorpay checkout iframe loads cross-origin resources
     })
 );
 
