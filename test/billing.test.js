@@ -127,7 +127,7 @@ describe('buildCheckoutPayload', () => {
         const payload = billing.buildCheckoutPayload(user, 'sub_123');
         assert.equal(payload.subscription_id, 'sub_123');
         assert.equal(payload.prefill.email, 'u@t.com');
-        assert.equal(payload.name, 'ApexOS Cloud');
+        assert.equal(payload.name, 'Apex Infosys India');
         assert.equal(payload.description, 'ApexOS Cloud remote access subscription');
     });
 
