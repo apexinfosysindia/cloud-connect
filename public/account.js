@@ -968,13 +968,25 @@
         });
     }
 
-    // Plan picker — handles clicks on monthly/annual plan buttons
+    // Plan picker — clicking a plan option toggles selection
     const billingCard = document.getElementById('billingCard');
+    const subscribePlanBtn = document.getElementById('subscribePlanBtn');
+
     if (billingCard) {
-        billingCard.addEventListener('click', async (event) => {
+        billingCard.addEventListener('click', (event) => {
             const planBtn = event.target.closest('.plan-option');
             if (!planBtn) return;
 
+            // Toggle selection: deselect all, select the clicked one
+            const allPlanBtns = billingCard.querySelectorAll('.plan-option');
+            allPlanBtns.forEach((btn) => btn.classList.remove('plan-option--selected'));
+            planBtn.classList.add('plan-option--selected');
+        });
+    }
+
+    // Subscribe button — creates checkout for the currently selected plan
+    if (subscribePlanBtn && billingCard) {
+        subscribePlanBtn.addEventListener('click', async () => {
             const storedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
             if (!storedUser) {
                 showAlert('Please log in again to continue payment.');
@@ -987,16 +999,21 @@
                 return;
             }
 
-            const planType = planBtn.dataset.plan;
+            const selectedBtn = billingCard.querySelector('.plan-option--selected');
+            if (!selectedBtn) {
+                showAlert('Please select a plan first.');
+                return;
+            }
+
+            const planType = selectedBtn.dataset.plan;
             if (planType !== 'monthly' && planType !== 'annual') return;
 
-            // Disable all plan buttons during checkout creation
+            // Disable subscribe button and plan options during checkout creation
+            subscribePlanBtn.disabled = true;
+            subscribePlanBtn.textContent = 'Preparing checkout...';
             const allPlanBtns = billingCard.querySelectorAll('.plan-option');
             allPlanBtns.forEach((btn) => { btn.disabled = true; });
-            planBtn.querySelector('.plan-option__name').textContent = 'Preparing...';
             hideAlert();
-
-            const originalName = planType === 'monthly' ? 'Monthly' : 'Annual';
 
             try {
                 const res = await fetch('/api/billing/create-checkout', {
@@ -1013,20 +1030,22 @@
                 localStorage.setItem('apex_user', JSON.stringify(data.data));
                 renderDashboard(data.data);
 
-                // Create a thin wrapper so openCheckout's restoreButton works
-                // without wiping the plan button's inner HTML.
-                const restoreAllPlanBtns = () => {
-                    planBtn.querySelector('.plan-option__name').textContent = originalName;
+                // Thin wrapper so openCheckout's restoreButton works
+                // without wiping the subscribe button's inner HTML.
+                const restoreControls = () => {
+                    subscribePlanBtn.textContent = 'Subscribe';
+                    subscribePlanBtn.disabled = false;
                     allPlanBtns.forEach((btn) => { btn.disabled = false; });
                 };
                 const pseudoBtn = {
-                    set textContent(_v) { restoreAllPlanBtns(); },
+                    set textContent(_v) { restoreControls(); },
                     set disabled(_v) { /* handled above */ }
                 };
-                openCheckout(data.checkout, pseudoBtn, originalName);
+                openCheckout(data.checkout, pseudoBtn, 'Subscribe');
             } catch (err) {
                 showAlert(err.message);
-                planBtn.querySelector('.plan-option__name').textContent = originalName;
+                subscribePlanBtn.textContent = 'Subscribe';
+                subscribePlanBtn.disabled = false;
                 allPlanBtns.forEach((btn) => { btn.disabled = false; });
             }
         });

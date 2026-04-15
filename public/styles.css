@@ -1295,9 +1295,14 @@ code {
     cursor: not-allowed;
 }
 
-.plan-option--recommended {
+.plan-option--selected {
     border-color: var(--brand);
     background: #eff6ff;
+    box-shadow: 0 0 0 1px var(--brand);
+}
+
+.plan-subscribe-btn {
+    margin-top: 14px;
 }
 
 .plan-option__badge {
