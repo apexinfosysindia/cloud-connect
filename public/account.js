@@ -434,6 +434,13 @@
         billingCard.classList.toggle('hidden', userData.status !== 'payment_pending' || !subdomainConfigured);
         tokenCard.classList.toggle('hidden', !accessEnabled);
 
+        // Reset plan picker to default (annual selected) on every render so
+        // a dismissed or failed checkout doesn't leave stale selection state.
+        const planOptions = billingCard.querySelectorAll('.plan-option');
+        planOptions.forEach((btn) => btn.classList.remove('plan-option--selected'));
+        const defaultPlan = billingCard.querySelector('[data-plan="annual"]');
+        if (defaultPlan) defaultPlan.classList.add('plan-option--selected');
+
         if (dashSubdomain) {
             dashSubdomain.value = subdomainConfigured ? userData.subdomain : '';
         }
