@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 
-module.exports = function ({ dbGet, dbRun, config, utils, auth, billing }) {
+module.exports = function ({ dbGet, dbRun, config, utils, auth }) {
     const router = express.Router();
     const { asyncHandler } = utils;
 
@@ -61,25 +61,10 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth, billing }) {
                 [normalizedEmail, hashedPassword, normalizedSubdomain]
             );
 
-            let user = await dbGet(`SELECT * FROM users WHERE id = ?`, [insertResult.lastID]);
-            let checkout = null;
-            let message = user.subdomain
-                ? 'Account created. Complete payment to activate remote access.'
+            const user = await dbGet(`SELECT * FROM users WHERE id = ?`, [insertResult.lastID]);
+            const message = user.subdomain
+                ? 'Account created. Choose a plan and complete payment to activate remote access.'
                 : 'Account created. Set your desired cloud address to continue activation.';
-
-            if (user.subdomain) {
-                try {
-                    const checkoutState = await billing.prepareCheckoutForUser(user);
-                    user = checkoutState.user;
-                    checkout = checkoutState.checkout;
-                } catch (billingError) {
-                    console.error('RAZORPAY CHECKOUT SETUP ERROR:', billingError);
-                    message = billing.getBillingErrorMessage(
-                        billingError,
-                        'Account created, but billing setup is temporarily unavailable. Log in later to complete payment.'
-                    );
-                }
-            }
 
             const portalSessionToken = auth.createPortalSessionToken(user.email);
             auth.setPortalSessionCookie(res, portalSessionToken);
@@ -87,8 +72,7 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth, billing }) {
             res.setHeader('Cache-Control', 'no-store');
             res.status(201).json({
                 message,
-                data: auth.serializeUserWithPortalSession(user, portalSessionToken),
-                checkout
+                data: auth.serializeUserWithPortalSession(user, portalSessionToken)
             });
         } catch (error) {
             console.error('SIGNUP ERROR:', error);

@@ -4,9 +4,10 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
     const router = express.Router();
 
     router.post('/api/billing/create-checkout', async (req, res) => {
-        const { access_token, portal_session_token } = req.body;
+        const { access_token, portal_session_token, plan } = req.body;
         const cookieToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
         const sessionToken = cookieToken || portal_session_token;
+        const planType = plan === 'monthly' ? 'monthly' : 'annual';
 
         if (!access_token && !sessionToken) {
             return res.status(400).json({ error: 'Portal session token is required' });
@@ -47,11 +48,12 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
                 return res.status(400).json({ error: 'This account does not require a payment checkout.' });
             }
 
-            const checkoutState = await billing.prepareCheckoutForUser(user);
+            const checkoutState = await billing.prepareCheckoutForUser(user, planType);
             res.status(200).json({
                 message: 'Checkout ready',
                 data: auth.serializeUser(checkoutState.user),
-                checkout: checkoutState.checkout
+                checkout: checkoutState.checkout,
+                plan: planType
             });
         } catch (error) {
             console.error('CHECKOUT CREATION ERROR:', error);

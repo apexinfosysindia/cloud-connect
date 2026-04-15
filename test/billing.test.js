@@ -17,6 +17,11 @@ before(() => {
 const billing = require('../lib/billing')({
     dbGet: async () => null,
     dbRun: async () => ({}),
+    dbAll: async () => [],
+    config: {
+        RAZORPAY_PLAN_ID_MONTHLY: 'plan_monthly_test',
+        RAZORPAY_PLAN_ID_ANNUAL: 'plan_annual_test'
+    },
     createUniqueAccessToken: async () => 'apx_test_token'
 });
 
@@ -117,12 +122,43 @@ describe('extractWebhookSubscriptionInfo', () => {
 });
 
 describe('buildCheckoutPayload', () => {
-    it('builds correct checkout structure', () => {
+    it('builds correct checkout structure with default description', () => {
         const user = { email: 'u@t.com', subdomain: 'mycloud' };
         const payload = billing.buildCheckoutPayload(user, 'sub_123');
         assert.equal(payload.subscription_id, 'sub_123');
         assert.equal(payload.prefill.email, 'u@t.com');
         assert.equal(payload.name, 'ApexOS Cloud');
+        assert.equal(payload.description, 'ApexOS Cloud remote access subscription');
+    });
+
+    it('uses planConfig description when provided', () => {
+        const user = { email: 'u@t.com', subdomain: 'mycloud' };
+        const planConfig = { description: 'ApexOS Cloud monthly remote access subscription' };
+        const payload = billing.buildCheckoutPayload(user, 'sub_123', planConfig);
+        assert.equal(payload.description, 'ApexOS Cloud monthly remote access subscription');
+    });
+});
+
+describe('PLAN_TYPES', () => {
+    it('exports monthly and annual plan configs', () => {
+        assert.ok(billing.PLAN_TYPES.monthly);
+        assert.ok(billing.PLAN_TYPES.annual);
+    });
+
+    it('monthly plan has no trial', () => {
+        assert.equal(billing.PLAN_TYPES.monthly.hasTrial, false);
+        assert.equal(billing.PLAN_TYPES.monthly.totalCount, 120);
+    });
+
+    it('annual plan has trial', () => {
+        assert.equal(billing.PLAN_TYPES.annual.hasTrial, true);
+        assert.equal(billing.PLAN_TYPES.annual.totalCount, 10);
+        assert.equal(billing.PLAN_TYPES.annual.trialSeconds, 365 * 24 * 60 * 60);
+    });
+
+    it('getPlanId returns configured plan IDs', () => {
+        assert.equal(billing.PLAN_TYPES.monthly.getPlanId(), 'plan_monthly_test');
+        assert.equal(billing.PLAN_TYPES.annual.getPlanId(), 'plan_annual_test');
     });
 });
 
