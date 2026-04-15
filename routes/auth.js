@@ -190,8 +190,13 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth }) {
                 return res.status(404).json({ error: 'Account not found' });
             }
 
-            const portalSessionToken = auth.createPortalSessionToken(user.email);
-            auth.setPortalSessionCookie(res, portalSessionToken);
+            // Only rotate the token when it's within 1 day of expiry to avoid
+            // cookie churn from 5-second polling causing race conditions.
+            let portalSessionToken = sessionToken;
+            if (auth.portalTokenNeedsRotation(session)) {
+                portalSessionToken = auth.createPortalSessionToken(user.email);
+                auth.setPortalSessionCookie(res, portalSessionToken);
+            }
 
             return res.status(200).json({
                 data: auth.serializeUserWithPortalSession(user, portalSessionToken)
