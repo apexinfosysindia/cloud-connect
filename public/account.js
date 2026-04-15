@@ -12,7 +12,6 @@
     const headerUserEmail = document.getElementById('headerUserEmail');
     const guestNavActions = document.getElementById('guestNavActions');
     const signedInNavActions = document.getElementById('signedInNavActions');
-    const payNowBtn = document.getElementById('payNowBtn');
     const subdomainCard = document.getElementById('subdomainCard');
     const dashSubdomain = document.getElementById('dashSubdomain');
     const saveSubdomainBtn = document.getElementById('saveSubdomainBtn');
@@ -969,8 +968,13 @@
         });
     }
 
-    if (payNowBtn) {
-        payNowBtn.addEventListener('click', async () => {
+    // Plan picker — handles clicks on monthly/annual plan buttons
+    const billingCard = document.getElementById('billingCard');
+    if (billingCard) {
+        billingCard.addEventListener('click', async (event) => {
+            const planBtn = event.target.closest('.plan-option');
+            if (!planBtn) return;
+
             const storedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
             if (!storedUser) {
                 showAlert('Please log in again to continue payment.');
@@ -983,26 +987,47 @@
                 return;
             }
 
-            const originalText = payNowBtn.textContent;
-            payNowBtn.textContent = 'Preparing Checkout...';
-            payNowBtn.disabled = true;
+            const planType = planBtn.dataset.plan;
+            if (planType !== 'monthly' && planType !== 'annual') return;
+
+            // Disable all plan buttons during checkout creation
+            const allPlanBtns = billingCard.querySelectorAll('.plan-option');
+            allPlanBtns.forEach((btn) => { btn.disabled = true; });
+            planBtn.querySelector('.plan-option__name').textContent = 'Preparing...';
             hideAlert();
+
+            const originalName = planType === 'monthly' ? 'Monthly' : 'Annual';
 
             try {
                 const res = await fetch('/api/billing/create-checkout', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ portal_session_token: storedUser.portal_session_token })
+                    body: JSON.stringify({
+                        portal_session_token: storedUser.portal_session_token,
+                        plan: planType
+                    })
                 });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error);
 
                 localStorage.setItem('apex_user', JSON.stringify(data.data));
                 renderDashboard(data.data);
-                openCheckout(data.checkout, payNowBtn, originalText);
+
+                // Create a thin wrapper so openCheckout's restoreButton works
+                // without wiping the plan button's inner HTML.
+                const restoreAllPlanBtns = () => {
+                    planBtn.querySelector('.plan-option__name').textContent = originalName;
+                    allPlanBtns.forEach((btn) => { btn.disabled = false; });
+                };
+                const pseudoBtn = {
+                    set textContent(_v) { restoreAllPlanBtns(); },
+                    set disabled(_v) { /* handled above */ }
+                };
+                openCheckout(data.checkout, pseudoBtn, originalName);
             } catch (err) {
                 showAlert(err.message);
-                restoreButton(payNowBtn, originalText);
+                planBtn.querySelector('.plan-option__name').textContent = originalName;
+                allPlanBtns.forEach((btn) => { btn.disabled = false; });
             }
         });
     }
@@ -1247,9 +1272,6 @@
                 localStorage.setItem('apex_user', JSON.stringify(data.data));
                 renderDashboard(data.data);
                 showAlert(data.message, false);
-                if (data.checkout) {
-                    openCheckout(data.checkout, btn, defaultText);
-                }
             } catch (err) {
                 showAlert(err.message);
             } finally {
