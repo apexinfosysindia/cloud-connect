@@ -24,6 +24,7 @@ const device = require('./lib/device')({ dbGet, dbRun, dbAll, config, utils });
 const billing = require('./lib/billing')({
     dbGet,
     dbRun,
+    dbAll,
     config,
     utils,
     createUniqueAccessToken: device.createUniqueAccessToken
@@ -209,4 +210,15 @@ app.listen(PORT, () => {
             console.error('Google runtime schema migration failed:', error);
         });
     googleCore.startStaleEntityInterval();
+
+    // Check for expired trial / admin-activated accounts every hour
+    const EXPIRY_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+    billing.expireOverdueAccounts().catch((err) => {
+        console.error('Initial account expiry check failed:', err);
+    });
+    setInterval(() => {
+        billing.expireOverdueAccounts().catch((err) => {
+            console.error('Periodic account expiry check failed:', err);
+        });
+    }, EXPIRY_CHECK_INTERVAL_MS);
 });
