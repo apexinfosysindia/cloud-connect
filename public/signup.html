@@ -97,19 +97,20 @@
                         <span class="detail-label">Choose a Plan</span>
                         <p class="detail-copy">Select a plan to activate remote access to your ApexOS installation.</p>
                         <div class="plan-picker">
-                            <button class="plan-option plan-option--monthly" data-plan="monthly">
+                            <button type="button" class="plan-option" data-plan="monthly">
                                 <span class="plan-option__name">Monthly</span>
-                                <span class="plan-option__price">&rupee;399<span class="plan-option__period">/mo</span></span>
+                                <span class="plan-option__price">&#8377;399<span class="plan-option__period">/mo</span></span>
                                 <span class="plan-option__detail">Billed monthly, cancel anytime</span>
                             </button>
-                            <button class="plan-option plan-option--annual plan-option--recommended" data-plan="annual">
+                            <button type="button" class="plan-option plan-option--selected" data-plan="annual">
                                 <span class="plan-option__badge">1 Year Free Trial</span>
                                 <span class="plan-option__name">Annual</span>
-                                <span class="plan-option__price">&rupee;3,599<span class="plan-option__period">/yr</span></span>
-                                <span class="plan-option__detail">Save 25% &middot; &rupee;300/mo effective</span>
+                                <span class="plan-option__price">&#8377;3,599<span class="plan-option__period">/yr</span></span>
+                                <span class="plan-option__detail">Save 25% &middot; &#8377;300/mo effective</span>
                                 <span class="plan-option__detail">Free for 1 year, then billed annually</span>
                             </button>
                         </div>
+                        <button id="subscribePlanBtn" type="button" class="button button-primary button-full plan-subscribe-btn">Subscribe</button>
                     </article>
 
                     <article id="tokenCard" class="detail-card hidden">
