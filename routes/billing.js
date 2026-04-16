@@ -51,7 +51,7 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
             const checkoutState = await billing.prepareCheckoutForUser(user, planType);
             res.status(200).json({
                 message: 'Checkout ready',
-                data: auth.serializeUser(checkoutState.user),
+                data: auth.serializeUserWithPortalSession(checkoutState.user, sessionToken),
                 checkout: checkoutState.checkout,
                 plan: planType
             });
@@ -67,7 +67,9 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
     });
 
     router.post('/api/billing/verify', async (req, res) => {
-        const { razorpay_payment_id, razorpay_subscription_id, razorpay_signature } = req.body;
+        const { razorpay_payment_id, razorpay_subscription_id, razorpay_signature, portal_session_token } = req.body;
+        const cookieToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
+        const sessionToken = cookieToken || portal_session_token;
 
         if (!razorpay_payment_id || !razorpay_subscription_id || !razorpay_signature) {
             return res.status(400).json({ error: 'Missing Razorpay verification fields' });
@@ -90,9 +92,15 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
                 return res.status(404).json({ error: 'No account found for this subscription' });
             }
 
+            // Include portal session token so the client preserves its session
+            const session = sessionToken ? auth.verifyPortalSessionToken(sessionToken) : null;
+            const responseData = session
+                ? auth.serializeUserWithPortalSession(updatedUser, sessionToken)
+                : auth.serializeUser(updatedUser);
+
             res.status(200).json({
                 message: 'Payment verified successfully',
-                data: auth.serializeUser(updatedUser)
+                data: responseData
             });
         } catch (error) {
             console.error('PAYMENT VERIFICATION ERROR:', error);
