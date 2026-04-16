@@ -1048,7 +1048,9 @@
                     portal_session_token: data.data.portal_session_token || prevUser?.portal_session_token
                 };
                 localStorage.setItem('apex_user', JSON.stringify(mergedCheckoutData));
-                renderDashboard(mergedCheckoutData);
+                // Skip renderDashboard here — status is still payment_pending
+                // so nothing visual changes, and re-rendering would reset the
+                // plan picker selection back to the annual default.
 
                 // Thin wrapper so openCheckout's restoreButton works
                 // without wiping the subscribe button's inner HTML.
