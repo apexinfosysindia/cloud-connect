@@ -892,10 +892,14 @@
     });
 
     async function verifyPayment(response, button, fallbackText) {
+        const storedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
         const res = await fetch('/api/billing/verify', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(response)
+            body: JSON.stringify({
+                ...response,
+                portal_session_token: storedUser?.portal_session_token || undefined
+            })
         });
 
         const data = await res.json();
@@ -904,8 +908,12 @@
             throw new Error(data.error);
         }
 
-        localStorage.setItem('apex_user', JSON.stringify(data.data));
-        renderDashboard(data.data);
+        const mergedData = {
+            ...data.data,
+            portal_session_token: data.data.portal_session_token || storedUser?.portal_session_token
+        };
+        localStorage.setItem('apex_user', JSON.stringify(mergedData));
+        renderDashboard(mergedData);
         restoreButton(button, fallbackText);
         showAlert('Payment successful. Remote access is now active.', false);
     }
@@ -1034,8 +1042,13 @@
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error);
 
-                localStorage.setItem('apex_user', JSON.stringify(data.data));
-                renderDashboard(data.data);
+                const prevUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
+                const mergedCheckoutData = {
+                    ...data.data,
+                    portal_session_token: data.data.portal_session_token || prevUser?.portal_session_token
+                };
+                localStorage.setItem('apex_user', JSON.stringify(mergedCheckoutData));
+                renderDashboard(mergedCheckoutData);
 
                 // Thin wrapper so openCheckout's restoreButton works
                 // without wiping the subscribe button's inner HTML.
