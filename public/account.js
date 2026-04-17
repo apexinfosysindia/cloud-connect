@@ -2,6 +2,9 @@
     const pageMode = document.body.dataset.authMode;
     const loginForm = document.getElementById('loginForm');
     const signupForm = document.getElementById('signupForm');
+    const forgotPasswordForm = document.getElementById('forgotPasswordForm');
+    const forgotPasswordLink = document.getElementById('forgotPasswordLink');
+    const backToLoginLink = document.getElementById('backToLoginLink');
     const dashboard = document.getElementById('dashboard');
     const headerSubtitle = document.getElementById('headerSubtitle');
     const accountTitle = document.getElementById('accountTitle');
@@ -23,6 +26,8 @@
     const googleConsentMeta = document.getElementById('googleConsentMeta');
     const googleConsentApproveBtn = document.getElementById('googleConsentApproveBtn');
     const googleConsentDenyBtn = document.getElementById('googleConsentDenyBtn');
+    const emailVerificationCard = document.getElementById('emailVerificationCard');
+    const resendVerificationBtn = document.getElementById('resendVerificationBtn');
     const portalBrandTitle = 'ApexOS Cloud Connect Oasis';
     const loginTitle = `Sign In | ${portalBrandTitle}`;
     const signupTitle = `Create Account | ${portalBrandTitle}`;
@@ -193,6 +198,7 @@
         googleOAuthRedirectInFlight = false;
         if (signupForm) signupForm.classList.add('hidden');
         if (loginForm) loginForm.classList.remove('hidden');
+        if (forgotPasswordForm) forgotPasswordForm.classList.add('hidden');
         if (dashboard) dashboard.classList.add('hidden');
         setHeaderState(null);
         setPageTitle(loginTitle);
@@ -295,6 +301,7 @@
             userData.subdomain || '',
             userData.domain || '',
             userData.access_token || '',
+            userData.email_verified ? '1' : '0',
             userData.google_home_enabled ? '1' : '0',
             userData.google_home_linked ? '1' : '0',
             userData.trial_ends_at || '',
@@ -405,6 +412,7 @@
         const shouldScroll = options.scroll !== false;
         if (loginForm) loginForm.classList.add('hidden');
         if (signupForm) signupForm.classList.add('hidden');
+        if (forgotPasswordForm) forgotPasswordForm.classList.add('hidden');
         dashboard.classList.remove('hidden');
         setHeaderState(userData);
         setPageTitle(dashboardTitle);
@@ -412,9 +420,15 @@
         accountTitle.textContent = `Cloud account for ${userData.email}`;
         headerSubtitle.textContent = 'Manage access status, billing and cloud address from one place.';
 
+        const emailVerified = Boolean(userData.email_verified);
         const accessEnabled = ['active', 'trial'].includes(userData.status);
         const subdomainConfigured = hasSubdomain(userData);
         const tone = getStatusTone(userData.status);
+
+        // Show/hide email verification card
+        if (emailVerificationCard) {
+            emailVerificationCard.classList.toggle('hidden', emailVerified);
+        }
 
         const statusCard = document.getElementById('statusCard');
         const statusBadge = document.getElementById('dashStatus');
@@ -430,8 +444,9 @@
 
         const billingCard = document.getElementById('billingCard');
         const tokenCard = document.getElementById('tokenCard');
-        subdomainCard.classList.toggle('hidden', subdomainConfigured);
-        billingCard.classList.toggle('hidden', userData.status !== 'payment_pending' || !subdomainConfigured);
+        // Gate subdomain and billing behind email verification
+        subdomainCard.classList.toggle('hidden', subdomainConfigured || !emailVerified);
+        billingCard.classList.toggle('hidden', userData.status !== 'payment_pending' || !subdomainConfigured || !emailVerified);
         tokenCard.classList.toggle('hidden', !accessEnabled);
 
         // Reset plan picker to default (annual selected) on every render so
@@ -969,6 +984,99 @@
         });
 
         razorpay.open();
+    }
+
+    // Forgot password toggle
+    if (forgotPasswordLink) {
+        forgotPasswordLink.addEventListener('click', function (e) {
+            e.preventDefault();
+            hideAlert();
+            if (loginForm) loginForm.classList.add('hidden');
+            if (forgotPasswordForm) forgotPasswordForm.classList.remove('hidden');
+            accountTitle.textContent = 'Reset your password';
+            headerSubtitle.textContent = 'Enter your email and we\'ll send you a reset link.';
+        });
+    }
+
+    if (backToLoginLink) {
+        backToLoginLink.addEventListener('click', function (e) {
+            e.preventDefault();
+            hideAlert();
+            if (forgotPasswordForm) forgotPasswordForm.classList.add('hidden');
+            if (loginForm) loginForm.classList.remove('hidden');
+            accountTitle.textContent = 'Sign in to your Cloud account';
+            headerSubtitle.textContent = 'Manage access, billing and your cloud address from one place.';
+        });
+    }
+
+    if (forgotPasswordForm) {
+        forgotPasswordForm.addEventListener('submit', async function (e) {
+            e.preventDefault();
+            const forgotBtn = document.getElementById('forgotBtn');
+            const forgotEmail = document.getElementById('forgotEmail');
+            if (!forgotEmail || !forgotBtn) return;
+
+            const emailValue = forgotEmail.value.trim();
+            if (!emailValue) {
+                showAlert('Please enter your email address.');
+                return;
+            }
+
+            forgotBtn.disabled = true;
+            forgotBtn.textContent = 'Sending...';
+            hideAlert();
+
+            try {
+                const res = await fetch('/api/auth/forgot-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: emailValue })
+                });
+
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error);
+
+                showAlert(data.message || 'If an account exists with that email, a reset link has been sent.', false);
+            } catch (err) {
+                showAlert(err.message);
+            } finally {
+                forgotBtn.textContent = 'Send Reset Link';
+                forgotBtn.disabled = false;
+            }
+        });
+    }
+
+    // Resend verification email
+    if (resendVerificationBtn) {
+        resendVerificationBtn.addEventListener('click', async function () {
+            const storedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
+            if (!storedUser?.portal_session_token) {
+                showAlert('Please log in again to continue.');
+                return;
+            }
+
+            resendVerificationBtn.disabled = true;
+            resendVerificationBtn.textContent = 'Sending...';
+            hideAlert();
+
+            try {
+                const res = await fetch('/api/auth/resend-verification', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ portal_session_token: storedUser.portal_session_token })
+                });
+
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error);
+
+                showAlert(data.message || 'Verification email sent. Check your inbox.', false);
+            } catch (err) {
+                showAlert(err.message);
+            } finally {
+                resendVerificationBtn.textContent = 'Resend Verification Email';
+                resendVerificationBtn.disabled = false;
+            }
+        });
     }
 
     if (logoutBtn) {

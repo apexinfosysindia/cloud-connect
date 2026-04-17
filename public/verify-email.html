@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verify Email | ApexOS Cloud Connect Oasis</title>
+    <link rel="stylesheet" href="/styles.css">
+    <link rel="icon" href="/favicon.ico">
+</head>
+<body class="portal-page auth-page" data-auth-mode="verify-email">
+<div class="page-shell page-shell--portal">
+    <header class="masthead">
+        <div class="brand-suite">
+            <img src="/group-logo.png" alt="Apex Infosys" class="brand-suite__group">
+            <span class="brand-suite__divider"></span>
+            <div class="brand-suite__product brand-suite__product--compact">
+                <img src="/logo.png" alt="ApexOS Cloud Connect" class="brand-suite__product-logo brand-suite__product-logo--compact">
+                <div>
+                    <div class="brand-suite__title">ApexOS Cloud Connect</div>
+                    <div class="brand-suite__subtitle">Secure remote access service</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="masthead-actions" id="guestNavActions">
+            <a href="/login.html" class="button button-primary">Sign In</a>
+        </div>
+    </header>
+
+    <main class="auth-main">
+        <section class="section-card auth-card">
+            <div class="account-shell__header">
+                <div>
+                    <h1 id="verifyTitle" class="section-title">Verifying your email...</h1>
+                    <p id="verifySubtitle" class="section-text">Please wait while we verify your email address.</p>
+                </div>
+            </div>
+
+            <div id="alertBox" class="alert"></div>
+
+            <div id="verifyActions" class="stack hidden">
+                <a href="/login.html" class="button button-primary button-full">Sign In to Your Account</a>
+            </div>
+
+            <div id="verifyError" class="stack hidden">
+                <p class="section-text">The verification link may have expired. Sign in to your account and request a new one.</p>
+                <a href="/login.html" class="button button-primary button-full">Go to Sign In</a>
+            </div>
+        </section>
+    </main>
+</div>
+
+<script>
+(function verifyEmail() {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    const title = document.getElementById('verifyTitle');
+    const subtitle = document.getElementById('verifySubtitle');
+    const alertBox = document.getElementById('alertBox');
+    const verifyActions = document.getElementById('verifyActions');
+    const verifyError = document.getElementById('verifyError');
+
+    function showAlert(message, isError) {
+        alertBox.textContent = message;
+        alertBox.className = 'alert is-visible ' + (isError ? 'is-error' : 'is-success');
+    }
+
+    if (!token) {
+        title.textContent = 'Invalid verification link';
+        subtitle.textContent = 'No verification token was provided.';
+        verifyError.classList.remove('hidden');
+        return;
+    }
+
+    fetch('/api/auth/verify-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: token })
+    })
+    .then(function(res) { return res.json().then(function(data) { return { ok: res.ok, data: data }; }); })
+    .then(function(result) {
+        if (!result.ok) {
+            throw new Error(result.data.error || 'Verification failed');
+        }
+
+        title.textContent = 'Email verified!';
+        subtitle.textContent = 'Your email has been verified successfully. You can now continue setting up your account.';
+        showAlert('Email verified successfully.', false);
+        verifyActions.classList.remove('hidden');
+
+        // Store the session data so they're logged in when they go to dashboard
+        if (result.data.data) {
+            localStorage.setItem('apex_user', JSON.stringify(result.data.data));
+        }
+    })
+    .catch(function(err) {
+        title.textContent = 'Verification failed';
+        subtitle.textContent = err.message || 'Unable to verify your email.';
+        showAlert(err.message || 'Verification failed', true);
+        verifyError.classList.remove('hidden');
+    });
+})();
+</script>
+</body>
+</html>

@@ -35,6 +35,10 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
                 return res.status(400).json({ error: 'Set your cloud address before creating a payment checkout.' });
             }
 
+            if (!user.email_verified) {
+                return res.status(403).json({ error: 'Please verify your email address before proceeding to payment.' });
+            }
+
             if (
                 user.status === 'active' ||
                 ['active', 'authenticated', 'charged'].includes((user.razorpay_subscription_status || '').toLowerCase())

@@ -71,6 +71,18 @@
             </form>
 
             <section id="dashboard" class="dashboard-grid hidden">
+                <article id="emailVerificationCard" class="status-card status-card--pending hidden">
+                    <div class="status-meta">
+                        <div>
+                            <span class="status-label">Email Verification</span>
+                            <div class="status-title">Verify your email to continue</div>
+                        </div>
+                        <span class="status-badge status-badge--pending">unverified</span>
+                    </div>
+                    <p class="status-text">A verification email has been sent to your inbox. Click the link in the email to verify your address and continue setting up your account.</p>
+                    <button id="resendVerificationBtn" class="button button-secondary button-full" style="margin-top: 12px;">Resend Verification Email</button>
+                </article>
+
                 <article id="statusCard" class="status-card">
                     <div class="status-meta">
                         <div>

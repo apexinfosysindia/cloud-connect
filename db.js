@@ -11,6 +11,7 @@ const USERS_TABLE_SCHEMA = `
         subdomain TEXT UNIQUE,
         access_token TEXT UNIQUE,
         status TEXT NOT NULL CHECK(status IN ('payment_pending', 'active', 'trial', 'expired', 'suspended')),
+        email_verified INTEGER NOT NULL DEFAULT 0,
         google_home_enabled INTEGER NOT NULL DEFAULT 0,
         google_home_linked INTEGER NOT NULL DEFAULT 0,
         google_home_linked_at DATETIME,
@@ -172,6 +173,30 @@ const GOOGLE_HOME_SYNC_SNAPSHOTS_TABLE_SCHEMA = `
     )
 `;
 
+const EMAIL_VERIFICATION_TOKENS_TABLE_SCHEMA = `
+    CREATE TABLE IF NOT EXISTS email_verification_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at DATETIME NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        used_at DATETIME,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+`;
+
+const PASSWORD_RESET_TOKENS_TABLE_SCHEMA = `
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at DATETIME NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        used_at DATETIME,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+`;
+
 const DEVICE_SCHEMA_STATEMENTS = [
     DEVICES_TABLE_SCHEMA,
     DEVICE_LOGS_TABLE_SCHEMA,
@@ -182,6 +207,8 @@ const DEVICE_SCHEMA_STATEMENTS = [
     GOOGLE_HOME_ENTITIES_TABLE_SCHEMA,
     GOOGLE_HOME_COMMAND_QUEUE_TABLE_SCHEMA,
     GOOGLE_HOME_SYNC_SNAPSHOTS_TABLE_SCHEMA,
+    EMAIL_VERIFICATION_TOKENS_TABLE_SCHEMA,
+    PASSWORD_RESET_TOKENS_TABLE_SCHEMA,
     'CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id)',
     'CREATE INDEX IF NOT EXISTS idx_devices_last_seen ON devices(last_seen_at)',
     'CREATE INDEX IF NOT EXISTS idx_device_logs_device_created ON device_logs(device_id, created_at DESC)',
@@ -205,7 +232,12 @@ const DEVICE_SCHEMA_STATEMENTS = [
     'CREATE INDEX IF NOT EXISTS idx_google_home_entities_user_last_seen ON google_home_entities(user_id, entity_last_seen_at)',
     'ALTER TABLE users ADD COLUMN google_home_security_pin TEXT',
     'ALTER TABLE users ADD COLUMN ha_external_url TEXT',
-    'ALTER TABLE users ADD COLUMN ha_camera_token TEXT'
+    'ALTER TABLE users ADD COLUMN ha_camera_token TEXT',
+    'ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0',
+    'CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_user ON email_verification_tokens(user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_expiry ON email_verification_tokens(expires_at)',
+    'CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expiry ON password_reset_tokens(expires_at)'
 ];
 
 const USERS_REBUILD_COLUMNS = [
@@ -215,6 +247,7 @@ const USERS_REBUILD_COLUMNS = [
     'subdomain',
     'access_token',
     'status',
+    'email_verified',
     'google_home_enabled',
     'google_home_linked',
     'google_home_linked_at',
@@ -240,7 +273,7 @@ function selectExpressionForColumn(columnName, existingColumnsSet) {
         return `'payment_pending' AS ${columnName}`;
     }
 
-    if (columnName === 'google_home_enabled' || columnName === 'google_home_linked') {
+    if (columnName === 'google_home_enabled' || columnName === 'google_home_linked' || columnName === 'email_verified') {
         return `0 AS ${columnName}`;
     }
 
@@ -267,6 +300,7 @@ function buildUsersTableRebuildSql(existingColumns = []) {
         subdomain TEXT UNIQUE,
         access_token TEXT UNIQUE,
         status TEXT NOT NULL CHECK(status IN ('payment_pending', 'active', 'trial', 'expired', 'suspended')),
+        email_verified INTEGER NOT NULL DEFAULT 0,
         google_home_enabled INTEGER NOT NULL DEFAULT 0,
         google_home_linked INTEGER NOT NULL DEFAULT 0,
         google_home_linked_at DATETIME,
@@ -364,7 +398,8 @@ function initDb() {
                 'razorpay_payment_id',
                 'razorpay_subscription_status',
                 'trial_approved_at',
-                'activated_at'
+                'activated_at',
+                'email_verified'
             ].some((fragment) => !currentSql.includes(fragment)) ||
             currentSql.includes('access_token TEXT UNIQUE NOT NULL') ||
             currentSql.includes('subdomain TEXT UNIQUE NOT NULL');

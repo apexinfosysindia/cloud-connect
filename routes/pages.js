@@ -23,6 +23,26 @@ module.exports = function ({ config }) {
         return next();
     });
 
+    router.get(['/verify-email', '/verify-email.html', '/reset-password', '/reset-password.html'], (req, res, next) => {
+        const isResetPath = req.path.startsWith('/reset-password');
+        const targetPath = isResetPath ? '/reset-password.html' : '/verify-email.html';
+        const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+
+        if (req.hostname === config.CUSTOMER_PORTAL_HOST) {
+            if (req.path === '/verify-email' || req.path === '/reset-password') {
+                return res.redirect(`${targetPath}${query}`);
+            }
+            return next();
+        }
+
+        // Redirect to customer portal if accessed from other hosts
+        if (req.hostname === config.ADMIN_PORTAL_HOST || req.hostname === config.CLOUD_BASE_DOMAIN) {
+            return res.redirect(`https://${config.CUSTOMER_PORTAL_HOST}${targetPath}${query}`);
+        }
+
+        return next();
+    });
+
     router.get(['/admin', '/admin.html'], (req, res, next) => {
         if (req.hostname === config.ADMIN_PORTAL_HOST) {
             return res.redirect('/');
