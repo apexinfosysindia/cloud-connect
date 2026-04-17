@@ -55,6 +55,9 @@ entityMapping.setHasGoogleHomegraphCredentials(() => homegraph.hasGoogleHomegrap
 // Auth depends on device and googleCore, so it must be initialized after them
 const auth = require('./lib/auth')({ dbGet, config, utils, device, googleCore });
 
+// Email module for verification and password reset flows
+const email = require('./lib/email')({ dbGet, dbRun, config, utils });
+
 // --- Express app setup ---
 const app = express();
 
@@ -142,10 +145,22 @@ const generalApiRateLimiter = rateLimit({
     message: { error: 'Too many requests. Please slow down.' }
 });
 
+const emailRateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // 5 email requests per 15 minutes per IP
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many email requests. Please try again later.' }
+});
+
 app.use('/api/', generalApiRateLimiter);
 app.use('/api/auth/login', authRateLimiter);
 app.use('/api/admin/login', authRateLimiter);
 app.use('/api/auth/signup', signupRateLimiter);
+app.use('/api/auth/forgot-password', emailRateLimiter);
+app.use('/api/auth/resend-verification', emailRateLimiter);
+app.use('/api/auth/reset-password', authRateLimiter);
+app.use('/api/auth/verify-email', authRateLimiter);
 
 // --- Static files ---
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
@@ -158,6 +173,7 @@ const deps = {
     config,
     utils,
     auth,
+    email,
     device,
     billing,
     googleCore,

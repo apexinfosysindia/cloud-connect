@@ -58,10 +58,34 @@
 
                 <button type="submit" id="loginBtn" class="button button-primary button-full">Sign In</button>
 
+                <p class="link-row"><a href="#" id="forgotPasswordLink" class="link-inline">Forgot your password?</a></p>
                 <p class="link-row">Need an account? <a href="/signup.html" class="link-inline">Create one</a></p>
             </form>
 
+            <form id="forgotPasswordForm" class="stack hidden">
+                <div class="field">
+                    <label class="field-label" for="forgotEmail">Email Address</label>
+                    <input class="input" type="email" id="forgotEmail" autocomplete="email" required>
+                </div>
+
+                <button type="submit" id="forgotBtn" class="button button-primary button-full">Send Reset Link</button>
+
+                <p class="link-row"><a href="#" id="backToLoginLink" class="link-inline">Back to sign in</a></p>
+            </form>
+
             <section id="dashboard" class="dashboard-grid hidden">
+                <article id="emailVerificationCard" class="status-card status-card--pending hidden">
+                    <div class="status-meta">
+                        <div>
+                            <span class="status-label">Email Verification</span>
+                            <div class="status-title">Verify your email to continue</div>
+                        </div>
+                        <span class="status-badge status-badge--pending">unverified</span>
+                    </div>
+                    <p class="status-text">A verification email has been sent to your inbox. Click the link in the email to verify your address and continue setting up your account.</p>
+                    <button id="resendVerificationBtn" class="button button-secondary button-full" style="margin-top: 12px;">Resend Verification Email</button>
+                </article>
+
                 <article id="statusCard" class="status-card">
                     <div class="status-meta">
                         <div>
