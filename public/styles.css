@@ -1118,6 +1118,26 @@ code {
     width: 100%;
 }
 
+.button-danger {
+    background: #dc2626;
+    color: #fff;
+    border: none;
+}
+
+.button-danger:hover:not(:disabled) {
+    background: #b91c1c;
+}
+
+.danger-zone-card {
+    border: 1px solid #fca5a5;
+    background: #fef2f2;
+    margin-top: 8px;
+}
+
+.danger-label {
+    color: #dc2626;
+}
+
 .link-row {
     margin: 0;
     text-align: center;
