@@ -250,6 +250,9 @@
 
     function getStatusMessage(userData) {
         if (userData.status === 'payment_pending') {
+            if (lastTrialCheckForEmail === userData.email && lastTrialEligibility === false) {
+                return 'Billing is pending. The free trial has already been used for this account — pick a plan to subscribe and restore access.';
+            }
             return 'Billing is pending. Remote access remains unavailable until the account is enabled.';
         }
         if (userData.status === 'trial') {
@@ -412,6 +415,53 @@
         }
     }
 
+    // Tracks the last fetched trial eligibility so we don't re-query on every
+    // poll tick if nothing changed. null = unknown, true/false = known.
+    let lastTrialEligibility = null;
+    let lastTrialCheckForEmail = null;
+
+    async function refreshTrialEligibility(userData) {
+        const billingCard = document.getElementById('billingCard');
+        if (!billingCard || !userData || !userData.portal_session_token) return;
+
+        // Only re-query when the user identity changes or we have no cached
+        // result yet. Eligibility doesn't flip mid-session in practice.
+        if (lastTrialCheckForEmail === userData.email && lastTrialEligibility !== null) {
+            applyTrialEligibility(billingCard, lastTrialEligibility);
+            return;
+        }
+
+        try {
+            const res = await fetch('/api/billing/trial-eligibility', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ portal_session_token: userData.portal_session_token })
+            });
+            if (!res.ok) return;
+            const data = await res.json();
+            lastTrialEligibility = Boolean(data.trial_available);
+            lastTrialCheckForEmail = userData.email;
+            applyTrialEligibility(billingCard, lastTrialEligibility);
+            // Refresh the status detail copy so trial-consumed users see the
+            // updated "pick a plan" message without waiting for the next poll.
+            const statusDetail = document.getElementById('dashStatusDetail');
+            if (statusDetail) {
+                statusDetail.textContent = getStatusMessage(userData);
+            }
+        } catch (_ignored) {
+            // Network glitches shouldn't break the dashboard — leave UI as-is.
+        }
+    }
+
+    function applyTrialEligibility(billingCard, trialAvailable) {
+        const annualBtn = billingCard.querySelector('[data-plan="annual"]');
+        if (!annualBtn) return;
+        const trialOnly = annualBtn.querySelectorAll('[data-trial-only]');
+        const noTrialOnly = annualBtn.querySelectorAll('[data-no-trial-only]');
+        trialOnly.forEach((el) => el.classList.toggle('hidden', !trialAvailable));
+        noTrialOnly.forEach((el) => el.classList.toggle('hidden', trialAvailable));
+    }
+
     function renderDashboard(userData, options = {}) {
         if (manageViewActive && !options.fromManageBack) {
             // Don't fight the manage account view: just refresh the cached
@@ -458,7 +508,8 @@
         const tokenCard = document.getElementById('tokenCard');
         // Gate subdomain and billing behind email verification
         subdomainCard.classList.toggle('hidden', subdomainConfigured || !emailVerified);
-        billingCard.classList.toggle('hidden', userData.status !== 'payment_pending' || !subdomainConfigured || !emailVerified);
+        const showBillingCard = userData.status === 'payment_pending' && subdomainConfigured && emailVerified;
+        billingCard.classList.toggle('hidden', !showBillingCard);
         tokenCard.classList.toggle('hidden', !accessEnabled);
 
         // Reset plan picker to default (annual selected) on every render so
@@ -472,6 +523,15 @@
         if (defaultPlan) {
             defaultPlan.classList.add('plan-option--selected');
             defaultPlan.setAttribute('aria-pressed', 'true');
+        }
+
+        // When the billing card is visible, check whether this user is still
+        // eligible for the 1-year free trial. Users who already consumed a
+        // trial (e.g. prior annual subscription whose auto-renewal failed,
+        // or deleted-and-resignup with the same email) see the annual plan
+        // without the trial badge and will be charged immediately.
+        if (showBillingCard) {
+            refreshTrialEligibility(userData).catch(() => {});
         }
 
         if (dashSubdomain) {

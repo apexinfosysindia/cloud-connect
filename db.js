@@ -24,6 +24,8 @@ const USERS_TABLE_SCHEMA = `
         razorpay_subscription_status TEXT,
         trial_ends_at DATETIME,
         trial_approved_at DATETIME,
+        trial_consumed_at DATETIME,
+        payment_fingerprint TEXT,
         activated_at DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
@@ -197,6 +199,22 @@ const PASSWORD_RESET_TOKENS_TABLE_SCHEMA = `
     )
 `;
 
+// Persistent record of trial consumption keyed on normalized email.
+// Survives account deletion so the same email (or gmail dot/+tag variant)
+// cannot claim another free trial after delete-and-resignup.
+const TRIAL_HISTORY_TABLE_SCHEMA = `
+    CREATE TABLE IF NOT EXISTS trial_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email_normalized TEXT NOT NULL,
+        email_original TEXT NOT NULL,
+        source TEXT NOT NULL,
+        user_id_at_time INTEGER,
+        payment_fingerprint TEXT,
+        consumed_at DATETIME NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+`;
+
 const DEVICE_SCHEMA_STATEMENTS = [
     DEVICES_TABLE_SCHEMA,
     DEVICE_LOGS_TABLE_SCHEMA,
@@ -209,6 +227,7 @@ const DEVICE_SCHEMA_STATEMENTS = [
     GOOGLE_HOME_SYNC_SNAPSHOTS_TABLE_SCHEMA,
     EMAIL_VERIFICATION_TOKENS_TABLE_SCHEMA,
     PASSWORD_RESET_TOKENS_TABLE_SCHEMA,
+    TRIAL_HISTORY_TABLE_SCHEMA,
     'CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id)',
     'CREATE INDEX IF NOT EXISTS idx_devices_last_seen ON devices(last_seen_at)',
     'CREATE INDEX IF NOT EXISTS idx_device_logs_device_created ON device_logs(device_id, created_at DESC)',
@@ -238,8 +257,34 @@ const DEVICE_SCHEMA_STATEMENTS = [
     'CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_expiry ON email_verification_tokens(expires_at)',
     'CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id)',
     'CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expiry ON password_reset_tokens(expires_at)',
-    'ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0'
+    'ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE users ADD COLUMN trial_consumed_at DATETIME',
+    'ALTER TABLE users ADD COLUMN payment_fingerprint TEXT',
+    'ALTER TABLE trial_history ADD COLUMN payment_fingerprint TEXT',
+    'CREATE INDEX IF NOT EXISTS idx_trial_history_email_normalized ON trial_history(email_normalized)',
+    'CREATE INDEX IF NOT EXISTS idx_trial_history_payment_fingerprint ON trial_history(payment_fingerprint)',
+    'CREATE INDEX IF NOT EXISTS idx_users_payment_fingerprint ON users(payment_fingerprint)'
 ];
+
+// Aggressive one-time backfill for trial_consumed_at on existing rows that
+// predate the column. We flag any user who looks like they could have
+// received a trial OR who has a Razorpay subscription on file — the latter
+// is the "aggressive" option that also covers monthly-plan users so they
+// cannot switch to annual later and claim a fresh free year on the same
+// account. The email-based trial_history guard still catches delete-and-
+// resignup on top of this.
+//
+// Idempotent: only fills rows where trial_consumed_at IS NULL.
+const TRIAL_CONSUMED_BACKFILL_SQL = `
+    UPDATE users
+    SET trial_consumed_at = COALESCE(trial_approved_at, activated_at, created_at, CURRENT_TIMESTAMP)
+    WHERE trial_consumed_at IS NULL
+      AND (
+          trial_approved_at IS NOT NULL
+          OR trial_ends_at IS NOT NULL
+          OR razorpay_subscription_id IS NOT NULL
+      )
+`;
 
 function runStatementsSequentially(statements, index, done) {
     if (index >= statements.length) {
@@ -265,9 +310,21 @@ function initDeviceTables() {
     runStatementsSequentially(DEVICE_SCHEMA_STATEMENTS, 0, (error) => {
         if (error) {
             console.error('Error preparing device tables:', error.message);
-        } else {
-            console.log('Device fleet tables ready.');
+            return;
         }
+        console.log('Device fleet tables ready.');
+
+        // One-time backfill of trial_consumed_at for rows that predate the
+        // column. Safe to run on every boot — idempotent WHERE clause.
+        db.run(TRIAL_CONSUMED_BACKFILL_SQL, function (backfillErr) {
+            if (backfillErr) {
+                console.error('trial_consumed_at backfill failed:', backfillErr.message);
+                return;
+            }
+            if (this.changes > 0) {
+                console.log(`trial_consumed_at backfilled on ${this.changes} existing user row(s).`);
+            }
+        });
     });
 }
 
