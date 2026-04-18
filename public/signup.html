@@ -157,43 +157,43 @@
                     </article>
                 </div>
 
-                <div id="manageAccountView" class="manage-view hidden">
-                    <div class="manage-view__header">
-                        <div>
-                            <h2 class="section-title section-title--small">Manage Account</h2>
-                            <p class="section-text">Account settings, security and data management.</p>
-                        </div>
-                        <button id="manageBackBtn" type="button" class="button button-secondary button-small">&larr; Back</button>
-                    </div>
-
-                    <div class="manage-sections">
-                        <section class="manage-section">
-                            <span class="detail-label">Log Out from All Devices</span>
-                            <p class="detail-copy">This will log you out from Apex Oasis Cloud everywhere you are currently logged in, this includes Apex MCU Plus, Google Home, Alexa, browsers, etc.</p>
-                            <p class="detail-copy">It can take up to an hour before all devices are logged out.</p>
-                            <button id="logoutAllDevicesBtn" type="button" class="button button-secondary button-full">Log Out All Devices</button>
-                        </section>
-
-                        <section class="manage-section">
-                            <span class="detail-label">Change Password</span>
-                            <form id="changePasswordForm" class="manage-form" autocomplete="off">
-                                <input class="input" type="password" id="currentPasswordInput" placeholder="Current password" required autocomplete="current-password">
-                                <input class="input" type="password" id="newPasswordInput" placeholder="New password (min 8 characters)" required minlength="8" maxlength="128" autocomplete="new-password">
-                                <p id="changePasswordMsg" class="detail-copy manage-msg"></p>
-                                <button type="submit" id="changePasswordBtn" class="button button-secondary button-full">Change Password</button>
-                            </form>
-                        </section>
-
-                        <section class="manage-section manage-section--danger">
-                            <span class="detail-label danger-label">Danger Zone</span>
-                            <p class="detail-copy">Permanently delete your account, all devices, and cancel any active subscription. This cannot be undone.</p>
-                            <button id="deleteAccountBtn" type="button" class="button button-danger button-full">Delete My Account</button>
-                        </section>
-                    </div>
-                </div>
-
                 <button id="logoutBtn" class="button button-secondary button-full">Log Out</button>
                 <button id="manageAccountBtn" class="button button-secondary button-full">Manage Account</button>
+            </section>
+
+            <section id="manageAccountView" class="manage-view hidden">
+                <div class="manage-view__header">
+                    <div>
+                        <h2 class="section-title section-title--small">Manage Account</h2>
+                        <p class="section-text">Account settings, security and data management.</p>
+                    </div>
+                    <button id="manageBackBtn" type="button" class="button button-secondary button-small">&larr; Back</button>
+                </div>
+
+                <div class="manage-sections">
+                    <section class="manage-section">
+                        <span class="detail-label">Log Out from All Devices</span>
+                        <p class="detail-copy">This will log you out from Apex Oasis Cloud everywhere you are currently logged in, this includes Apex MCU Plus, Google Home, Alexa, browsers, etc.</p>
+                        <p class="detail-copy">It can take up to an hour before all devices are logged out.</p>
+                        <button id="logoutAllDevicesBtn" type="button" class="button button-secondary button-full">Log Out All Devices</button>
+                    </section>
+
+                    <section class="manage-section">
+                        <span class="detail-label">Change Password</span>
+                        <form id="changePasswordForm" class="manage-form" autocomplete="off">
+                            <input class="input" type="password" id="currentPasswordInput" placeholder="Current password" required autocomplete="current-password">
+                            <input class="input" type="password" id="newPasswordInput" placeholder="New password (min 8 characters)" required minlength="8" maxlength="128" autocomplete="new-password">
+                            <p id="changePasswordMsg" class="detail-copy manage-msg"></p>
+                            <button type="submit" id="changePasswordBtn" class="button button-secondary button-full">Change Password</button>
+                        </form>
+                    </section>
+
+                    <section class="manage-section manage-section--danger">
+                        <span class="detail-label danger-label">Danger Zone</span>
+                        <p class="detail-copy">Permanently delete your account, all devices, and cancel any active subscription. This cannot be undone.</p>
+                        <button id="deleteAccountBtn" type="button" class="button button-danger button-full">Delete My Account</button>
+                    </section>
+                </div>
             </section>
         </section>
     </main>
