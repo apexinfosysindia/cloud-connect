@@ -1091,10 +1091,11 @@
         });
     }
 
-    // Manage Account modal
+    // Manage Account view (in-place panel inside the dashboard)
     const manageAccountBtn = document.getElementById('manageAccountBtn');
-    const manageAccountModal = document.getElementById('manageAccountModal');
-    const manageModalClose = document.getElementById('manageModalClose');
+    const manageAccountView = document.getElementById('manageAccountView');
+    const manageBackBtn = document.getElementById('manageBackBtn');
+    const dashboardSection = document.getElementById('dashboard');
     const logoutAllDevicesBtn = document.getElementById('logoutAllDevicesBtn');
     const changePasswordForm = document.getElementById('changePasswordForm');
     const currentPasswordInput = document.getElementById('currentPasswordInput');
@@ -1102,33 +1103,40 @@
     const changePasswordMsg = document.getElementById('changePasswordMsg');
     const changePasswordBtn = document.getElementById('changePasswordBtn');
 
-    function openManageModal() {
-        if (!manageAccountModal) return;
+    // Track which dashboard children we hid when entering the manage view, so we can
+    // restore on Back. We use a generic "hide all siblings" approach and then
+    // re-run renderDashboard to authoritatively restore per-card visibility.
+    function showManageView() {
+        if (!manageAccountView || !dashboardSection) return;
         if (changePasswordMsg) changePasswordMsg.textContent = '';
         if (currentPasswordInput) currentPasswordInput.value = '';
         if (newPasswordInput) newPasswordInput.value = '';
-        manageAccountModal.classList.remove('hidden');
+
+        Array.from(dashboardSection.children).forEach((child) => {
+            if (child === manageAccountView) return;
+            child.classList.add('hidden');
+        });
+        manageAccountView.classList.remove('hidden');
+        manageAccountView.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
-    function closeManageModal() {
-        if (!manageAccountModal) return;
-        manageAccountModal.classList.add('hidden');
+    function hideManageView() {
+        if (!manageAccountView) return;
+        manageAccountView.classList.add('hidden');
+        // Re-run renderDashboard so per-card visibility is restored authoritatively
+        // based on current user state.
+        const storedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
+        if (storedUser) {
+            renderDashboard(storedUser, { scroll: false });
+        }
     }
 
     if (manageAccountBtn) {
-        manageAccountBtn.addEventListener('click', openManageModal);
+        manageAccountBtn.addEventListener('click', showManageView);
     }
 
-    if (manageModalClose) {
-        manageModalClose.addEventListener('click', closeManageModal);
-    }
-
-    if (manageAccountModal) {
-        manageAccountModal.addEventListener('click', (event) => {
-            if (event.target.closest('[data-close-manage-modal]')) {
-                closeManageModal();
-            }
-        });
+    if (manageBackBtn) {
+        manageBackBtn.addEventListener('click', hideManageView);
     }
 
     // Log out from all devices
@@ -1136,7 +1144,7 @@
         logoutAllDevicesBtn.addEventListener('click', async () => {
             const storedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
             if (!storedUser?.portal_session_token) {
-                closeManageModal();
+                hideManageView();
                 showAlert('Please log in again to continue.');
                 return;
             }
@@ -1163,7 +1171,7 @@
                     renderDashboard(data.data, { scroll: false });
                 }
 
-                closeManageModal();
+                hideManageView();
                 showAlert(data.message || 'All devices have been logged out.', false);
             } catch (err) {
                 showAlert(err.message);
@@ -1180,7 +1188,7 @@
             event.preventDefault();
             const storedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
             if (!storedUser?.portal_session_token) {
-                closeManageModal();
+                hideManageView();
                 showAlert('Please log in again to continue.');
                 return;
             }
@@ -1248,7 +1256,6 @@
 
     function openDeleteModal() {
         if (!deleteAccountModal) return;
-        closeManageModal();
         if (deleteConfirmPassword) deleteConfirmPassword.value = '';
         if (deleteModalError) deleteModalError.textContent = '';
         if (deleteModalConfirmBtn) {
