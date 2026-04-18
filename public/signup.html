@@ -115,11 +115,12 @@
                                 <span class="plan-option__detail">Billed monthly, cancel anytime</span>
                             </button>
                             <button type="button" class="plan-option plan-option--selected" data-plan="annual" aria-pressed="true">
-                                <span class="plan-option__badge">1 Year Free Trial</span>
+                                <span class="plan-option__badge" data-trial-only>1 Year Free Trial</span>
                                 <span class="plan-option__name">Annual</span>
                                 <span class="plan-option__price">&#8377;3,599<span class="plan-option__period">/yr</span></span>
                                 <span class="plan-option__detail">Save 25% &middot; &#8377;300/mo effective</span>
-                                <span class="plan-option__detail">Free for 1 year, then billed annually</span>
+                                <span class="plan-option__detail" data-trial-only>Free for 1 year, then billed annually</span>
+                                <span class="plan-option__detail hidden" data-no-trial-only>Billed annually &middot; trial already used</span>
                             </button>
                         </div>
                         <button id="subscribePlanBtn" type="button" class="button button-primary button-full plan-subscribe-btn">Subscribe</button>

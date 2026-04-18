@@ -3,6 +3,46 @@ const express = require('express');
 module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
     const router = express.Router();
 
+    // Returns whether the authenticated user is still eligible for the
+    // 1-year free trial on the annual plan. The UI uses this to hide the
+    // "1 Year Free Trial" badge and adjust copy for users who have already
+    // consumed a trial (e.g. an auto-renewal failed and they're back on
+    // payment_pending, or they deleted and re-signed up with the same email).
+    router.post('/api/billing/trial-eligibility', async (req, res) => {
+        const { portal_session_token } = req.body || {};
+        const cookieToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
+        const sessionToken = cookieToken || portal_session_token;
+
+        if (!sessionToken) {
+            return res.status(400).json({ error: 'Portal session token is required' });
+        }
+
+        try {
+            const session = auth.verifyPortalSessionToken(sessionToken);
+            if (!session) {
+                return res.status(401).json({ error: 'Invalid portal session. Please log in again.' });
+            }
+
+            const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [session.email]);
+            if (!user) {
+                return res.status(404).json({ error: 'Account not found' });
+            }
+
+            if (!auth.portalTokenEpochMatches(session, user)) {
+                return res.status(401).json({ error: 'Invalid portal session. Please log in again.' });
+            }
+
+            const consumed = await billing.hasConsumedTrial(user);
+            return res.status(200).json({
+                trial_available: !consumed,
+                trial_consumed_at: user.trial_consumed_at || null
+            });
+        } catch (error) {
+            console.error('TRIAL ELIGIBILITY ERROR:', error);
+            return res.status(500).json({ error: 'Unable to check trial eligibility' });
+        }
+    });
+
     router.post('/api/billing/create-checkout', async (req, res) => {
         const { access_token, portal_session_token, plan } = req.body;
         const cookieToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
@@ -60,7 +100,8 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
                 message: 'Checkout ready',
                 data: auth.serializeUserWithPortalSession(checkoutState.user, sessionToken),
                 checkout: checkoutState.checkout,
-                plan: planType
+                plan: planType,
+                trial_granted: Boolean(checkoutState.trialGranted)
             });
         } catch (error) {
             console.error('CHECKOUT CREATION ERROR:', error);
