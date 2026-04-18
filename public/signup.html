@@ -169,6 +169,25 @@
     </main>
 </div>
 
+<div id="deleteAccountModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
+    <div class="modal__backdrop" data-close-delete-modal="true"></div>
+    <div class="modal__panel">
+        <div class="modal__header">
+            <div>
+                <h2 id="deleteModalTitle" class="section-title section-title--small danger-label">Delete Account</h2>
+                <p class="section-text">This will permanently delete your account, all devices, and cancel any active subscription. This cannot be undone.</p>
+            </div>
+            <button id="deleteModalClose" class="button button-secondary button-small">Cancel</button>
+        </div>
+        <form id="deleteAccountForm" autocomplete="off">
+            <label class="detail-label" for="deleteConfirmPassword">Enter your password to confirm</label>
+            <input class="input" type="password" id="deleteConfirmPassword" placeholder="Your account password" required autocomplete="current-password">
+            <p id="deleteModalError" class="detail-copy danger-label" style="min-height:1.2em"></p>
+            <button type="submit" id="deleteModalConfirmBtn" class="button button-danger button-full">Permanently Delete Account</button>
+        </form>
+    </div>
+</div>
+
 <script src="/account.js"></script>
 </body>
 </html>
