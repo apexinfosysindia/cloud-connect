@@ -1142,6 +1142,19 @@ code {
     gap: 20px;
 }
 
+.manage-view {
+    display: grid;
+    gap: 18px;
+}
+
+.manage-view__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
 .manage-section {
     display: grid;
     gap: 10px;
