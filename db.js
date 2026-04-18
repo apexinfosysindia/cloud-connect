@@ -234,101 +234,11 @@ const DEVICE_SCHEMA_STATEMENTS = [
     'ALTER TABLE users ADD COLUMN ha_external_url TEXT',
     'ALTER TABLE users ADD COLUMN ha_camera_token TEXT',
     'ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0',
-    // One-time migration: auto-verify existing users who already completed setup
-    `UPDATE users SET email_verified = 1 WHERE email_verified = 0 AND status != 'payment_pending'`,
     'CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_user ON email_verification_tokens(user_id)',
     'CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_expiry ON email_verification_tokens(expires_at)',
     'CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id)',
     'CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expiry ON password_reset_tokens(expires_at)'
 ];
-
-const USERS_REBUILD_COLUMNS = [
-    'id',
-    'email',
-    'password',
-    'subdomain',
-    'access_token',
-    'status',
-    'email_verified',
-    'google_home_enabled',
-    'google_home_linked',
-    'google_home_linked_at',
-    'google_home_security_pin',
-    'ha_external_url',
-    'ha_camera_token',
-    'razorpay_customer_id',
-    'razorpay_subscription_id',
-    'razorpay_payment_id',
-    'razorpay_subscription_status',
-    'trial_ends_at',
-    'trial_approved_at',
-    'activated_at',
-    'created_at'
-];
-
-function selectExpressionForColumn(columnName, existingColumnsSet) {
-    if (existingColumnsSet.has(columnName)) {
-        return columnName;
-    }
-
-    if (columnName === 'status') {
-        return `'payment_pending' AS ${columnName}`;
-    }
-
-    if (columnName === 'google_home_enabled' || columnName === 'google_home_linked' || columnName === 'email_verified') {
-        return `0 AS ${columnName}`;
-    }
-
-    if (columnName === 'created_at') {
-        return `CURRENT_TIMESTAMP AS ${columnName}`;
-    }
-
-    return `NULL AS ${columnName}`;
-}
-
-function buildUsersTableRebuildSql(existingColumns = []) {
-    const existingColumnsSet = new Set(existingColumns);
-    const targetColumns = USERS_REBUILD_COLUMNS.join(',\n        ');
-    const selectColumns = USERS_REBUILD_COLUMNS.map((columnName) =>
-        selectExpressionForColumn(columnName, existingColumnsSet)
-    ).join(',\n        ');
-
-    return `
-    BEGIN TRANSACTION;
-    CREATE TABLE users_new (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        email TEXT UNIQUE NOT NULL,
-        password TEXT NOT NULL,
-        subdomain TEXT UNIQUE,
-        access_token TEXT UNIQUE,
-        status TEXT NOT NULL CHECK(status IN ('payment_pending', 'active', 'trial', 'expired', 'suspended')),
-        email_verified INTEGER NOT NULL DEFAULT 0,
-        google_home_enabled INTEGER NOT NULL DEFAULT 0,
-        google_home_linked INTEGER NOT NULL DEFAULT 0,
-        google_home_linked_at DATETIME,
-        google_home_security_pin TEXT,
-        ha_external_url TEXT,
-        ha_camera_token TEXT,
-        razorpay_customer_id TEXT,
-        razorpay_subscription_id TEXT,
-        razorpay_payment_id TEXT,
-        razorpay_subscription_status TEXT,
-        trial_ends_at DATETIME,
-        trial_approved_at DATETIME,
-        activated_at DATETIME,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-    INSERT INTO users_new (
-        ${targetColumns}
-    )
-    SELECT
-        ${selectColumns}
-    FROM users;
-    DROP TABLE users;
-    ALTER TABLE users_new RENAME TO users;
-    COMMIT;
-    `;
-}
 
 function runStatementsSequentially(statements, index, done) {
     if (index >= statements.length) {
@@ -393,41 +303,8 @@ function initDb() {
             return;
         }
 
-        const currentSql = row.sql || '';
-        const needsRebuild =
-            [
-                'payment_pending',
-                'razorpay_payment_id',
-                'razorpay_subscription_status',
-                'trial_approved_at',
-                'activated_at',
-                'email_verified'
-            ].some((fragment) => !currentSql.includes(fragment)) ||
-            currentSql.includes('access_token TEXT UNIQUE NOT NULL') ||
-            currentSql.includes('subdomain TEXT UNIQUE NOT NULL');
-
-        if (!needsRebuild) {
-            console.log('Users table ready.');
-            initDeviceTables();
-            return;
-        }
-
-        db.all(`PRAGMA table_info(users)`, (infoErr, columns) => {
-            if (infoErr) {
-                console.error('Error reading users table columns:', infoErr.message);
-                return;
-            }
-
-            const rebuildSql = buildUsersTableRebuildSql((columns || []).map((column) => column.name));
-            db.exec(rebuildSql, (migrationErr) => {
-                if (migrationErr) {
-                    console.error('Error migrating users table:', migrationErr.message);
-                } else {
-                    console.log('Users table migrated.');
-                    initDeviceTables();
-                }
-            });
-        });
+        console.log('Users table ready.');
+        initDeviceTables();
     });
 }
 
