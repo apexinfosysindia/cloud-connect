@@ -464,9 +464,15 @@
         // Reset plan picker to default (annual selected) on every render so
         // a dismissed or failed checkout doesn't leave stale selection state.
         const planOptions = billingCard.querySelectorAll('.plan-option');
-        planOptions.forEach((btn) => btn.classList.remove('plan-option--selected'));
+        planOptions.forEach((btn) => {
+            btn.classList.remove('plan-option--selected');
+            btn.setAttribute('aria-pressed', 'false');
+        });
         const defaultPlan = billingCard.querySelector('[data-plan="annual"]');
-        if (defaultPlan) defaultPlan.classList.add('plan-option--selected');
+        if (defaultPlan) {
+            defaultPlan.classList.add('plan-option--selected');
+            defaultPlan.setAttribute('aria-pressed', 'true');
+        }
 
         if (dashSubdomain) {
             dashSubdomain.value = subdomainConfigured ? userData.subdomain : '';
@@ -1353,19 +1359,29 @@
         });
     }
 
-    // Plan picker — clicking a plan option toggles selection
+    // Plan picker — clicking a plan option selects exactly one plan at a time.
     const billingCard = document.getElementById('billingCard');
     const subscribePlanBtn = document.getElementById('subscribePlanBtn');
+
+    function selectPlan(planBtn) {
+        if (!planBtn || !billingCard) return;
+        const allPlanBtns = billingCard.querySelectorAll('.plan-option');
+        allPlanBtns.forEach((btn) => {
+            const isSelected = btn === planBtn;
+            btn.classList.toggle('plan-option--selected', isSelected);
+            btn.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+        });
+        // Drop focus so the :focus/:focus-visible state doesn't keep the
+        // just-clicked (or previously-clicked) button visually highlighted
+        // alongside the selected one.
+        if (typeof planBtn.blur === 'function') planBtn.blur();
+    }
 
     if (billingCard) {
         billingCard.addEventListener('click', (event) => {
             const planBtn = event.target.closest('.plan-option');
-            if (!planBtn) return;
-
-            // Toggle selection: deselect all, select the clicked one
-            const allPlanBtns = billingCard.querySelectorAll('.plan-option');
-            allPlanBtns.forEach((btn) => btn.classList.remove('plan-option--selected'));
-            planBtn.classList.add('plan-option--selected');
+            if (!planBtn || planBtn.disabled) return;
+            selectPlan(planBtn);
         });
     }
 
