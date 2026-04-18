@@ -1128,14 +1128,6 @@ code {
     background: #b91c1c;
 }
 
-.danger-zone-card {
-    border: 1px solid #fca5a5;
-    background: #fef2f2;
-    margin-top: 8px;
-    display: grid;
-    gap: 12px;
-}
-
 .danger-label {
     color: #dc2626;
 }
@@ -1143,6 +1135,34 @@ code {
 #deleteAccountForm {
     display: grid;
     gap: 10px;
+}
+
+.manage-sections {
+    display: grid;
+    gap: 20px;
+}
+
+.manage-section {
+    display: grid;
+    gap: 10px;
+    padding: 18px;
+    border-radius: var(--radius-lg, 12px);
+    border: 1px solid var(--line, #e2e8f0);
+    background: var(--surface, #fff);
+}
+
+.manage-section--danger {
+    border-color: #fca5a5;
+    background: #fef2f2;
+}
+
+.manage-form {
+    display: grid;
+    gap: 10px;
+}
+
+.manage-msg {
+    min-height: 1.2em;
 }
 
 .link-row {

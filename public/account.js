@@ -1091,7 +1091,153 @@
         });
     }
 
-    // Delete account modal
+    // Manage Account modal
+    const manageAccountBtn = document.getElementById('manageAccountBtn');
+    const manageAccountModal = document.getElementById('manageAccountModal');
+    const manageModalClose = document.getElementById('manageModalClose');
+    const logoutAllDevicesBtn = document.getElementById('logoutAllDevicesBtn');
+    const changePasswordForm = document.getElementById('changePasswordForm');
+    const currentPasswordInput = document.getElementById('currentPasswordInput');
+    const newPasswordInput = document.getElementById('newPasswordInput');
+    const changePasswordMsg = document.getElementById('changePasswordMsg');
+    const changePasswordBtn = document.getElementById('changePasswordBtn');
+
+    function openManageModal() {
+        if (!manageAccountModal) return;
+        if (changePasswordMsg) changePasswordMsg.textContent = '';
+        if (currentPasswordInput) currentPasswordInput.value = '';
+        if (newPasswordInput) newPasswordInput.value = '';
+        manageAccountModal.classList.remove('hidden');
+    }
+
+    function closeManageModal() {
+        if (!manageAccountModal) return;
+        manageAccountModal.classList.add('hidden');
+    }
+
+    if (manageAccountBtn) {
+        manageAccountBtn.addEventListener('click', openManageModal);
+    }
+
+    if (manageModalClose) {
+        manageModalClose.addEventListener('click', closeManageModal);
+    }
+
+    if (manageAccountModal) {
+        manageAccountModal.addEventListener('click', (event) => {
+            if (event.target.closest('[data-close-manage-modal]')) {
+                closeManageModal();
+            }
+        });
+    }
+
+    // Log out from all devices
+    if (logoutAllDevicesBtn) {
+        logoutAllDevicesBtn.addEventListener('click', async () => {
+            const storedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
+            if (!storedUser?.portal_session_token) {
+                closeManageModal();
+                showAlert('Please log in again to continue.');
+                return;
+            }
+
+            if (!confirm('Log out from all devices? This will revoke access for Apex MCU Plus, Google Home, Alexa, and all browsers.')) {
+                return;
+            }
+
+            logoutAllDevicesBtn.disabled = true;
+            logoutAllDevicesBtn.textContent = 'Logging out...';
+
+            try {
+                const res = await fetch('/api/account/logout-all-devices', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ portal_session_token: storedUser.portal_session_token })
+                });
+
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error);
+
+                if (data.data) {
+                    localStorage.setItem('apex_user', JSON.stringify(data.data));
+                    renderDashboard(data.data, { scroll: false });
+                }
+
+                closeManageModal();
+                showAlert(data.message || 'All devices have been logged out.', false);
+            } catch (err) {
+                showAlert(err.message);
+            } finally {
+                logoutAllDevicesBtn.textContent = 'Log Out All Devices';
+                logoutAllDevicesBtn.disabled = false;
+            }
+        });
+    }
+
+    // Change password
+    if (changePasswordForm) {
+        changePasswordForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const storedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
+            if (!storedUser?.portal_session_token) {
+                closeManageModal();
+                showAlert('Please log in again to continue.');
+                return;
+            }
+
+            const currentPassword = (currentPasswordInput?.value || '').trim();
+            const newPassword = (newPasswordInput?.value || '').trim();
+
+            if (!currentPassword) {
+                if (changePasswordMsg) changePasswordMsg.textContent = 'Current password is required.';
+                return;
+            }
+            if (!newPassword || newPassword.length < 8) {
+                if (changePasswordMsg) changePasswordMsg.textContent = 'New password must be at least 8 characters.';
+                return;
+            }
+
+            if (changePasswordBtn) {
+                changePasswordBtn.disabled = true;
+                changePasswordBtn.textContent = 'Changing...';
+            }
+            if (changePasswordMsg) changePasswordMsg.textContent = '';
+
+            try {
+                const res = await fetch('/api/account/change-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        portal_session_token: storedUser.portal_session_token,
+                        current_password: currentPassword,
+                        new_password: newPassword
+                    })
+                });
+
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error);
+
+                if (currentPasswordInput) currentPasswordInput.value = '';
+                if (newPasswordInput) newPasswordInput.value = '';
+                if (changePasswordMsg) {
+                    changePasswordMsg.textContent = data.message || 'Password changed successfully.';
+                    changePasswordMsg.classList.remove('danger-label');
+                }
+            } catch (err) {
+                if (changePasswordMsg) {
+                    changePasswordMsg.textContent = err.message;
+                    changePasswordMsg.classList.add('danger-label');
+                }
+            } finally {
+                if (changePasswordBtn) {
+                    changePasswordBtn.textContent = 'Change Password';
+                    changePasswordBtn.disabled = false;
+                }
+            }
+        });
+    }
+
+    // Delete account modal (opens from within Manage Account)
     const deleteAccountBtn = document.getElementById('deleteAccountBtn');
     const deleteAccountModal = document.getElementById('deleteAccountModal');
     const deleteAccountForm = document.getElementById('deleteAccountForm');
@@ -1102,6 +1248,7 @@
 
     function openDeleteModal() {
         if (!deleteAccountModal) return;
+        closeManageModal();
         if (deleteConfirmPassword) deleteConfirmPassword.value = '';
         if (deleteModalError) deleteModalError.textContent = '';
         if (deleteModalConfirmBtn) {
