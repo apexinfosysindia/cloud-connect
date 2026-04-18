@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 
-module.exports = function ({ dbGet, dbRun, config, utils, auth, email, billing }) {
+module.exports = function ({ dbGet, dbRun, config, utils, auth, email, billing, device }) {
     const router = express.Router();
     const { asyncHandler } = utils;
 
@@ -404,6 +404,96 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth, email, billing }
 
             return res.status(200).json({
                 data: auth.serializeUserWithPortalSession(user, portalSessionToken)
+            });
+        })
+    );
+
+    router.post(
+        '/api/account/logout-all-devices',
+        asyncHandler(async (req, res) => {
+            const { portal_session_token } = req.body;
+            const cookieToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
+            const sessionToken = cookieToken || portal_session_token;
+
+            if (!sessionToken) {
+                return res.status(400).json({ error: 'Portal session token is required' });
+            }
+
+            const session = auth.verifyPortalSessionToken(sessionToken);
+            if (!session) {
+                return res.status(401).json({ error: 'Invalid portal session. Please log in again.' });
+            }
+
+            const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [session.email]);
+            if (!user) {
+                return res.status(404).json({ error: 'Account not found' });
+            }
+
+            // Rotate access token so all devices using the old one lose access
+            const newAccessToken = await device.createUniqueAccessToken();
+            await dbRun(`UPDATE users SET access_token = ? WHERE id = ?`, [newAccessToken, user.id]);
+
+            // Remove device registrations — devices must re-register with the new token
+            await dbRun(`DELETE FROM devices WHERE user_id = ?`, [user.id]);
+
+            // Revoke Google Home tokens so Google Assistant must re-link
+            await dbRun(`DELETE FROM google_home_tokens WHERE user_id = ?`, [user.id]);
+            await dbRun(`UPDATE users SET google_home_linked = 0, google_home_linked_at = NULL WHERE id = ?`, [user.id]);
+
+            const updatedUser = await dbGet(`SELECT * FROM users WHERE id = ?`, [user.id]);
+            const portalSessionToken = auth.createPortalSessionToken(updatedUser.email);
+            auth.setPortalSessionCookie(res, portalSessionToken);
+
+            return res.status(200).json({
+                message: 'All devices have been logged out. It can take up to an hour before all sessions are fully terminated.',
+                data: auth.serializeUserWithPortalSession(updatedUser, portalSessionToken)
+            });
+        })
+    );
+
+    router.post(
+        '/api/account/change-password',
+        asyncHandler(async (req, res) => {
+            const { portal_session_token, current_password, new_password } = req.body;
+            const cookieToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
+            const sessionToken = cookieToken || portal_session_token;
+
+            if (!sessionToken) {
+                return res.status(400).json({ error: 'Portal session token is required' });
+            }
+
+            const session = auth.verifyPortalSessionToken(sessionToken);
+            if (!session) {
+                return res.status(401).json({ error: 'Invalid portal session. Please log in again.' });
+            }
+
+            const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [session.email]);
+            if (!user) {
+                return res.status(404).json({ error: 'Account not found' });
+            }
+
+            if (!current_password || typeof current_password !== 'string') {
+                return res.status(400).json({ error: 'Current password is required.' });
+            }
+
+            const isMatch = await bcrypt.compare(current_password, user.password);
+            if (!isMatch) {
+                return res.status(401).json({ error: 'Current password is incorrect.' });
+            }
+
+            if (!new_password || typeof new_password !== 'string' || new_password.length < 8) {
+                return res.status(400).json({ error: 'New password must be at least 8 characters long.' });
+            }
+
+            if (new_password.length > 128) {
+                return res.status(400).json({ error: 'New password must not exceed 128 characters.' });
+            }
+
+            const hashedPassword = await bcrypt.hash(new_password, 10);
+            await dbRun(`UPDATE users SET password = ? WHERE id = ?`, [hashedPassword, user.id]);
+
+            return res.status(200).json({
+                message: 'Password changed successfully.'
             });
         })
     );
