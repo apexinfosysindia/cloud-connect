@@ -1099,6 +1099,18 @@ code {
     background: var(--bg-soft);
 }
 
+.button-ghost {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.button-ghost:hover:not(:disabled) {
+    background: var(--bg-soft);
+    color: var(--text);
+}
+
 .button-warning {
     background: var(--warning);
     color: #fff;
@@ -1157,21 +1169,40 @@ code {
 
 .manage-section {
     display: grid;
-    gap: 10px;
+    gap: 8px;
     padding: 18px;
     border-radius: var(--radius-lg, 12px);
     border: 1px solid var(--line, #e2e8f0);
     background: var(--surface, #fff);
 }
 
-.manage-section--danger {
-    border-color: #fca5a5;
-    background: #fef2f2;
+.manage-section .detail-label {
+    margin: 0 0 2px;
+}
+
+.auth-page .manage-section .detail-copy,
+.manage-section .detail-copy {
+    margin: 0;
+}
+
+.manage-section > button,
+.manage-section .manage-form {
+    margin-top: 6px;
 }
 
 .manage-form {
     display: grid;
     gap: 10px;
+    margin: 0;
+}
+
+.manage-form > button {
+    margin-top: 2px;
+}
+
+.manage-section--danger {
+    border-color: #fca5a5;
+    background: #fef2f2;
 }
 
 .manage-msg {
