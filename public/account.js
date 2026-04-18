@@ -1091,6 +1091,57 @@
         });
     }
 
+    // Delete account
+    const deleteAccountBtn = document.getElementById('deleteAccountBtn');
+    if (deleteAccountBtn) {
+        deleteAccountBtn.addEventListener('click', async () => {
+            const storedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
+            if (!storedUser?.portal_session_token) {
+                showAlert('Please log in again to continue.');
+                return;
+            }
+
+            const password = prompt('This will permanently delete your account, all devices, and cancel any active subscription.\n\nEnter your password to confirm:');
+            if (!password) {
+                return;
+            }
+
+            deleteAccountBtn.disabled = true;
+            deleteAccountBtn.textContent = 'Deleting...';
+            hideAlert();
+
+            try {
+                const res = await fetch('/api/account/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        portal_session_token: storedUser.portal_session_token,
+                        password
+                    })
+                });
+
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error);
+
+                localStorage.removeItem('apex_user');
+                stopAccountAutoRefresh();
+                stopGoogleEntitiesAutoRefresh();
+
+                if (pageMode === 'signup') {
+                    showSignupView();
+                } else {
+                    showLoginView();
+                }
+                showAlert('Your account has been permanently deleted.', false);
+            } catch (err) {
+                showAlert(err.message);
+            } finally {
+                deleteAccountBtn.textContent = 'Delete My Account';
+                deleteAccountBtn.disabled = false;
+            }
+        });
+    }
+
     // Plan picker — clicking a plan option toggles selection
     const billingCard = document.getElementById('billingCard');
     const subscribePlanBtn = document.getElementById('subscribePlanBtn');

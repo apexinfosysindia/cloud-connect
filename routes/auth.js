@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 
-module.exports = function ({ dbGet, dbRun, config, utils, auth, email }) {
+module.exports = function ({ dbGet, dbRun, config, utils, auth, email, billing }) {
     const router = express.Router();
     const { asyncHandler } = utils;
 
@@ -405,6 +405,46 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth, email }) {
             return res.status(200).json({
                 data: auth.serializeUserWithPortalSession(user, portalSessionToken)
             });
+        })
+    );
+
+    router.post(
+        '/api/account/delete',
+        asyncHandler(async (req, res) => {
+            const { portal_session_token, password } = req.body;
+            const cookieToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
+            const sessionToken = cookieToken || portal_session_token;
+
+            if (!sessionToken) {
+                return res.status(400).json({ error: 'Portal session token is required' });
+            }
+
+            const session = auth.verifyPortalSessionToken(sessionToken);
+            if (!session) {
+                return res.status(401).json({ error: 'Invalid portal session. Please log in again.' });
+            }
+
+            const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [session.email]);
+            if (!user) {
+                return res.status(404).json({ error: 'Account not found' });
+            }
+
+            if (!password || typeof password !== 'string') {
+                return res.status(400).json({ error: 'Password is required to confirm account deletion.' });
+            }
+
+            const isMatch = await bcrypt.compare(password, user.password);
+            if (!isMatch) {
+                return res.status(401).json({ error: 'Incorrect password. Account was not deleted.' });
+            }
+
+            const deleted = await billing.deleteUserAccount(user.id);
+            if (!deleted) {
+                return res.status(500).json({ error: 'Unable to delete account. Please try again.' });
+            }
+
+            auth.clearPortalSessionCookie(res);
+            return res.status(200).json({ message: 'Your account has been permanently deleted.' });
         })
     );
 

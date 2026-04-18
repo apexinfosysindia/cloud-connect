@@ -391,34 +391,31 @@ function buildActionButton(user, label, status, extra = {}) {
 }
 
 function getActionButtons(user) {
+    const buttons = [];
+
     if (user.status === 'payment_pending') {
-        return [
+        buttons.push(
             buildActionButton(user, 'Approve Trial', 'trial', { trialDays: 365 }),
             buildActionButton(user, 'Activate', 'active'),
             buildActionButton(user, 'Suspend', 'suspended')
-        ];
-    }
-
-    if (user.status === 'trial') {
-        return [
+        );
+    } else if (user.status === 'trial') {
+        buttons.push(
             buildActionButton(user, 'Activate', 'active'),
             buildActionButton(user, 'Suspend', 'suspended')
-        ];
-    }
-
-    if (user.status === 'active') {
-        return [
+        );
+    } else if (user.status === 'active') {
+        buttons.push(
             buildActionButton(user, 'Suspend', 'suspended')
-        ];
-    }
-
-    if (user.status === 'suspended') {
-        return [
+        );
+    } else if (user.status === 'suspended') {
+        buttons.push(
             buildActionButton(user, 'Activate', 'active')
-        ];
+        );
     }
 
-    return [];
+    buttons.push(`<button data-user-id="${user.id}" data-email="${escapeHtml(user.email)}" class="button button-danger button-small admin-delete">Delete</button>`);
+    return buttons;
 }
 
 function renderUsers(users) {
@@ -705,6 +702,20 @@ async function applyStatus(userId, status, trialDays) {
     applyRealtimeUserUpdate(response.user);
     await loadUsers();
     showAlert('User updated successfully.', false);
+}
+
+async function deleteUser(userId, email) {
+    if (!confirm(`Permanently delete ${email}?\n\nThis will cancel any active subscription and remove all devices, logs, and data. This cannot be undone.`)) {
+        return;
+    }
+
+    const response = await api(`/api/admin/users/${userId}`, {
+        method: 'DELETE'
+    });
+
+    await loadUsers();
+    await loadFleet();
+    showAlert(response.message || 'User deleted.', false);
 }
 
 function getDeviceById(deviceId) {
@@ -1048,6 +1059,20 @@ usersTableBody.addEventListener('click', async (event) => {
 
     const button = event.target.closest('.admin-action');
     if (!button) {
+        const deleteBtn = event.target.closest('.admin-delete');
+        if (deleteBtn) {
+            const originalLabel = deleteBtn.textContent;
+            deleteBtn.disabled = true;
+            deleteBtn.textContent = 'Deleting...';
+            try {
+                await deleteUser(deleteBtn.dataset.userId, deleteBtn.dataset.email);
+            } catch (error) {
+                showAlert(normalizeErrorMessage(error, 'Unable to delete user'));
+            } finally {
+                deleteBtn.disabled = false;
+                deleteBtn.textContent = originalLabel;
+            }
+        }
         return;
     }
 
