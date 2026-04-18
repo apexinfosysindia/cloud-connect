@@ -25,6 +25,9 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
                     return res.status(401).json({ error: 'Invalid portal session. Please log in again.' });
                 }
                 user = await dbGet(`SELECT * FROM users WHERE email = ?`, [session.email]);
+                if (user && !auth.portalTokenEpochMatches(session, user)) {
+                    return res.status(401).json({ error: 'Invalid portal session. Please log in again.' });
+                }
             }
 
             if (!user) {
@@ -98,7 +101,8 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
 
             // Include portal session token so the client preserves its session
             const session = sessionToken ? auth.verifyPortalSessionToken(sessionToken) : null;
-            const responseData = session
+            const sessionValid = session && auth.portalTokenEpochMatches(session, updatedUser);
+            const responseData = sessionValid
                 ? auth.serializeUserWithPortalSession(updatedUser, sessionToken)
                 : auth.serializeUser(updatedUser);
 

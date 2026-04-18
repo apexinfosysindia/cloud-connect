@@ -87,6 +87,14 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth, googleCore, home
                 return res.status(404).send('Account not found');
             }
 
+            if (!auth.portalTokenEpochMatches(session, user)) {
+                const loginRedirect = `/login.html?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
+                if (forceCustomerLogin) {
+                    return res.redirect(`https://${config.CUSTOMER_PORTAL_HOST}${loginRedirect}`);
+                }
+                return res.redirect(loginRedirect);
+            }
+
             if (!utils.isAccessEnabled(user.status)) {
                 return res.status(403).send('Account is not active for Google Home');
             }
@@ -175,6 +183,10 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth, googleCore, home
             const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [session.email]);
             if (!user) {
                 return res.status(404).json({ error: 'account_not_found' });
+            }
+
+            if (!auth.portalTokenEpochMatches(session, user)) {
+                return res.status(401).json({ error: 'invalid_portal_session' });
             }
 
             if (!utils.isAccessEnabled(user.status)) {
