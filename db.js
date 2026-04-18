@@ -234,6 +234,8 @@ const DEVICE_SCHEMA_STATEMENTS = [
     'ALTER TABLE users ADD COLUMN ha_external_url TEXT',
     'ALTER TABLE users ADD COLUMN ha_camera_token TEXT',
     'ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0',
+    // One-time migration: auto-verify existing users who already completed setup
+    `UPDATE users SET email_verified = 1 WHERE email_verified = 0 AND status != 'payment_pending'`,
     'CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_user ON email_verification_tokens(user_id)',
     'CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_expiry ON email_verification_tokens(expires_at)',
     'CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id)',

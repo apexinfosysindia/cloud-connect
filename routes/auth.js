@@ -110,12 +110,28 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth, email }) {
                 return res.status(401).json({ error: 'Invalid email or password' });
             }
 
+            // Send verification email on login for unverified users
+            let verificationSent = false;
+            if (!user.email_verified && email.isEmailConfigured()) {
+                try {
+                    const token = await email.createEmailVerificationToken(user.id);
+                    await email.sendVerificationEmail(user.email, token);
+                    verificationSent = true;
+                } catch (emailError) {
+                    console.error('LOGIN VERIFICATION EMAIL ERROR:', emailError);
+                }
+            }
+
             const portalSessionToken = auth.createPortalSessionToken(user.email);
             auth.setPortalSessionCookie(res, portalSessionToken);
 
             res.setHeader('Cache-Control', 'no-store');
             res.status(200).json({
-                message: 'Login successful',
+                message: !user.email_verified
+                    ? (verificationSent
+                        ? 'Login successful. A verification email has been sent to your inbox.'
+                        : 'Login successful. Please verify your email to continue.')
+                    : 'Login successful',
                 data: auth.serializeUserWithPortalSession(user, portalSessionToken)
             });
         })
