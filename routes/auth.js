@@ -75,7 +75,7 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth, email, billing, 
                 }
             }
 
-            const portalSessionToken = auth.createPortalSessionToken(user.email);
+            const portalSessionToken = auth.createPortalSessionToken(user.email, user.session_epoch);
             auth.setPortalSessionCookie(res, portalSessionToken);
 
             res.setHeader('Cache-Control', 'no-store');
@@ -122,7 +122,7 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth, email, billing, 
                 }
             }
 
-            const portalSessionToken = auth.createPortalSessionToken(user.email);
+            const portalSessionToken = auth.createPortalSessionToken(user.email, user.session_epoch);
             auth.setPortalSessionCookie(res, portalSessionToken);
 
             res.setHeader('Cache-Control', 'no-store');
@@ -160,7 +160,7 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth, email, billing, 
                 return res.status(404).json({ error: 'Account not found.' });
             }
 
-            const portalSessionToken = auth.createPortalSessionToken(user.email);
+            const portalSessionToken = auth.createPortalSessionToken(user.email, user.session_epoch);
             auth.setPortalSessionCookie(res, portalSessionToken);
 
             res.setHeader('Cache-Control', 'no-store');
@@ -191,6 +191,10 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth, email, billing, 
             const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [session.email]);
             if (!user) {
                 return res.status(404).json({ error: 'Account not found.' });
+            }
+
+            if (!auth.portalTokenEpochMatches(session, user)) {
+                return res.status(401).json({ error: 'Invalid session. Please log in again.' });
             }
 
             if (user.email_verified) {
@@ -339,13 +343,17 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth, email, billing, 
                 return res.status(404).json({ error: 'Account not found' });
             }
 
+            if (!auth.portalTokenEpochMatches(session, user)) {
+                return res.status(401).json({ error: 'Invalid portal session. Please log in again.' });
+            }
+
             // Require email verification before setting subdomain
             if (!user.email_verified) {
                 return res.status(403).json({ error: 'Please verify your email address before setting a cloud address.' });
             }
 
             if (user.subdomain === normalizedSubdomain) {
-                const portalSessionToken = auth.createPortalSessionToken(user.email);
+                const portalSessionToken = auth.createPortalSessionToken(user.email, user.session_epoch);
                 auth.setPortalSessionCookie(res, portalSessionToken);
                 return res.status(200).json({
                     message: 'Cloud address saved',
@@ -363,7 +371,7 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth, email, billing, 
 
             await dbRun(`UPDATE users SET subdomain = ? WHERE id = ?`, [normalizedSubdomain, user.id]);
             const updatedUser = await dbGet(`SELECT * FROM users WHERE id = ?`, [user.id]);
-            const portalSessionToken = auth.createPortalSessionToken(updatedUser.email);
+            const portalSessionToken = auth.createPortalSessionToken(updatedUser.email, updatedUser.session_epoch);
             auth.setPortalSessionCookie(res, portalSessionToken);
 
             return res.status(200).json({
@@ -394,11 +402,15 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth, email, billing, 
                 return res.status(404).json({ error: 'Account not found' });
             }
 
+            if (!auth.portalTokenEpochMatches(session, user)) {
+                return res.status(401).json({ error: 'Invalid portal session. Please log in again.' });
+            }
+
             // Only rotate the token when it's within 1 day of expiry to avoid
             // cookie churn from 5-second polling causing race conditions.
             let portalSessionToken = sessionToken;
             if (auth.portalTokenNeedsRotation(session)) {
-                portalSessionToken = auth.createPortalSessionToken(user.email);
+                portalSessionToken = auth.createPortalSessionToken(user.email, user.session_epoch);
                 auth.setPortalSessionCookie(res, portalSessionToken);
             }
 
@@ -429,6 +441,10 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth, email, billing, 
                 return res.status(404).json({ error: 'Account not found' });
             }
 
+            if (!auth.portalTokenEpochMatches(session, user)) {
+                return res.status(401).json({ error: 'Invalid portal session. Please log in again.' });
+            }
+
             // Rotate access token so all devices using the old one lose access
             const newAccessToken = await device.createUniqueAccessToken();
             await dbRun(`UPDATE users SET access_token = ? WHERE id = ?`, [newAccessToken, user.id]);
@@ -440,8 +456,12 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth, email, billing, 
             await dbRun(`DELETE FROM google_home_tokens WHERE user_id = ?`, [user.id]);
             await dbRun(`UPDATE users SET google_home_linked = 0, google_home_linked_at = NULL WHERE id = ?`, [user.id]);
 
+            // Bump session epoch so all other portal sessions (other browsers) are invalidated.
+            // We mint a fresh token for the current browser below that carries the new epoch.
+            await dbRun(`UPDATE users SET session_epoch = COALESCE(session_epoch, 0) + 1 WHERE id = ?`, [user.id]);
+
             const updatedUser = await dbGet(`SELECT * FROM users WHERE id = ?`, [user.id]);
-            const portalSessionToken = auth.createPortalSessionToken(updatedUser.email);
+            const portalSessionToken = auth.createPortalSessionToken(updatedUser.email, updatedUser.session_epoch);
             auth.setPortalSessionCookie(res, portalSessionToken);
 
             return res.status(200).json({
@@ -470,6 +490,10 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth, email, billing, 
             const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [session.email]);
             if (!user) {
                 return res.status(404).json({ error: 'Account not found' });
+            }
+
+            if (!auth.portalTokenEpochMatches(session, user)) {
+                return res.status(401).json({ error: 'Invalid portal session. Please log in again.' });
             }
 
             if (!current_password || typeof current_password !== 'string') {
@@ -517,6 +541,10 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth, email, billing, 
             const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [session.email]);
             if (!user) {
                 return res.status(404).json({ error: 'Account not found' });
+            }
+
+            if (!auth.portalTokenEpochMatches(session, user)) {
+                return res.status(401).json({ error: 'Invalid portal session. Please log in again.' });
             }
 
             if (!password || typeof password !== 'string') {
