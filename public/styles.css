@@ -1132,10 +1132,17 @@ code {
     border: 1px solid #fca5a5;
     background: #fef2f2;
     margin-top: 8px;
+    display: grid;
+    gap: 12px;
 }
 
 .danger-label {
     color: #dc2626;
+}
+
+#deleteAccountForm {
+    display: grid;
+    gap: 10px;
 }
 
 .link-row {

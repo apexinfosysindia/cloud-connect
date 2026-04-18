@@ -1091,24 +1091,71 @@
         });
     }
 
-    // Delete account
+    // Delete account modal
     const deleteAccountBtn = document.getElementById('deleteAccountBtn');
+    const deleteAccountModal = document.getElementById('deleteAccountModal');
+    const deleteAccountForm = document.getElementById('deleteAccountForm');
+    const deleteConfirmPassword = document.getElementById('deleteConfirmPassword');
+    const deleteModalError = document.getElementById('deleteModalError');
+    const deleteModalClose = document.getElementById('deleteModalClose');
+    const deleteModalConfirmBtn = document.getElementById('deleteModalConfirmBtn');
+
+    function openDeleteModal() {
+        if (!deleteAccountModal) return;
+        if (deleteConfirmPassword) deleteConfirmPassword.value = '';
+        if (deleteModalError) deleteModalError.textContent = '';
+        if (deleteModalConfirmBtn) {
+            deleteModalConfirmBtn.textContent = 'Permanently Delete Account';
+            deleteModalConfirmBtn.disabled = false;
+        }
+        deleteAccountModal.classList.remove('hidden');
+        if (deleteConfirmPassword) deleteConfirmPassword.focus();
+    }
+
+    function closeDeleteModal() {
+        if (!deleteAccountModal) return;
+        deleteAccountModal.classList.add('hidden');
+        if (deleteConfirmPassword) deleteConfirmPassword.value = '';
+        if (deleteModalError) deleteModalError.textContent = '';
+    }
+
     if (deleteAccountBtn) {
-        deleteAccountBtn.addEventListener('click', async () => {
+        deleteAccountBtn.addEventListener('click', openDeleteModal);
+    }
+
+    if (deleteModalClose) {
+        deleteModalClose.addEventListener('click', closeDeleteModal);
+    }
+
+    if (deleteAccountModal) {
+        deleteAccountModal.addEventListener('click', (event) => {
+            if (event.target.closest('[data-close-delete-modal]')) {
+                closeDeleteModal();
+            }
+        });
+    }
+
+    if (deleteAccountForm) {
+        deleteAccountForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
             const storedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
             if (!storedUser?.portal_session_token) {
+                closeDeleteModal();
                 showAlert('Please log in again to continue.');
                 return;
             }
 
-            const password = prompt('This will permanently delete your account, all devices, and cancel any active subscription.\n\nEnter your password to confirm:');
+            const password = (deleteConfirmPassword?.value || '').trim();
             if (!password) {
+                if (deleteModalError) deleteModalError.textContent = 'Password is required.';
                 return;
             }
 
-            deleteAccountBtn.disabled = true;
-            deleteAccountBtn.textContent = 'Deleting...';
-            hideAlert();
+            if (deleteModalConfirmBtn) {
+                deleteModalConfirmBtn.disabled = true;
+                deleteModalConfirmBtn.textContent = 'Deleting...';
+            }
+            if (deleteModalError) deleteModalError.textContent = '';
 
             try {
                 const res = await fetch('/api/account/delete', {
@@ -1123,6 +1170,7 @@
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error);
 
+                closeDeleteModal();
                 localStorage.removeItem('apex_user');
                 stopAccountAutoRefresh();
                 stopGoogleEntitiesAutoRefresh();
@@ -1134,10 +1182,11 @@
                 }
                 showAlert('Your account has been permanently deleted.', false);
             } catch (err) {
-                showAlert(err.message);
-            } finally {
-                deleteAccountBtn.textContent = 'Delete My Account';
-                deleteAccountBtn.disabled = false;
+                if (deleteModalError) deleteModalError.textContent = err.message;
+                if (deleteModalConfirmBtn) {
+                    deleteModalConfirmBtn.textContent = 'Permanently Delete Account';
+                    deleteModalConfirmBtn.disabled = false;
+                }
             }
         });
     }
