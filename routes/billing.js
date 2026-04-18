@@ -105,12 +105,14 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
             });
         } catch (error) {
             console.error('CHECKOUT CREATION ERROR:', error);
+            const message = billing.getBillingErrorMessage(
+                error,
+                'Unable to create Razorpay checkout right now.'
+            );
             if (error.statusCode) {
-                return res.status(error.statusCode).json({ error: error.message });
+                return res.status(error.statusCode).json({ error: message });
             }
-            res.status(502).json({
-                error: billing.getBillingErrorMessage(error, 'Unable to create Razorpay checkout right now.')
-            });
+            res.status(502).json({ error: message });
         }
     });
 
