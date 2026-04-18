@@ -37,6 +37,7 @@
     let accountRefreshTimer = null;
     let accountRefreshInFlight = false;
     let accountRenderFingerprint = '';
+    let manageViewActive = false;
     let googleOAuthRedirectInFlight = false;
     let googleEntitiesRefreshTimer = null;
     let googleEntitiesRefreshInFlight = false;
@@ -196,6 +197,8 @@
         stopAccountAutoRefresh();
         stopGoogleEntitiesAutoRefresh();
         googleOAuthRedirectInFlight = false;
+        manageViewActive = false;
+        if (manageAccountView) manageAccountView.classList.add('hidden');
         if (signupForm) signupForm.classList.add('hidden');
         if (loginForm) loginForm.classList.remove('hidden');
         if (forgotPasswordForm) forgotPasswordForm.classList.add('hidden');
@@ -222,6 +225,8 @@
         stopAccountAutoRefresh();
         stopGoogleEntitiesAutoRefresh();
         googleOAuthRedirectInFlight = false;
+        manageViewActive = false;
+        if (manageAccountView) manageAccountView.classList.add('hidden');
         if (loginForm) loginForm.classList.add('hidden');
         if (signupForm) signupForm.classList.remove('hidden');
         if (dashboard) dashboard.classList.add('hidden');
@@ -408,6 +413,13 @@
     }
 
     function renderDashboard(userData, options = {}) {
+        if (manageViewActive && !options.fromManageBack) {
+            // Don't fight the manage account view: just refresh the cached
+            // user data fingerprint so when the user clicks Back we re-render
+            // with the latest state, but leave the DOM alone.
+            accountRenderFingerprint = buildAccountRenderFingerprint(userData);
+            return;
+        }
         accountRenderFingerprint = buildAccountRenderFingerprint(userData);
         const shouldScroll = options.scroll !== false;
         if (loginForm) loginForm.classList.add('hidden');
@@ -1091,7 +1103,7 @@
         });
     }
 
-    // Manage Account view (in-place panel inside the dashboard)
+    // Manage Account view (in-place panel — sibling of #dashboard inside #account-shell)
     const manageAccountBtn = document.getElementById('manageAccountBtn');
     const manageAccountView = document.getElementById('manageAccountView');
     const manageBackBtn = document.getElementById('manageBackBtn');
@@ -1103,31 +1115,27 @@
     const changePasswordMsg = document.getElementById('changePasswordMsg');
     const changePasswordBtn = document.getElementById('changePasswordBtn');
 
-    // Track which dashboard children we hid when entering the manage view, so we can
-    // restore on Back. We use a generic "hide all siblings" approach and then
-    // re-run renderDashboard to authoritatively restore per-card visibility.
     function showManageView() {
         if (!manageAccountView || !dashboardSection) return;
         if (changePasswordMsg) changePasswordMsg.textContent = '';
         if (currentPasswordInput) currentPasswordInput.value = '';
         if (newPasswordInput) newPasswordInput.value = '';
 
-        Array.from(dashboardSection.children).forEach((child) => {
-            if (child === manageAccountView) return;
-            child.classList.add('hidden');
-        });
+        manageViewActive = true;
+        dashboardSection.classList.add('hidden');
         manageAccountView.classList.remove('hidden');
         manageAccountView.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     function hideManageView() {
         if (!manageAccountView) return;
+        manageViewActive = false;
         manageAccountView.classList.add('hidden');
-        // Re-run renderDashboard so per-card visibility is restored authoritatively
-        // based on current user state.
         const storedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
         if (storedUser) {
-            renderDashboard(storedUser, { scroll: false });
+            renderDashboard(storedUser, { scroll: false, fromManageBack: true });
+        } else {
+            dashboardSection.classList.remove('hidden');
         }
     }
 
