@@ -610,10 +610,18 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, e
                 if (!result.cancelled) {
                     return res.status(400).json({ error: 'No active subscription to cancel.' });
                 }
-                return res.status(200).json({
-                    message:
-                        'Subscription cancelled. You will keep access until the end of your current billing period, after which no further charges will be made.'
-                });
+                let message;
+                if (result.trialAbort) {
+                    message =
+                        'Subscription cancelled. Because this was a trial account, access has been disabled immediately and no charges will occur. You can start a new subscription any time from your dashboard.';
+                } else if (result.atCycleEnd) {
+                    message =
+                        'Subscription cancelled. You will keep access until the end of your current billing period, after which no further charges will be made.';
+                } else {
+                    message =
+                        'Subscription cancelled. No billing cycle had started yet, so the cancellation took effect immediately and you will not be charged.';
+                }
+                return res.status(200).json({ message });
             } catch (error) {
                 return res.status(502).json({
                     error: error.message || 'Unable to cancel subscription. Please try again.'
