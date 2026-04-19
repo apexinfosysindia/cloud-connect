@@ -235,13 +235,6 @@ describe('generateDeviceAuthToken', () => {
     });
 });
 
-// --- generateAdminConnectToken ---
-describe('generateAdminConnectToken', () => {
-    it('starts with acn_ prefix', () => {
-        assert.ok(utils.generateAdminConnectToken().startsWith('acn_'));
-    });
-});
-
 // --- normalizeLocalIps ---
 describe('normalizeLocalIps', () => {
     it('handles string input with comma separation', () => {

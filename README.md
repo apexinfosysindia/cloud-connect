@@ -128,7 +128,6 @@ GOOGLE_DEBUG_ENDPOINTS_ENABLED=0
 ALLOWED_CORS_ORIGINS=https://oasis.apexinfosys.in,https://vista.apexinfosys.in
 DEVICE_HEARTBEAT_TIMEOUT_SECONDS=45
 DEVICE_HEARTBEAT_INTERVAL_SECONDS=20
-ADMIN_CONNECT_TOKEN_TTL_MINUTES=10
 DEVICE_TUNNEL_HOST=cloud.apexinfosys.in
 DEVICE_TUNNEL_PORT_MIN=22000
 DEVICE_TUNNEL_PORT_MAX=22999
@@ -154,6 +153,51 @@ The portal serves:
 - `/admin.html`: admin dashboard
   SQLite database file:
 - `database.sqlite`
+
+## Database Migrations
+
+Schema is versioned via SQL files in `migrations/`, one per change, named `NNN_description.sql`. On boot, the migrator reads the `schema_migrations` table, applies any pending files in numeric order inside a transaction each, and fails loudly on error.
+
+To add a schema change:
+
+1. Create the next-numbered file, e.g. `migrations/002_add_foo_column.sql`
+2. Write plain DDL/DML — **no** `BEGIN` / `COMMIT` (the runner wraps each file in its own transaction)
+3. Restart the server — the migration applies on boot
+4. Commit the migration file to git
+
+A pre-existing production database (tables present, no `schema_migrations` row) is automatically stamped with migration 001 on first boot without re-running it.
+
+## Backups
+
+SQLite online backups are produced by `scripts/backup.sh`, which uses the `.backup` command (safe against concurrent writes — never use `cp` on a live SQLite file). Output is gzipped and old backups are rotated.
+
+Run a backup manually:
+
+```bash
+npm run backup
+```
+
+Environment variables:
+
+- `DATABASE_PATH` — source DB (default: `<repo>/database.sqlite`)
+- `BACKUP_DIR` — output directory (default: `<repo>/backups`)
+- `BACKUP_RETENTION_DAYS` — delete backups older than N days (default: `14`)
+- `BACKUP_SKIP_INTEGRITY` — set to `1` to skip `PRAGMA integrity_check` on the snapshot
+
+Example cron entry (daily at 03:07, logs to file):
+
+```cron
+7 3 * * * cd /opt/cloud-connect && BACKUP_DIR=/var/backups/cloud-connect /usr/bin/npm run backup >> /var/log/cloud-connect-backup.log 2>&1
+```
+
+Restore a snapshot:
+
+```bash
+gunzip -c backups/database-YYYYMMDD-HHMMSS.sqlite.gz > /tmp/restored.sqlite
+sqlite3 /tmp/restored.sqlite 'PRAGMA integrity_check'
+```
+
+The `backups/` directory is gitignored.
 
 ## Live VPS Paths
 

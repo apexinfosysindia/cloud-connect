@@ -25,7 +25,6 @@ describe('config exports', () => {
         assert.equal(typeof config.GOOGLE_HOMEGRAPH_REPORT_STATE_DEBOUNCE_MS, 'number');
         assert.equal(typeof config.DEVICE_HEARTBEAT_TIMEOUT_SECONDS, 'number');
         assert.equal(typeof config.DEVICE_HEARTBEAT_INTERVAL_SECONDS, 'number');
-        assert.equal(typeof config.ADMIN_CONNECT_TOKEN_TTL_MINUTES, 'number');
         assert.equal(typeof config.DEVICE_TUNNEL_PORT_MIN, 'number');
         assert.equal(typeof config.DEVICE_TUNNEL_PORT_MAX, 'number');
         assert.equal(typeof config.PORTAL_SESSION_COOKIE_MAX_AGE_MS, 'number');
@@ -46,7 +45,6 @@ describe('config exports', () => {
         assert.equal(config.ADMIN_SSH_JUMP_PORT, 22);
         assert.equal(config.ADMIN_SSH_TARGET_HOST, '127.0.0.1');
         assert.equal(config.DEVICE_TOKEN_PREFIX, 'dvc_');
-        assert.equal(config.ADMIN_CONNECT_TOKEN_PREFIX, 'acn_');
         assert.equal(config.PORTAL_SESSION_COOKIE_NAME, 'apx_portal_session');
         assert.equal(config.PORTAL_SESSION_COOKIE_MAX_AGE_MS, 7 * 24 * 60 * 60 * 1000);
     });

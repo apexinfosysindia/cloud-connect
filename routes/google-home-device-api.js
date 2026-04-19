@@ -1,6 +1,6 @@
 const express = require('express');
 
-module.exports = function ({ dbGet, dbRun, dbAll, utils, auth, googleCore, homegraph, state }) {
+module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, googleCore, homegraph, state }) {
     const router = express.Router();
     const { asyncHandler } = utils;
 
@@ -341,8 +341,12 @@ module.exports = function ({ dbGet, dbRun, dbAll, utils, auth, googleCore, homeg
                 [nowIso, device.id, nowIso]
             );
 
-            const rows = await dbAll(
-                `
+            // Atomic "fetch-and-mark-dispatched" so a crash (or concurrent
+            // poll) between the SELECT and the UPDATE cannot cause the same
+            // commands to be handed out twice.
+            const rows = await dbTransaction(async (tx) => {
+                const pending = await tx.dbAll(
+                    `
                 SELECT *
                 FROM google_home_command_queue
                 WHERE device_id = ?
@@ -351,22 +355,25 @@ module.exports = function ({ dbGet, dbRun, dbAll, utils, auth, googleCore, homeg
                 ORDER BY id ASC
                 LIMIT 20
             `,
-                [device.id, nowIso]
-            );
+                    [device.id, nowIso]
+                );
 
-            const commandIds = (rows || []).map((row) => row.id);
-            if (commandIds.length > 0) {
-                const placeholders = commandIds.map(() => '?').join(',');
-                await dbRun(
-                    `
+                const commandIds = (pending || []).map((row) => row.id);
+                if (commandIds.length > 0) {
+                    const placeholders = commandIds.map(() => '?').join(',');
+                    await tx.dbRun(
+                        `
                     UPDATE google_home_command_queue
                     SET status = 'dispatched',
                         updated_at = ?
                     WHERE id IN (${placeholders})
                 `,
-                    [nowIso, ...commandIds]
-                );
-            }
+                        [nowIso, ...commandIds]
+                    );
+                }
+
+                return pending;
+            });
 
             return res.status(200).json({
                 commands: (rows || []).map((row) => ({

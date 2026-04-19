@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 
-module.exports = function ({ dbGet, dbRun, config, utils, auth, email, billing, device }) {
+module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, email, billing, device }) {
     const router = express.Router();
     const { asyncHandler } = utils;
 
@@ -447,18 +447,23 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth, email, billing, 
 
             // Rotate access token so all devices using the old one lose access
             const newAccessToken = await device.createUniqueAccessToken();
-            await dbRun(`UPDATE users SET access_token = ? WHERE id = ?`, [newAccessToken, user.id]);
 
-            // Remove device registrations — devices must re-register with the new token
-            await dbRun(`DELETE FROM devices WHERE user_id = ?`, [user.id]);
+            await dbTransaction(async ({ dbRun: txRun }) => {
+                await txRun(`UPDATE users SET access_token = ? WHERE id = ?`, [newAccessToken, user.id]);
 
-            // Revoke Google Home tokens so Google Assistant must re-link
-            await dbRun(`DELETE FROM google_home_tokens WHERE user_id = ?`, [user.id]);
-            await dbRun(`UPDATE users SET google_home_linked = 0, google_home_linked_at = NULL WHERE id = ?`, [user.id]);
+                // Remove device registrations — devices must re-register with the new token
+                await txRun(`DELETE FROM devices WHERE user_id = ?`, [user.id]);
 
-            // Bump session epoch so all other portal sessions (other browsers) are invalidated.
-            // We mint a fresh token for the current browser below that carries the new epoch.
-            await dbRun(`UPDATE users SET session_epoch = COALESCE(session_epoch, 0) + 1 WHERE id = ?`, [user.id]);
+                // Revoke Google Home tokens so Google Assistant must re-link
+                await txRun(`DELETE FROM google_home_tokens WHERE user_id = ?`, [user.id]);
+                await txRun(`UPDATE users SET google_home_linked = 0 WHERE id = ?`, [user.id]);
+
+                // Bump session epoch so all other portal sessions (other browsers) are invalidated.
+                // We mint a fresh token for the current browser below that carries the new epoch.
+                await txRun(`UPDATE users SET session_epoch = COALESCE(session_epoch, 0) + 1 WHERE id = ?`, [
+                    user.id
+                ]);
+            });
 
             const updatedUser = await dbGet(`SELECT * FROM users WHERE id = ?`, [user.id]);
             const portalSessionToken = auth.createPortalSessionToken(updatedUser.email, updatedUser.session_epoch);

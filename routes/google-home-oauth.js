@@ -1,6 +1,6 @@
 const express = require('express');
 
-module.exports = function ({ dbGet, dbRun, config, utils, auth, googleCore, homegraph }) {
+module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, googleCore, homegraph }) {
     const router = express.Router();
     const { asyncHandler } = utils;
 
@@ -116,8 +116,9 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth, googleCore, home
             const nowIso = new Date().toISOString();
             const expiresAt = new Date(Date.now() + googleCore.getGoogleAuthCodeTtlSeconds() * 1000).toISOString();
 
-            await dbRun(
-                `
+            await dbTransaction(async ({ dbRun: txRun }) => {
+                await txRun(
+                    `
                 INSERT INTO google_home_auth_codes (
                     user_id,
                     code_hash,
@@ -128,18 +129,18 @@ module.exports = function ({ dbGet, dbRun, config, utils, auth, googleCore, home
                 )
                 VALUES (?, ?, ?, ?, ?, ?)
             `,
-                [user.id, utils.hashSecret(authCode), redirectUri, 'google_assistant', expiresAt, nowIso]
-            );
+                    [user.id, utils.hashSecret(authCode), redirectUri, 'google_assistant', expiresAt, nowIso]
+                );
 
-            await dbRun(
-                `
+                await txRun(
+                    `
                 UPDATE users
-                SET google_home_linked = 1,
-                    google_home_linked_at = COALESCE(google_home_linked_at, ?)
+                SET google_home_linked = 1
                 WHERE id = ?
             `,
-                [nowIso, user.id]
-            );
+                    [user.id]
+                );
+            });
 
             homegraph.scheduleGoogleRequestSyncForUser(user.id, 'oauth_linked');
             homegraph.scheduleGoogleReportStateForUser(user.id, { force: true });
