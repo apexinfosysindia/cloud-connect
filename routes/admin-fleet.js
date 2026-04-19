@@ -8,8 +8,6 @@ module.exports = function ({ dbRun, dbAll, utils, auth, device }) {
         '/api/admin/fleet',
         auth.requireAdmin,
         asyncHandler(async (req, res) => {
-            await dbRun(`DELETE FROM admin_connect_sessions WHERE expires_at < ?`, [new Date().toISOString()]);
-
             const rows = await dbAll(
                 `
                 SELECT
@@ -238,24 +236,6 @@ module.exports = function ({ dbRun, dbAll, utils, auth, device }) {
             }
 
             const reason = utils.sanitizeString(req.body?.reason, 200);
-            const connectToken = utils.generateAdminConnectToken();
-            const connectTokenHash = utils.hashSecret(connectToken);
-            const ttlMinutes = utils.getAdminConnectTokenTtlMinutes();
-            const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000).toISOString();
-            await dbRun(`DELETE FROM admin_connect_sessions WHERE expires_at < ?`, [new Date().toISOString()]);
-            await dbRun(
-                `
-                INSERT INTO admin_connect_sessions (
-                    device_id,
-                    admin_email,
-                    token_hash,
-                    expires_at,
-                    created_at
-                )
-                VALUES (?, ?, ?, ?, ?)
-            `,
-                [deviceId, req.admin.email, connectTokenHash, expiresAt, new Date().toISOString()]
-            );
 
             await device.insertAdminAccessLog(deviceId, req.admin.email, 'connect_command_issued', {
                 reason: reason || null,
@@ -263,8 +243,7 @@ module.exports = function ({ dbRun, dbAll, utils, auth, device }) {
                 tunnel_host: deviceRow.tunnel_host,
                 tunnel_port: deviceRow.tunnel_port,
                 ssh_route: utils.getAdminSshRoute(),
-                remote_user: 'root',
-                ttl_minutes: ttlMinutes
+                remote_user: 'root'
             });
 
             await device.insertDeviceLog(
@@ -274,7 +253,6 @@ module.exports = function ({ dbRun, dbAll, utils, auth, device }) {
                 `Admin ${req.admin.email} generated an SSH connect command`,
                 {
                     reason: reason || null,
-                    expires_at: expiresAt,
                     ssh_route: utils.getAdminSshRoute()
                 }
             );
@@ -282,10 +260,7 @@ module.exports = function ({ dbRun, dbAll, utils, auth, device }) {
             return res.status(200).json({
                 device: device.serializeDevice(deviceRow),
                 connect: {
-                    token: connectToken,
-                    expires_at: expiresAt,
-                    command,
-                    note: 'Token is issued for admin session tracking and rotates on each connect request.'
+                    command
                 }
             });
         })

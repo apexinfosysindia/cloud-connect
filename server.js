@@ -17,7 +17,7 @@ process.on('unhandledRejection', (reason) => {
 const config = require('./lib/config');
 const utils = require('./lib/utils');
 const db = require('./db');
-const { dbGet, dbRun, dbAll } = require('./lib/db-helpers')(db);
+const { dbGet, dbRun, dbAll, dbTransaction } = require('./lib/db-helpers')(db);
 
 // Factory-initialized modules (dependency order matters)
 const device = require('./lib/device')({ dbGet, dbRun, dbAll, config, utils });
@@ -25,6 +25,7 @@ const billing = require('./lib/billing')({
     dbGet,
     dbRun,
     dbAll,
+    dbTransaction,
     config,
     utils,
     createUniqueAccessToken: device.createUniqueAccessToken
@@ -170,6 +171,7 @@ const deps = {
     dbGet,
     dbRun,
     dbAll,
+    dbTransaction,
     config,
     utils,
     auth,
@@ -215,26 +217,34 @@ try {
 
 // --- Start server ---
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Cloud Portal API is running on http://localhost:${PORT}`);
-    googleCore
-        .ensureGoogleRuntimeSchemaReady()
-        .then(() => {
-            console.log('Google runtime schema ready.');
-        })
-        .catch((error) => {
-            console.error('Google runtime schema migration failed:', error);
-        });
-    googleCore.startStaleEntityInterval();
 
-    // Check for expired trial / admin-activated accounts every hour
-    const EXPIRY_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
-    billing.expireOverdueAccounts().catch((err) => {
-        console.error('Initial account expiry check failed:', err);
-    });
-    setInterval(() => {
-        billing.expireOverdueAccounts().catch((err) => {
-            console.error('Periodic account expiry check failed:', err);
+db.ready
+    .then(() => {
+        app.listen(PORT, () => {
+            console.log(`Cloud Portal API is running on http://localhost:${PORT}`);
+            googleCore
+                .ensureGoogleRuntimeSchemaReady()
+                .then(() => {
+                    console.log('Google runtime schema ready.');
+                })
+                .catch((error) => {
+                    console.error('Google runtime schema migration failed:', error);
+                });
+            googleCore.startStaleEntityInterval();
+
+            // Check for expired trial / admin-activated accounts every hour
+            const EXPIRY_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+            billing.expireOverdueAccounts().catch((err) => {
+                console.error('Initial account expiry check failed:', err);
+            });
+            setInterval(() => {
+                billing.expireOverdueAccounts().catch((err) => {
+                    console.error('Periodic account expiry check failed:', err);
+                });
+            }, EXPIRY_CHECK_INTERVAL_MS);
         });
-    }, EXPIRY_CHECK_INTERVAL_MS);
-});
+    })
+    .catch((err) => {
+        console.error('FATAL: database schema not ready; refusing to start server:', err.message);
+        process.exit(1);
+    });

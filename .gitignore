@@ -90,6 +90,8 @@ frps.toml
 
 # Backup files
 *.bak
+backups/
+*.sqlite.gz
 
 # OS-specific files
 .DS_Store
