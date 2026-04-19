@@ -473,7 +473,19 @@ function getActionButtons(user) {
     }
 
     buttons.push(`<button data-user-id="${user.id}" data-email="${escapeHtml(user.email)}" class="button button-danger button-small admin-delete">Delete</button>`);
+
+    if (user.razorpay_subscription_id && !isTerminalSubscriptionStatus(user.razorpay_subscription_status)) {
+        buttons.push(
+            `<button data-user-id="${user.id}" data-email="${escapeHtml(user.email)}" class="button button-secondary button-small admin-cancel-sub">Cancel Subscription</button>`
+        );
+    }
     return buttons;
+}
+
+function isTerminalSubscriptionStatus(status) {
+    if (!status) return false;
+    const s = String(status).toLowerCase();
+    return ['cancelled', 'completed', 'expired', 'halted'].includes(s);
 }
 
 function renderUsers(users) {
@@ -1139,6 +1151,37 @@ usersTableBody.addEventListener('click', async (event) => {
             } finally {
                 deleteBtn.disabled = false;
                 deleteBtn.textContent = originalLabel;
+            }
+            return;
+        }
+
+        const cancelSubBtn = event.target.closest('.admin-cancel-sub');
+        if (cancelSubBtn) {
+            const confirmed = await openConfirmModal({
+                title: 'Cancel subscription',
+                message:
+                    `Cancel the Razorpay subscription for ${cancelSubBtn.dataset.email}? ` +
+                    'They will keep access until the end of the current billing period, after which no further charges will be made. ' +
+                    'The account itself is not deleted.',
+                confirmLabel: 'Cancel Subscription',
+                cancelLabel: 'Keep Subscription',
+                danger: true,
+            });
+            if (!confirmed) {
+                return;
+            }
+            const originalLabel = cancelSubBtn.textContent;
+            cancelSubBtn.disabled = true;
+            cancelSubBtn.textContent = 'Cancelling...';
+            try {
+                const response = await api(`/api/admin/users/${cancelSubBtn.dataset.userId}/cancel-subscription`, { method: 'POST' });
+                await loadUsers();
+                showAlert(response.message || 'Subscription cancelled.', false);
+            } catch (error) {
+                showAlert(normalizeErrorMessage(error, 'Unable to cancel subscription'));
+            } finally {
+                cancelSubBtn.disabled = false;
+                cancelSubBtn.textContent = originalLabel;
             }
         }
         return;

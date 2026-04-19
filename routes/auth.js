@@ -571,6 +571,57 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, e
         })
     );
 
+    router.post(
+        '/api/account/cancel-subscription',
+        asyncHandler(async (req, res) => {
+            const { portal_session_token, password } = req.body;
+            const cookieToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
+            const sessionToken = cookieToken || portal_session_token;
+
+            if (!sessionToken) {
+                return res.status(400).json({ error: 'Portal session token is required' });
+            }
+            const session = auth.verifyPortalSessionToken(sessionToken);
+            if (!session) {
+                return res.status(401).json({ error: 'Invalid portal session. Please log in again.' });
+            }
+
+            const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [session.email]);
+            if (!user) {
+                return res.status(404).json({ error: 'Account not found' });
+            }
+            if (!auth.portalTokenEpochMatches(session, user)) {
+                return res.status(401).json({ error: 'Invalid portal session. Please log in again.' });
+            }
+            if (!password || typeof password !== 'string') {
+                return res.status(400).json({ error: 'Password is required to cancel the subscription.' });
+            }
+            const isMatch = await bcrypt.compare(password, user.password);
+            if (!isMatch) {
+                return res.status(401).json({ error: 'Incorrect password. Subscription was not cancelled.' });
+            }
+
+            if (!user.razorpay_subscription_id) {
+                return res.status(400).json({ error: 'No active subscription to cancel.' });
+            }
+
+            try {
+                const result = await billing.cancelSubscription(user.id, { atCycleEnd: true });
+                if (!result.cancelled) {
+                    return res.status(400).json({ error: 'No active subscription to cancel.' });
+                }
+                return res.status(200).json({
+                    message:
+                        'Subscription cancelled. You will keep access until the end of your current billing period, after which no further charges will be made.'
+                });
+            } catch (error) {
+                return res.status(502).json({
+                    error: error.message || 'Unable to cancel subscription. Please try again.'
+                });
+            }
+        })
+    );
+
     router.post('/api/account/logout', (_req, res) => {
         auth.clearPortalSessionCookie(res);
         return res.status(200).json({ message: 'Logged out' });

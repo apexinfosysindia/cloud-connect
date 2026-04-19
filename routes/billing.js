@@ -193,13 +193,13 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
                     info.paymentId,
                     info.subscriptionStatus || 'active'
                 );
-            } else if (['subscription.cancelled', 'subscription.halted', 'subscription.paused'].includes(eventName)) {
+            } else if (['subscription.halted', 'subscription.paused'].includes(eventName)) {
                 await billing.updateUserStatus(user.id, 'suspended');
                 await dbRun(`UPDATE users SET razorpay_subscription_status = ? WHERE id = ?`, [
                     info.subscriptionStatus || eventName,
                     user.id
                 ]);
-            } else if (['subscription.completed', 'invoice.expired'].includes(eventName)) {
+            } else if (['subscription.cancelled', 'subscription.completed', 'invoice.expired'].includes(eventName)) {
                 await billing.updateUserStatus(user.id, 'expired');
                 await dbRun(`UPDATE users SET razorpay_subscription_status = ? WHERE id = ?`, [
                     info.subscriptionStatus || eventName,
