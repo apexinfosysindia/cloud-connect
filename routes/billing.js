@@ -179,6 +179,17 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
                 return res.status(200).json({ message: 'No matching user for webhook event' });
             }
 
+            // Guard against webhook reordering: Razorpay delivers events
+            // asynchronously and out-of-order, so a late authenticated/activated
+            // event can land AFTER we've already cancelled locally. If the
+            // local record is already in a terminal subscription state
+            // (cancelled/completed/expired/halted), ignore late activation
+            // events — they would otherwise resurrect a cancelled user to
+            // 'active' for a few minutes until the cancel event catches up.
+            const terminalRzpStatuses = ['cancelled', 'completed', 'expired', 'halted'];
+            const localRzpStatus = String(user.razorpay_subscription_status || '').toLowerCase();
+            const alreadyTerminal = terminalRzpStatuses.includes(localRzpStatus);
+
             if (
                 [
                     'subscription.authenticated',
@@ -188,6 +199,12 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
                     'invoice.paid'
                 ].includes(eventName)
             ) {
+                if (alreadyTerminal) {
+                    console.log(
+                        `Ignoring late ${eventName} for ${user.email} — subscription already ${localRzpStatus} locally.`
+                    );
+                    return res.status(200).json({ message: 'Webhook ignored (already terminal)' });
+                }
                 await billing.activateUserAccount(
                     info.subscriptionId,
                     info.paymentId,
@@ -200,11 +217,25 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
                     user.id
                 ]);
             } else if (['subscription.cancelled', 'subscription.completed', 'invoice.expired'].includes(eventName)) {
-                await billing.updateUserStatus(user.id, 'expired');
-                await dbRun(`UPDATE users SET razorpay_subscription_status = ? WHERE id = ?`, [
-                    info.subscriptionStatus || eventName,
-                    user.id
-                ]);
+                // If we already soft-cancelled a trial locally (status=payment_pending,
+                // trial_history written), don't downgrade to 'expired' — the user
+                // never held a paid period, they returned to the pre-trial state.
+                // Only paid users who cancel should land in 'expired'.
+                if (user.status === 'payment_pending') {
+                    console.log(
+                        `Preserving payment_pending for ${user.email} — trial-cancel already handled locally, not overwriting with expired.`
+                    );
+                    await dbRun(`UPDATE users SET razorpay_subscription_status = ? WHERE id = ?`, [
+                        info.subscriptionStatus || eventName,
+                        user.id
+                    ]);
+                } else {
+                    await billing.updateUserStatus(user.id, 'expired');
+                    await dbRun(`UPDATE users SET razorpay_subscription_status = ? WHERE id = ?`, [
+                        info.subscriptionStatus || eventName,
+                        user.id
+                    ]);
+                }
             } else if (info.subscriptionStatus) {
                 await dbRun(`UPDATE users SET razorpay_subscription_status = ? WHERE id = ?`, [
                     info.subscriptionStatus,
