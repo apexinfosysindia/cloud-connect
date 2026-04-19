@@ -1161,7 +1161,8 @@ usersTableBody.addEventListener('click', async (event) => {
                 title: 'Cancel subscription',
                 message:
                     `Cancel the Razorpay subscription for ${cancelSubBtn.dataset.email}? ` +
-                    'They will keep access until the end of the current billing period, after which no further charges will be made. ' +
+                    'Paid users keep access until the end of the current billing period. ' +
+                    'Trial users lose access immediately (moved to payment_pending) so they cannot exploit the trial. ' +
                     'The account itself is not deleted.',
                 confirmLabel: 'Cancel Subscription',
                 cancelLabel: 'Keep Subscription',

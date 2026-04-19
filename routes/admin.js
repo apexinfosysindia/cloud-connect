@@ -122,8 +122,16 @@ module.exports = function ({ dbAll, dbGet, utils, auth, billing }) {
                     return res.status(400).json({ error: 'No active subscription to cancel.' });
                 }
                 const updated = await dbGet(`SELECT * FROM users WHERE id = ?`, [Number(id)]);
+                let message;
+                if (result.trialAbort) {
+                    message = `Subscription cancelled for ${user.email}. Trial access revoked immediately (user moved to payment_pending).`;
+                } else if (result.atCycleEnd) {
+                    message = `Subscription cancelled for ${user.email}. Access continues until period end.`;
+                } else {
+                    message = `Subscription cancelled for ${user.email}. No billing cycle had started yet, so it took effect immediately.`;
+                }
                 return res.status(200).json({
-                    message: `Subscription cancelled for ${user.email}. Access continues until period end.`,
+                    message,
                     user: auth.serializeAdminUser(updated)
                 });
             } catch (error) {
