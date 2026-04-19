@@ -508,7 +508,11 @@
         const tokenCard = document.getElementById('tokenCard');
         // Gate subdomain and billing behind email verification
         subdomainCard.classList.toggle('hidden', subdomainConfigured || !emailVerified);
-        const showBillingCard = userData.status === 'payment_pending' && subdomainConfigured && emailVerified;
+        // Show billing card for any non-active billing state so expired users
+        // can re-subscribe and suspended users can restore access. Without this
+        // an 'expired' user has no UI path back to the plan picker.
+        const needsBilling = ['payment_pending', 'expired', 'suspended'].includes(userData.status);
+        const showBillingCard = needsBilling && subdomainConfigured && emailVerified;
         billingCard.classList.toggle('hidden', !showBillingCard);
         tokenCard.classList.toggle('hidden', !accessEnabled);
 
