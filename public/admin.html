@@ -705,9 +705,6 @@ async function applyStatus(userId, status, trialDays) {
 }
 
 async function deleteUser(userId, email) {
-    if (!confirm(`Permanently delete ${email}?\n\nThis will cancel any active subscription and remove all devices, logs, and data. This cannot be undone.`)) {
-        return;
-    }
 
     const response = await api(`/api/admin/users/${userId}`, {
         method: 'DELETE'
@@ -1061,6 +1058,14 @@ usersTableBody.addEventListener('click', async (event) => {
     if (!button) {
         const deleteBtn = event.target.closest('.admin-delete');
         if (deleteBtn) {
+            const confirmed = window.confirm(
+                `Permanently delete ${deleteBtn.dataset.email}?\n\n` +
+                    'This will cancel any active subscription and remove all devices, logs, and data. ' +
+                    'This cannot be undone.'
+            );
+            if (!confirmed) {
+                return;
+            }
             const originalLabel = deleteBtn.textContent;
             deleteBtn.disabled = true;
             deleteBtn.textContent = 'Deleting...';
