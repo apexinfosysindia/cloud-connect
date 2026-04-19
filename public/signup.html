@@ -189,6 +189,12 @@
                         </form>
                     </section>
 
+                    <section class="manage-section hidden" id="cancelSubscriptionSection">
+                        <span class="detail-label">Cancel Subscription</span>
+                        <p class="detail-copy">Stop your Razorpay subscription renewals. You will keep access until the end of your current billing period.</p>
+                        <button id="cancelSubscriptionBtn" type="button" class="button button-secondary button-full">Cancel Subscription</button>
+                    </section>
+
                     <section class="manage-section manage-section--danger">
                         <span class="detail-label danger-label">Danger Zone</span>
                         <p class="detail-copy">Permanently delete your account, all devices, and cancel any active subscription. This cannot be undone.</p>
@@ -198,6 +204,25 @@
             </section>
         </section>
     </main>
+</div>
+
+<div id="cancelSubscriptionModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="cancelSubModalTitle">
+    <div class="modal__backdrop" data-close-cancel-sub-modal="true"></div>
+    <div class="modal__panel">
+        <div class="modal__header">
+            <div>
+                <h2 id="cancelSubModalTitle" class="section-title section-title--small">Cancel Subscription</h2>
+                <p class="section-text">Your subscription will stop renewing. You'll keep access until the end of your current billing period; no further charges will be made after that. Your account stays intact — you can start a new subscription any time.</p>
+            </div>
+            <button id="cancelSubModalClose" class="button button-secondary button-small">Close</button>
+        </div>
+        <form id="cancelSubscriptionForm" autocomplete="off">
+            <label class="detail-label" for="cancelSubConfirmPassword">Enter your password to confirm</label>
+            <input class="input" type="password" id="cancelSubConfirmPassword" placeholder="Your account password" required autocomplete="current-password">
+            <p id="cancelSubModalError" class="detail-copy danger-label" style="min-height:1.2em"></p>
+            <button type="submit" id="cancelSubModalConfirmBtn" class="button button-danger button-full">Cancel My Subscription</button>
+        </form>
+    </div>
 </div>
 
 <div id="deleteAccountModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">

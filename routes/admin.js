@@ -104,6 +104,36 @@ module.exports = function ({ dbAll, dbGet, utils, auth, billing }) {
         })
     );
 
+    router.post(
+        '/api/admin/users/:id/cancel-subscription',
+        auth.requireAdmin,
+        asyncHandler(async (req, res) => {
+            const { id } = req.params;
+            const user = await dbGet(`SELECT * FROM users WHERE id = ?`, [Number(id)]);
+            if (!user) {
+                return res.status(404).json({ error: 'User not found' });
+            }
+            if (!user.razorpay_subscription_id) {
+                return res.status(400).json({ error: 'This user has no active Razorpay subscription.' });
+            }
+            try {
+                const result = await billing.cancelSubscription(Number(id), { atCycleEnd: true });
+                if (!result.cancelled) {
+                    return res.status(400).json({ error: 'No active subscription to cancel.' });
+                }
+                const updated = await dbGet(`SELECT * FROM users WHERE id = ?`, [Number(id)]);
+                return res.status(200).json({
+                    message: `Subscription cancelled for ${user.email}. Access continues until period end.`,
+                    user: auth.serializeAdminUser(updated)
+                });
+            } catch (error) {
+                return res.status(502).json({
+                    error: error.message || 'Unable to cancel subscription. Please try again.'
+                });
+            }
+        })
+    );
+
     router.delete(
         '/api/admin/users/:id',
         auth.requireAdmin,

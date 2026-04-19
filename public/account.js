@@ -512,6 +512,12 @@
         billingCard.classList.toggle('hidden', !showBillingCard);
         tokenCard.classList.toggle('hidden', !accessEnabled);
 
+        // Show/hide "Cancel Subscription" row based on server-reported flag
+        const cancelSubSection = document.getElementById('cancelSubscriptionSection');
+        if (cancelSubSection) {
+            cancelSubSection.classList.toggle('hidden', !userData.has_active_subscription);
+        }
+
         // Reset plan picker to default (annual selected) on every render so
         // a dismissed or failed checkout doesn't leave stale selection state.
         const planOptions = billingCard.querySelectorAll('.plan-option');
@@ -1414,6 +1420,93 @@
                 if (deleteModalConfirmBtn) {
                     deleteModalConfirmBtn.textContent = 'Permanently Delete Account';
                     deleteModalConfirmBtn.disabled = false;
+                }
+            }
+        });
+    }
+
+    // Cancel Subscription modal (opens from within Manage Account)
+    const cancelSubBtn = document.getElementById('cancelSubscriptionBtn');
+    const cancelSubModal = document.getElementById('cancelSubscriptionModal');
+    const cancelSubForm = document.getElementById('cancelSubscriptionForm');
+    const cancelSubPassword = document.getElementById('cancelSubConfirmPassword');
+    const cancelSubError = document.getElementById('cancelSubModalError');
+    const cancelSubClose = document.getElementById('cancelSubModalClose');
+    const cancelSubConfirmBtn = document.getElementById('cancelSubModalConfirmBtn');
+
+    function openCancelSubModal() {
+        if (!cancelSubModal) return;
+        if (cancelSubPassword) cancelSubPassword.value = '';
+        if (cancelSubError) cancelSubError.textContent = '';
+        if (cancelSubConfirmBtn) {
+            cancelSubConfirmBtn.textContent = 'Cancel My Subscription';
+            cancelSubConfirmBtn.disabled = false;
+        }
+        cancelSubModal.classList.remove('hidden');
+        if (cancelSubPassword) cancelSubPassword.focus();
+    }
+
+    function closeCancelSubModal() {
+        if (!cancelSubModal) return;
+        cancelSubModal.classList.add('hidden');
+        if (cancelSubPassword) cancelSubPassword.value = '';
+        if (cancelSubError) cancelSubError.textContent = '';
+    }
+
+    if (cancelSubBtn) {
+        cancelSubBtn.addEventListener('click', openCancelSubModal);
+    }
+    if (cancelSubClose) {
+        cancelSubClose.addEventListener('click', closeCancelSubModal);
+    }
+    if (cancelSubModal) {
+        cancelSubModal.addEventListener('click', (event) => {
+            if (event.target.closest('[data-close-cancel-sub-modal]')) {
+                closeCancelSubModal();
+            }
+        });
+    }
+    if (cancelSubForm) {
+        cancelSubForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const storedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
+            if (!storedUser?.portal_session_token) {
+                closeCancelSubModal();
+                showAlert('Please log in again to continue.');
+                return;
+            }
+            const password = (cancelSubPassword?.value || '').trim();
+            if (!password) {
+                if (cancelSubError) cancelSubError.textContent = 'Password is required.';
+                return;
+            }
+            if (cancelSubConfirmBtn) {
+                cancelSubConfirmBtn.disabled = true;
+                cancelSubConfirmBtn.textContent = 'Cancelling...';
+            }
+            if (cancelSubError) cancelSubError.textContent = '';
+            try {
+                const res = await fetch('/api/account/cancel-subscription', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        portal_session_token: storedUser.portal_session_token,
+                        password
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Unable to cancel subscription.');
+                closeCancelSubModal();
+                showAlert(data.message || 'Subscription cancelled.', false);
+                // Refresh dashboard so the Cancel button hides and status reflects reality.
+                if (typeof loadAccount === 'function') {
+                    try { await loadAccount(); } catch (_e) { /* best-effort */ }
+                }
+            } catch (err) {
+                if (cancelSubError) cancelSubError.textContent = err.message;
+                if (cancelSubConfirmBtn) {
+                    cancelSubConfirmBtn.textContent = 'Cancel My Subscription';
+                    cancelSubConfirmBtn.disabled = false;
                 }
             }
         });
