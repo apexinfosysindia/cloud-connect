@@ -60,7 +60,34 @@
     const alexaOAuthRedirectUri = alexaOAuthMode ? oauthParams.get('redirect_uri') || '' : '';
     const alexaOAuthState = alexaOAuthMode ? oauthParams.get('state') || '' : '';
     const alexaOAuthConsentMode = oauthParams.get('alexa_oauth_consent') === '1';
+    const alexaOAuthChallengeParam = oauthParams.get('oauth_challenge') || '';
     let alexaOAuthRedirectInFlight = false;
+
+    // The Alexa app already shows its own consent UI before redirecting to
+    // our /api/alexa/oauth — a second portal-side consent screen is
+    // redundant and the previous version dropped users on the dashboard
+    // because no consent UI exists. Auto-approve as soon as we land on
+    // the consent step with a valid challenge.
+    if (alexaOAuthConsentMode && alexaOAuthChallengeParam) {
+        try {
+            const decodedChallenge = JSON.parse(decodeURIComponent(alexaOAuthChallengeParam));
+            const approveUrl = new URL('/api/alexa/oauth', window.location.origin);
+            approveUrl.searchParams.set('client_id', decodedChallenge.client_id || '');
+            approveUrl.searchParams.set('redirect_uri', decodedChallenge.redirect_uri || '');
+            approveUrl.searchParams.set('state', decodedChallenge.state || '');
+            approveUrl.searchParams.set('response_type', 'code');
+            approveUrl.searchParams.set('approved', '1');
+            if (decodedChallenge.portal_session_token) {
+                approveUrl.searchParams.set(
+                    'portal_session_token',
+                    decodedChallenge.portal_session_token
+                );
+            }
+            window.location.replace(approveUrl.toString());
+        } catch (_err) {
+            // fall through to normal dashboard if challenge is malformed
+        }
+    }
     const googleOAuthCookieProbeKey = [
         'apx_google_oauth_cookie_probe',
         googleOAuthClientId,
