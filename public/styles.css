@@ -1551,6 +1551,18 @@ code {
     margin: 6px 0 8px;
 }
 
+.google-home-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 4px;
+}
+
+.google-home-header .detail-label {
+    margin: 0;
+}
+
 .google-pin-section .detail-label {
     display: block;
     margin-bottom: 4px;
