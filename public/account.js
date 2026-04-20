@@ -696,10 +696,11 @@
             return;
         }
 
-        if (userData.google_home_linked === true) {
-            googleOAuthRedirectInFlight = false;
-            return;
-        }
+        // NOTE: do NOT early-return when userData.google_home_linked === true.
+        // Google Home triggers OAuth again for re-linking / "Sync devices"
+        // flows, and we must still forward the user through /oauth/continue
+        // → consent → auth code. Blocking this dropped the user on the
+        // dashboard with no path forward.
 
         const redirectUri = googleOAuthRedirectUri;
         const state = googleOAuthState;
