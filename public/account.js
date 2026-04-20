@@ -608,8 +608,7 @@
                 }
                 googleEntitiesLastFingerprint = null;
                 stopGoogleEntitiesAutoRefresh();
-                const bulkBarEl = document.getElementById('googleEntitiesBulkBar');
-                if (bulkBarEl) bulkBarEl.classList.add('hidden');
+                if (bulkToggleBtn) bulkToggleBtn.classList.add('hidden');
             }
         } else {
             stopGoogleEntitiesAutoRefresh();
@@ -1748,7 +1747,6 @@
 
     // Bulk expose/hide all entities. Reuses the per-entity /expose endpoint
     // so no server changes are needed — we just fan out in parallel.
-    const bulkBar = document.getElementById('googleEntitiesBulkBar');
     const bulkToggleBtn = document.getElementById('googleEntitiesBulkToggle');
 
     function getEntityToggleInputs() {
@@ -1757,13 +1755,13 @@
     }
 
     function updateGoogleEntitiesBulkBar() {
-        if (!bulkBar || !bulkToggleBtn) return;
+        if (!bulkToggleBtn) return;
         const toggles = getEntityToggleInputs();
         if (toggles.length === 0) {
-            bulkBar.classList.add('hidden');
+            bulkToggleBtn.classList.add('hidden');
             return;
         }
-        bulkBar.classList.remove('hidden');
+        bulkToggleBtn.classList.remove('hidden');
         // If every entity is already exposed, the bulk action becomes "Hide all";
         // otherwise it's "Expose all" (covers the mixed and all-hidden cases).
         const allExposed = toggles.every((t) => t.checked);
