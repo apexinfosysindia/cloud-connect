@@ -151,10 +151,17 @@
                         <div id="googleSecurityPinSection" class="google-pin-section">
                             <span class="detail-label">Security PIN for Locks &amp; Alarms</span>
                             <p class="detail-copy">Set a 4-8 digit PIN that Google Assistant will ask before locking/unlocking doors or arming/disarming alarms.</p>
-                            <div class="google-pin-controls">
+                            <div id="googleSecurityPinSetView" class="google-pin-set-view hidden">
+                                <p id="googleSecurityPinSetMsg" class="detail-copy google-pin-set-msg">A PIN is set. Google will ask for it before lock or alarm commands.</p>
+                                <div class="google-pin-set-actions">
+                                    <button id="googleSecurityPinChange" type="button" class="button button-secondary">Change PIN</button>
+                                    <button id="googleSecurityPinRemove" type="button" class="button button-danger">Remove PIN</button>
+                                </div>
+                            </div>
+                            <div id="googleSecurityPinEditView" class="google-pin-controls">
                                 <input class="input google-pin-input" type="password" id="googleSecurityPinInput" placeholder="Enter PIN (4-8 digits)" maxlength="8" pattern="\d{4,8}" inputmode="numeric">
                                 <button id="googleSecurityPinSave" class="button button-primary">Save</button>
-                                <button id="googleSecurityPinClear" class="button button-secondary">Clear</button>
+                                <button id="googleSecurityPinCancel" type="button" class="button button-secondary hidden">Cancel</button>
                             </div>
                             <p id="googleSecurityPinStatus" class="detail-copy google-pin-status"></p>
                         </div>
