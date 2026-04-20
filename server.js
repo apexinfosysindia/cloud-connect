@@ -76,6 +76,11 @@ const email = require('./lib/email')({ dbGet, dbRun, config, utils });
 // --- Express app setup ---
 const app = express();
 
+// Running behind Caddy (reverse proxy). Trust X-Forwarded-For so that
+// express-rate-limit sees the real client IP instead of throwing
+// ERR_ERL_UNEXPECTED_X_FORWARDED_FOR on every /api/* request.
+app.set('trust proxy', 1);
+
 app.use(cookieParser());
 
 // Security headers
