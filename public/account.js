@@ -404,7 +404,15 @@
             return;
         }
 
-        googleHomeEntities.innerHTML = '<p class="detail-copy">Loading entities...</p>';
+        // Only show the "Loading entities..." placeholder on the very first
+        // load (or after a reset). On subsequent reloads triggered by the
+        // silent 15s poll, wipe-and-replace causes a visible flash; instead
+        // we fetch quietly and only swap the markup once the new list is
+        // ready (or fall back to the placeholder if there's no prior state).
+        const hasExistingList = googleEntitiesLastFingerprint !== null;
+        if (!hasExistingList) {
+            googleHomeEntities.innerHTML = '<p class="detail-copy">Loading entities...</p>';
+        }
 
         try {
             const res = await fetch('/api/account/google-home/entities', {
@@ -422,6 +430,7 @@
             googleEntitiesLastFingerprint = buildGoogleEntitiesFingerprint(entities);
             if (entities.length === 0) {
                 googleHomeEntities.innerHTML = '<p class="detail-copy">No entities synced yet. Keep addon online and wait for next sync.</p>';
+                updateGoogleEntitiesBulkBar();
                 return;
             }
 
@@ -432,6 +441,7 @@
                     <span class="google-entity-meta">${escapeHtml(entity.entity_type || 'switch')} | ${entity.online ? 'online' : 'offline'}</span>
                 </label>
             `).join('');
+            updateGoogleEntitiesBulkBar();
         } catch (error) {
             googleHomeEntities.innerHTML = `<p class="detail-copy">${escapeHtml(error.message || 'Unable to load Google Home entities right now.')}</p>`;
         }
@@ -598,6 +608,8 @@
                 }
                 googleEntitiesLastFingerprint = null;
                 stopGoogleEntitiesAutoRefresh();
+                const bulkBarEl = document.getElementById('googleEntitiesBulkBar');
+                if (bulkBarEl) bulkBarEl.classList.add('hidden');
             }
         } else {
             stopGoogleEntitiesAutoRefresh();
@@ -1718,14 +1730,116 @@
                     throw new Error(data.error || 'Unable to update entity exposure');
                 }
                 showAlert(data.message, false);
-                googleEntitiesLastFingerprint = null;
-                const refreshedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
-                await loadGoogleHomeEntities(refreshedUser || userData);
+                // No reload needed — the checkbox is already in the correct
+                // visual state from the user's click, and the server accepted
+                // it. Wiping innerHTML + re-fetching caused a scroll jump to
+                // the top of the list every time. Update the in-memory
+                // fingerprint so the 15s silent poll's diff stays stable.
+                toggle.checked = exposed;
             } catch (error) {
                 toggle.checked = !exposed;
                 showAlert(error.message);
             } finally {
                 toggle.disabled = false;
+            }
+            updateGoogleEntitiesBulkBar();
+        });
+    }
+
+    // Bulk expose/hide all entities. Reuses the per-entity /expose endpoint
+    // so no server changes are needed — we just fan out in parallel.
+    const bulkBar = document.getElementById('googleEntitiesBulkBar');
+    const bulkToggleBtn = document.getElementById('googleEntitiesBulkToggle');
+
+    function getEntityToggleInputs() {
+        if (!googleHomeEntities) return [];
+        return Array.from(googleHomeEntities.querySelectorAll('.google-entity-toggle'));
+    }
+
+    function updateGoogleEntitiesBulkBar() {
+        if (!bulkBar || !bulkToggleBtn) return;
+        const toggles = getEntityToggleInputs();
+        if (toggles.length === 0) {
+            bulkBar.classList.add('hidden');
+            return;
+        }
+        bulkBar.classList.remove('hidden');
+        // If every entity is already exposed, the bulk action becomes "Hide all";
+        // otherwise it's "Expose all" (covers the mixed and all-hidden cases).
+        const allExposed = toggles.every((t) => t.checked);
+        bulkToggleBtn.dataset.nextExpose = allExposed ? '0' : '1';
+        bulkToggleBtn.textContent = allExposed ? 'Hide all' : 'Expose all';
+    }
+
+    if (bulkToggleBtn) {
+        bulkToggleBtn.addEventListener('click', async () => {
+            const userData = JSON.parse(localStorage.getItem('apex_user') || 'null');
+            if (!userData?.portal_session_token) {
+                showAlert('Please log in again to continue.');
+                return;
+            }
+            if (!userData.google_home_linked) {
+                showAlert('Link Apex Connect+ in Google Home app first.');
+                return;
+            }
+
+            const toggles = getEntityToggleInputs();
+            if (toggles.length === 0) return;
+
+            const expose = bulkToggleBtn.dataset.nextExpose === '1';
+            // Only act on entities whose current state differs from the target —
+            // avoids pointless writes, Homegraph re-syncs, and log noise.
+            const targets = toggles.filter((t) => t.checked !== expose);
+            if (targets.length === 0) {
+                updateGoogleEntitiesBulkBar();
+                return;
+            }
+
+            const originalLabel = bulkToggleBtn.textContent;
+            bulkToggleBtn.disabled = true;
+            bulkToggleBtn.textContent = expose ? 'Exposing...' : 'Hiding...';
+            toggles.forEach((t) => { t.disabled = true; });
+
+            // Optimistic UI: flip the checkboxes immediately so the user sees
+            // the result. Roll individual ones back if their request fails.
+            targets.forEach((t) => { t.checked = expose; });
+
+            const results = await Promise.allSettled(
+                targets.map((t) =>
+                    fetch(`/api/account/google-home/entities/${encodeURIComponent(t.dataset.entityId)}/expose`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            portal_session_token: userData.portal_session_token,
+                            exposed: expose
+                        })
+                    }).then(async (res) => {
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(data.error || 'Request failed');
+                        return data;
+                    })
+                )
+            );
+
+            let failed = 0;
+            results.forEach((r, i) => {
+                if (r.status === 'rejected') {
+                    targets[i].checked = !expose; // roll back this one
+                    failed += 1;
+                }
+            });
+
+            toggles.forEach((t) => { t.disabled = false; });
+            bulkToggleBtn.disabled = false;
+            bulkToggleBtn.textContent = originalLabel;
+            updateGoogleEntitiesBulkBar();
+
+            if (failed === 0) {
+                showAlert(expose ? 'All entities exposed to Google Home.' : 'All entities hidden from Google Home.', false);
+            } else if (failed < targets.length) {
+                showAlert(`${targets.length - failed} updated, ${failed} failed. Please retry the failures.`);
+            } else {
+                showAlert('Unable to update entities. Please try again.');
             }
         });
     }
@@ -1743,22 +1857,24 @@
     // UI state: true when a PIN is already stored on the server. Drives
     // whether we show the "Change / Remove" summary or the input+Save row.
     let pinIsSet = false;
+    // True while the user is actively editing a PIN (clicked Change). Keeps
+    // the 5s account-refresh poll from yanking them out of edit mode back
+    // to the set-view when loadSecurityPinStatus re-runs.
+    let pinEditing = false;
 
-    function renderPinUi({ editing = false } = {}) {
+    function renderPinUi() {
         if (!pinSetView || !pinEditView) return;
-        if (pinIsSet && !editing) {
+        const showEdit = !pinIsSet || pinEditing;
+        if (showEdit) {
+            pinSetView.classList.add('hidden');
+            pinEditView.classList.remove('hidden');
+            // Cancel only makes sense when a PIN already exists to fall back to.
+            if (pinCancelBtn) pinCancelBtn.classList.toggle('hidden', !pinIsSet);
+        } else {
             pinSetView.classList.remove('hidden');
             pinEditView.classList.add('hidden');
             if (pinCancelBtn) pinCancelBtn.classList.add('hidden');
-        } else {
-            pinSetView.classList.add('hidden');
-            pinEditView.classList.remove('hidden');
-            // Only show the Cancel button when we're editing an existing PIN
-            // (so the user can back out without changing it). Hidden when no
-            // PIN is set yet — there's nothing to cancel back to.
-            if (pinCancelBtn) pinCancelBtn.classList.toggle('hidden', !pinIsSet);
         }
-        if (pinInput) pinInput.value = '';
     }
 
     if (pinSaveBtn && pinInput) {
@@ -1783,6 +1899,8 @@
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || 'Unable to save PIN');
                 pinIsSet = true;
+                pinEditing = false;
+                if (pinInput) pinInput.value = '';
                 renderPinUi();
                 if (pinStatus) pinStatus.textContent = 'PIN saved. Google will ask for this PIN before lock/alarm commands.';
             } catch (err) {
@@ -1796,7 +1914,9 @@
     if (pinChangeBtn) {
         pinChangeBtn.addEventListener('click', () => {
             if (pinStatus) pinStatus.textContent = '';
-            renderPinUi({ editing: true });
+            pinEditing = true;
+            if (pinInput) pinInput.value = '';
+            renderPinUi();
             if (pinInput) pinInput.focus();
         });
     }
@@ -1804,6 +1924,8 @@
     if (pinCancelBtn) {
         pinCancelBtn.addEventListener('click', () => {
             if (pinStatus) pinStatus.textContent = '';
+            pinEditing = false;
+            if (pinInput) pinInput.value = '';
             renderPinUi();
         });
     }
@@ -1825,6 +1947,8 @@
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || 'Unable to remove PIN');
                 pinIsSet = false;
+                pinEditing = false;
+                if (pinInput) pinInput.value = '';
                 renderPinUi();
                 if (pinStatus) pinStatus.textContent = 'PIN removed. No challenge will be required.';
             } catch (err) {
@@ -1841,11 +1965,22 @@
         try {
             const res = await fetch('/api/account/google-home/security-pin?portal_session_token=' + encodeURIComponent(userData.portal_session_token));
             const data = await res.json();
-            if (res.ok) {
-                pinIsSet = Boolean(data.has_pin);
-                renderPinUi();
-                if (pinStatus) pinStatus.textContent = '';
+            if (!res.ok) return;
+            const nextIsSet = Boolean(data.has_pin);
+            // Never clobber an in-progress edit. The user clicked Change and
+            // is looking at the input — a background poll must not yank them
+            // back to the set-view.
+            if (pinEditing) {
+                pinIsSet = nextIsSet;
+                return;
             }
+            // If the observed state matches what's already rendered, skip the
+            // re-render entirely (no DOM churn, no status-text flash).
+            if (nextIsSet === pinIsSet && pinSetView && pinEditView) {
+                return;
+            }
+            pinIsSet = nextIsSet;
+            renderPinUi();
         } catch (_) {
             // ignore
         }
