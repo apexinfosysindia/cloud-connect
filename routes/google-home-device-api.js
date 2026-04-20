@@ -1,8 +1,41 @@
 const express = require('express');
 
-module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, googleCore, homegraph, state }) {
+module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, googleCore, homegraph, state, alexaEvents }) {
     const router = express.Router();
     const { asyncHandler } = utils;
+
+    // Fan out state-push / sync scheduling to Alexa alongside Google's Homegraph.
+    // The Alexa stack is optional — only fire when the module was wired in.
+    function fanoutReportState(userId, opts) {
+        try {
+            homegraph.scheduleGoogleReportStateForUser(userId, opts || {});
+        } catch (_err) {
+            /* best effort */
+        }
+        if (alexaEvents && typeof alexaEvents.scheduleAlexaChangeReportForUser === 'function') {
+            try {
+                alexaEvents.scheduleAlexaChangeReportForUser(userId, opts || {});
+            } catch (_err) {
+                /* best effort */
+            }
+        }
+    }
+
+    function fanoutRequestSync(userId, reason) {
+        try {
+            homegraph.scheduleGoogleRequestSyncForUser(userId, reason);
+        } catch (_err) {
+            /* best effort */
+        }
+        if (alexaEvents && typeof alexaEvents.scheduleAlexaDiscoveryUpdateForUser === 'function') {
+            try {
+                alexaEvents.scheduleAlexaDiscoveryUpdateForUser(userId, reason);
+            } catch (_err) {
+                /* best effort */
+            }
+        }
+    }
+
 
     router.post('/api/internal/devices/google-home/entities', auth.requireDeviceAuth, async (req, res) => {
         try {
@@ -126,8 +159,8 @@ module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, go
                         device.id,
                         normalizedSnapshotIds
                     );
-                    homegraph.scheduleGoogleRequestSyncForUser(device.user_id, 'entity_inventory_snapshot_commit');
-                    homegraph.scheduleGoogleReportStateForUser(device.user_id, { force: false });
+                    fanoutRequestSync(device.user_id, 'entity_inventory_snapshot_commit');
+                    fanoutReportState(device.user_id, { force: false });
 
                     return res.status(200).json({
                         message: 'Snapshot inventory committed',
@@ -303,9 +336,9 @@ module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, go
             }
 
             if (shouldRequestSync) {
-                homegraph.scheduleGoogleRequestSyncForUser(device.user_id, 'entity_inventory_changed');
+                fanoutRequestSync(device.user_id, 'entity_inventory_changed');
             }
-            homegraph.scheduleGoogleReportStateForUser(device.user_id, { force: false });
+            fanoutReportState(device.user_id, { force: false });
 
             return res.status(200).json({
                 message: 'Entities synced',
@@ -567,7 +600,7 @@ module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, go
                     }
                 }
 
-                homegraph.scheduleGoogleReportStateForUser(command.user_id, { force: false });
+                fanoutReportState(command.user_id, { force: false });
             }
 
             return res.status(200).json({ message: 'Command result recorded' });
