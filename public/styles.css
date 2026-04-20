@@ -1545,6 +1545,12 @@ code {
     border-top: 1px solid var(--line);
 }
 
+.google-entities-bulkbar {
+    display: flex;
+    justify-content: flex-end;
+    margin: 6px 0 8px;
+}
+
 .google-pin-section .detail-label {
     display: block;
     margin-bottom: 4px;
