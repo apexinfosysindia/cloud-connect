@@ -53,8 +53,22 @@ const googleCore = require('./lib/google-home/core')({
 // Wire the circular dependency: entity-mapping needs to check homegraph credentials
 entityMapping.setHasGoogleHomegraphCredentials(() => homegraph.hasGoogleHomegraphCredentials());
 
+// Alexa modules (same shape as the Google stack; share users + entities tables)
+const alexaState = require('./lib/alexa/state');
+const alexaDirectiveMapping = require('./lib/alexa/directive-mapping');
+const alexaCore = require('./lib/alexa/core')({ dbGet, dbRun });
+const alexaEvents = require('./lib/alexa/events')({
+    dbGet,
+    dbRun,
+    dbAll,
+    config,
+    utils,
+    state: alexaState,
+    directiveMapping: alexaDirectiveMapping
+});
+
 // Auth depends on device and googleCore, so it must be initialized after them
-const auth = require('./lib/auth')({ dbGet, config, utils, device, googleCore });
+const auth = require('./lib/auth')({ dbGet, config, utils, device, googleCore, alexaCore });
 
 // Email module for verification and password reset flows
 const email = require('./lib/email')({ dbGet, dbRun, config, utils });
@@ -189,7 +203,11 @@ const deps = {
     googleCore,
     homegraph,
     entityMapping,
-    state
+    state,
+    alexaCore,
+    alexaEvents,
+    alexaDirectiveMapping,
+    alexaState
 };
 
 // --- Register routes ---
@@ -205,6 +223,9 @@ app.use(require('./routes/google-home-oauth')(deps));
 app.use(require('./routes/google-home-fulfillment')(deps));
 app.use(require('./routes/google-home-device-api')(deps));
 app.use(require('./routes/google-home-admin')(deps));
+app.use(require('./routes/alexa-portal')(deps));
+app.use(require('./routes/alexa-oauth')(deps));
+app.use(require('./routes/alexa-fulfillment')(deps));
 
 // --- Global error handler for uncaught route errors (used by asyncHandler) ---
 app.use((error, _req, res, _next) => {
@@ -237,6 +258,14 @@ db.ready
                 })
                 .catch((error) => {
                     console.error('Google runtime schema migration failed:', error);
+                });
+            alexaCore
+                .ensureAlexaRuntimeSchemaReady()
+                .then(() => {
+                    console.log('Alexa runtime schema ready.');
+                })
+                .catch((error) => {
+                    console.error('Alexa runtime schema migration failed:', error);
                 });
             googleCore.startStaleEntityInterval();
 

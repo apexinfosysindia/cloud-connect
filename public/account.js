@@ -51,6 +51,16 @@
     const googleOAuthError = oauthParams.get('error') || '';
     const googleOAuthConsentMode = oauthParams.get('google_oauth_consent') === '1';
     const googleOAuthChallengeParam = oauthParams.get('oauth_challenge') || '';
+
+    // Alexa OAuth linking runs on the same URL-param state machine as the
+    // Google flow but targets /api/alexa/oauth instead. When both
+    // google_oauth=1 and alexa_oauth=1 are present we prioritize Alexa.
+    const alexaOAuthMode = oauthParams.get('alexa_oauth') === '1';
+    const alexaOAuthClientId = alexaOAuthMode ? oauthParams.get('client_id') || '' : '';
+    const alexaOAuthRedirectUri = alexaOAuthMode ? oauthParams.get('redirect_uri') || '' : '';
+    const alexaOAuthState = alexaOAuthMode ? oauthParams.get('state') || '' : '';
+    const alexaOAuthConsentMode = oauthParams.get('alexa_oauth_consent') === '1';
+    let alexaOAuthRedirectInFlight = false;
     const googleOAuthCookieProbeKey = [
         'apx_google_oauth_cookie_probe',
         googleOAuthClientId,
@@ -660,8 +670,41 @@
 
         startAccountAutoRefresh();
         void appendGoogleOAuthPortalToken(userData);
+        void appendAlexaOAuthPortalToken(userData);
     }
 
+    async function appendAlexaOAuthPortalToken(userData) {
+        if (!alexaOAuthMode || alexaOAuthConsentMode || alexaOAuthRedirectInFlight) {
+            return;
+        }
+        if (!alexaOAuthClientId || !alexaOAuthRedirectUri) {
+            return;
+        }
+        const portalToken = userData?.portalSessionToken;
+        if (!portalToken) return;
+
+        alexaOAuthRedirectInFlight = true;
+        try {
+            const response = await fetch('/api/alexa/oauth/continue', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    client_id: alexaOAuthClientId,
+                    redirect_uri: alexaOAuthRedirectUri,
+                    state: alexaOAuthState,
+                    portal_session_token: portalToken
+                })
+            });
+            const data = await response.json();
+            if (!response.ok || !data?.redirect_url) {
+                throw new Error(data?.error || 'Unable to continue Alexa linking');
+            }
+            window.location.assign(data.redirect_url);
+        } catch (error) {
+            alexaOAuthRedirectInFlight = false;
+            showAlert(error.message || 'Unable to continue Alexa linking');
+        }
+    }
     async function appendGoogleOAuthPortalToken(userData) {
         if (googleOAuthRedirectInFlight) {
             return;
