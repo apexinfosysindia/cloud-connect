@@ -1,0 +1,11 @@
+-- 002_current_period_end.sql
+--
+-- Add current_period_end to users so the dashboard can show paid users when
+-- their next renewal is (or, for cancel-at-cycle-end subs, when access ends).
+-- Mirrors what trial_ends_at gives us for trial users. Stored as ISO 8601 in
+-- UTC to match the rest of the user-row date columns.
+--
+-- Populated by activateUserAccount on subscription.charged / payment.captured
+-- / invoice.paid. NULL for admin-trial users (they have no Razorpay sub) and
+-- for any sub before the first renewal cycle starts.
+ALTER TABLE users ADD COLUMN current_period_end TEXT;

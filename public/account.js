@@ -261,6 +261,22 @@
                 : 'Access is active for this account.';
         }
         if (userData.status === 'active') {
+            const periodEndIso = userData.current_period_end;
+            const periodEndDate = periodEndIso
+                ? new Date(periodEndIso).toLocaleDateString()
+                : null;
+            // If the Razorpay sub is already in a terminal state (user cancelled
+            // at cycle end), local status is still 'active' until the period
+            // closes. Surface that explicitly so the user understands what
+            // "active" means here.
+            const rzpStatus = String(userData.razorpay_subscription_status || '').toLowerCase();
+            const cancelAtPeriodEnd = ['cancelled', 'completed'].includes(rzpStatus);
+            if (cancelAtPeriodEnd && periodEndDate) {
+                return `Subscription cancelled. Access continues until ${periodEndDate}, after which no further charges will be made.`;
+            }
+            if (periodEndDate) {
+                return `Remote access is active. Subscription renews on ${periodEndDate}.`;
+            }
             return 'Remote access is active and this account is ready to use.';
         }
         if (userData.status === 'expired') {
