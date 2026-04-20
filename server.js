@@ -163,6 +163,14 @@ app.use('/api/auth/resend-verification', emailRateLimiter);
 app.use('/api/auth/reset-password', authRateLimiter);
 app.use('/api/auth/verify-email', authRateLimiter);
 
+// Password-gated account-management endpoints. These all bcrypt.compare()
+// against the user's password, so they're brute-force targets for anyone
+// who hijacks a portal session token. Hold them under the strict auth
+// limiter rather than the relaxed 100/min general API bucket.
+app.use('/api/account/change-password', authRateLimiter);
+app.use('/api/account/delete', authRateLimiter);
+app.use('/api/account/cancel-subscription', authRateLimiter);
+
 // --- Static files ---
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 

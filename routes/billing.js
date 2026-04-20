@@ -186,6 +186,12 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
             // (cancelled/completed/expired/halted), ignore late activation
             // events — they would otherwise resurrect a cancelled user to
             // 'active' for a few minutes until the cancel event catches up.
+            //
+            // Note: subscription.charged is NOT included in the events guarded
+            // here, because a paid sub cancelled at cycle end can still legally
+            // fire a final charge for the in-flight cycle. We only block
+            // resurrection events (authenticated/activated/payment.captured/
+            // invoice.paid) since those flip the user back to 'active'.
             const terminalRzpStatuses = ['cancelled', 'completed', 'expired', 'halted'];
             const localRzpStatus = String(user.razorpay_subscription_status || '').toLowerCase();
             const alreadyTerminal = terminalRzpStatuses.includes(localRzpStatus);
@@ -194,7 +200,6 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
                 [
                     'subscription.authenticated',
                     'subscription.activated',
-                    'subscription.charged',
                     'payment.captured',
                     'invoice.paid'
                 ].includes(eventName)
@@ -210,6 +215,24 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
                     info.paymentId,
                     info.subscriptionStatus || 'active'
                 );
+            } else if (eventName === 'subscription.charged') {
+                // Process charges normally — even on a cancel-at-cycle-end sub
+                // the final charge for the in-flight period is legitimate.
+                // BUT: if the local user is already terminal OR was deliberately
+                // returned to payment_pending (trial cancel), do not resurrect
+                // them. A late charge against a cancelled trial is a Razorpay
+                // bug, not authorization to re-enable the account.
+                if (alreadyTerminal || user.status === 'payment_pending') {
+                    console.log(
+                        `Ignoring subscription.charged for ${user.email} — local state=${user.status}, rzp=${localRzpStatus}.`
+                    );
+                    return res.status(200).json({ message: 'Webhook ignored (locally terminal)' });
+                }
+                await billing.activateUserAccount(
+                    info.subscriptionId,
+                    info.paymentId,
+                    info.subscriptionStatus || 'active'
+                );
             } else if (['subscription.halted', 'subscription.paused'].includes(eventName)) {
                 await billing.updateUserStatus(user.id, 'suspended');
                 await dbRun(`UPDATE users SET razorpay_subscription_status = ? WHERE id = ?`, [
@@ -217,10 +240,16 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
                     user.id
                 ]);
             } else if (['subscription.cancelled', 'subscription.completed', 'invoice.expired'].includes(eventName)) {
-                // If we already soft-cancelled a trial locally (status=payment_pending,
-                // trial_history written), don't downgrade to 'expired' — the user
-                // never held a paid period, they returned to the pre-trial state.
-                // Only paid users who cancel should land in 'expired'.
+                // Three branches:
+                //   a) user.status === 'payment_pending' → trial-cancel already
+                //      handled locally (we pre-wrote payment_pending before
+                //      calling Razorpay). Don't downgrade to 'expired'.
+                //   b) user.status === 'trial' → external cancel of a trial
+                //      sub (Razorpay dashboard or another path that didn't go
+                //      through cancelSubscription). Treat like trial-abort:
+                //      flip to payment_pending AND record trial_history so the
+                //      user cannot delete-and-resignup for another free trial.
+                //   c) Otherwise → paid user, end access.
                 if (user.status === 'payment_pending') {
                     console.log(
                         `Preserving payment_pending for ${user.email} — trial-cancel already handled locally, not overwriting with expired.`
@@ -229,6 +258,27 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
                         info.subscriptionStatus || eventName,
                         user.id
                     ]);
+                } else if (user.status === 'trial') {
+                    console.log(
+                        `External trial-cancel detected for ${user.email} via ${eventName} — recording trial_history and flipping to payment_pending.`
+                    );
+                    try {
+                        await billing.recordTrialConsumed(user, 'trial_cancel_external');
+                    } catch (historyErr) {
+                        console.error(
+                            `Failed to write trial_history for external trial-cancel ${user.email}:`,
+                            historyErr.message
+                        );
+                    }
+                    await dbRun(
+                        `UPDATE users
+                         SET status = 'payment_pending',
+                             trial_ends_at = NULL,
+                             trial_approved_at = NULL,
+                             razorpay_subscription_status = ?
+                         WHERE id = ?`,
+                        [info.subscriptionStatus || eventName, user.id]
+                    );
                 } else {
                     await billing.updateUserStatus(user.id, 'expired');
                     await dbRun(`UPDATE users SET razorpay_subscription_status = ? WHERE id = ?`, [
