@@ -1210,6 +1210,10 @@ code {
     min-height: 1.2em;
 }
 
+.manage-msg:empty {
+    display: none;
+}
+
 .link-row {
     margin: 0;
     text-align: center;
@@ -1555,6 +1559,27 @@ code {
     display: flex;
     gap: 8px;
     align-items: center;
+}
+
+.google-pin-set-view {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.google-pin-set-msg {
+    margin: 0 !important;
+}
+
+.google-pin-set-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.google-pin-set-actions .button {
+    min-height: 40px;
+    padding: 0 14px;
 }
 
 .google-pin-input {

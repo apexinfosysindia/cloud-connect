@@ -261,6 +261,12 @@
                 : 'Access is active for this account.';
         }
         if (userData.status === 'active') {
+            // Admin-granted active access — no Razorpay sub, no expiry. Render
+            // a distinct line so this user understands their access is open-
+            // ended and not tied to a billing cycle.
+            if (userData.admin_granted_access) {
+                return 'Remote access is active. This account was activated by an administrator and has no expiry.';
+            }
             const periodEndIso = userData.current_period_end;
             const periodEndDate = periodEndIso
                 ? new Date(periodEndIso).toLocaleDateString()
@@ -1724,11 +1730,36 @@
         });
     }
 
-    // Security PIN save/clear handlers
+    // Security PIN save/change/remove handlers
     const pinSaveBtn = document.getElementById('googleSecurityPinSave');
-    const pinClearBtn = document.getElementById('googleSecurityPinClear');
+    const pinChangeBtn = document.getElementById('googleSecurityPinChange');
+    const pinRemoveBtn = document.getElementById('googleSecurityPinRemove');
+    const pinCancelBtn = document.getElementById('googleSecurityPinCancel');
     const pinInput = document.getElementById('googleSecurityPinInput');
     const pinStatus = document.getElementById('googleSecurityPinStatus');
+    const pinSetView = document.getElementById('googleSecurityPinSetView');
+    const pinEditView = document.getElementById('googleSecurityPinEditView');
+
+    // UI state: true when a PIN is already stored on the server. Drives
+    // whether we show the "Change / Remove" summary or the input+Save row.
+    let pinIsSet = false;
+
+    function renderPinUi({ editing = false } = {}) {
+        if (!pinSetView || !pinEditView) return;
+        if (pinIsSet && !editing) {
+            pinSetView.classList.remove('hidden');
+            pinEditView.classList.add('hidden');
+            if (pinCancelBtn) pinCancelBtn.classList.add('hidden');
+        } else {
+            pinSetView.classList.add('hidden');
+            pinEditView.classList.remove('hidden');
+            // Only show the Cancel button when we're editing an existing PIN
+            // (so the user can back out without changing it). Hidden when no
+            // PIN is set yet — there's nothing to cancel back to.
+            if (pinCancelBtn) pinCancelBtn.classList.toggle('hidden', !pinIsSet);
+        }
+        if (pinInput) pinInput.value = '';
+    }
 
     if (pinSaveBtn && pinInput) {
         pinSaveBtn.addEventListener('click', async () => {
@@ -1751,7 +1782,8 @@
                 });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || 'Unable to save PIN');
-                pinInput.value = '';
+                pinIsSet = true;
+                renderPinUi();
                 if (pinStatus) pinStatus.textContent = 'PIN saved. Google will ask for this PIN before lock/alarm commands.';
             } catch (err) {
                 if (pinStatus) pinStatus.textContent = err.message;
@@ -1761,14 +1793,29 @@
         });
     }
 
-    if (pinClearBtn) {
-        pinClearBtn.addEventListener('click', async () => {
+    if (pinChangeBtn) {
+        pinChangeBtn.addEventListener('click', () => {
+            if (pinStatus) pinStatus.textContent = '';
+            renderPinUi({ editing: true });
+            if (pinInput) pinInput.focus();
+        });
+    }
+
+    if (pinCancelBtn) {
+        pinCancelBtn.addEventListener('click', () => {
+            if (pinStatus) pinStatus.textContent = '';
+            renderPinUi();
+        });
+    }
+
+    if (pinRemoveBtn) {
+        pinRemoveBtn.addEventListener('click', async () => {
             const userData = JSON.parse(localStorage.getItem('apex_user') || 'null');
             if (!userData?.portal_session_token) {
                 showAlert('Please log in again to continue.');
                 return;
             }
-            pinClearBtn.disabled = true;
+            pinRemoveBtn.disabled = true;
             try {
                 const res = await fetch('/api/account/google-home/security-pin', {
                     method: 'POST',
@@ -1776,25 +1823,28 @@
                     body: JSON.stringify({ portal_session_token: userData.portal_session_token, pin: '' })
                 });
                 const data = await res.json();
-                if (!res.ok) throw new Error(data.error || 'Unable to clear PIN');
-                pinInput.value = '';
-                if (pinStatus) pinStatus.textContent = 'PIN cleared. No challenge will be required.';
+                if (!res.ok) throw new Error(data.error || 'Unable to remove PIN');
+                pinIsSet = false;
+                renderPinUi();
+                if (pinStatus) pinStatus.textContent = 'PIN removed. No challenge will be required.';
             } catch (err) {
                 if (pinStatus) pinStatus.textContent = err.message;
             } finally {
-                pinClearBtn.disabled = false;
+                pinRemoveBtn.disabled = false;
             }
         });
     }
 
     // Load current PIN status when Google Home card becomes visible
     async function loadSecurityPinStatus(userData) {
-        if (!pinStatus || !userData?.portal_session_token || !userData.google_home_linked) return;
+        if (!userData?.portal_session_token || !userData.google_home_linked) return;
         try {
             const res = await fetch('/api/account/google-home/security-pin?portal_session_token=' + encodeURIComponent(userData.portal_session_token));
             const data = await res.json();
             if (res.ok) {
-                pinStatus.textContent = data.has_pin ? 'PIN is set. Lock and alarm commands will require this PIN.' : 'No PIN set.';
+                pinIsSet = Boolean(data.has_pin);
+                renderPinUi();
+                if (pinStatus) pinStatus.textContent = '';
             }
         } catch (_) {
             // ignore

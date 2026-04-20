@@ -89,6 +89,35 @@ module.exports = function ({ dbAll, dbGet, utils, auth, billing }) {
                 return res.status(400).json({ error: 'Invalid status' });
             }
 
+            // Suspend = stop billing AND lock out locally. If the user has a
+            // live Razorpay subscription we cancel it first (at cycle end so
+            // paid users keep access until period end; trial users get
+            // trial-aborted immediately inside cancelSubscription). Best
+            // effort: if the Razorpay call fails we still proceed with the
+            // local suspend so admins aren't blocked by Razorpay outages,
+            // but we report the cancel error back in the response.
+            let cancelResult = null;
+            let cancelError = null;
+            if (status === 'suspended') {
+                const existing = await dbGet(`SELECT * FROM users WHERE id = ?`, [Number(id)]);
+                if (!existing) {
+                    return res.status(404).json({ error: 'User not found' });
+                }
+                const rzpStatus = String(existing.razorpay_subscription_status || '').toLowerCase();
+                const terminal = ['cancelled', 'completed', 'expired', 'halted'].includes(rzpStatus);
+                if (existing.razorpay_subscription_id && !terminal) {
+                    try {
+                        cancelResult = await billing.cancelSubscription(Number(id), { atCycleEnd: true });
+                    } catch (error) {
+                        console.error(
+                            `Admin suspend: Razorpay cancel failed for ${existing.email}:`,
+                            error.message
+                        );
+                        cancelError = error.message || 'Unable to cancel subscription on Razorpay.';
+                    }
+                }
+            }
+
             const updatedUser = await billing.updateUserStatus(Number(id), status, {
                 trialDays: Number(trial_days) || 365
             });
@@ -97,48 +126,23 @@ module.exports = function ({ dbAll, dbGet, utils, auth, billing }) {
                 return res.status(404).json({ error: 'User not found' });
             }
 
+            let message = 'User status updated';
+            if (status === 'suspended') {
+                if (cancelError) {
+                    message = `Account suspended locally, but Razorpay subscription cancel failed: ${cancelError}. Please reconcile manually.`;
+                } else if (cancelResult?.trialAbort) {
+                    message = `Account suspended and Razorpay trial cancelled. User moved to payment_pending.`;
+                } else if (cancelResult?.atCycleEnd) {
+                    message = `Account suspended. Razorpay subscription cancelled at cycle end.`;
+                } else if (cancelResult?.cancelled) {
+                    message = `Account suspended and Razorpay subscription cancelled (no billing cycle had started).`;
+                }
+            }
+
             res.status(200).json({
-                message: 'User status updated',
+                message,
                 user: auth.serializeAdminUser(updatedUser)
             });
-        })
-    );
-
-    router.post(
-        '/api/admin/users/:id/cancel-subscription',
-        auth.requireAdmin,
-        asyncHandler(async (req, res) => {
-            const { id } = req.params;
-            const user = await dbGet(`SELECT * FROM users WHERE id = ?`, [Number(id)]);
-            if (!user) {
-                return res.status(404).json({ error: 'User not found' });
-            }
-            if (!user.razorpay_subscription_id) {
-                return res.status(400).json({ error: 'This user has no active Razorpay subscription.' });
-            }
-            try {
-                const result = await billing.cancelSubscription(Number(id), { atCycleEnd: true });
-                if (!result.cancelled) {
-                    return res.status(400).json({ error: 'No active subscription to cancel.' });
-                }
-                const updated = await dbGet(`SELECT * FROM users WHERE id = ?`, [Number(id)]);
-                let message;
-                if (result.trialAbort) {
-                    message = `Subscription cancelled for ${user.email}. Trial access revoked immediately (user moved to payment_pending).`;
-                } else if (result.atCycleEnd) {
-                    message = `Subscription cancelled for ${user.email}. Access continues until period end.`;
-                } else {
-                    message = `Subscription cancelled for ${user.email}. No billing cycle had started yet, so it took effect immediately.`;
-                }
-                return res.status(200).json({
-                    message,
-                    user: auth.serializeAdminUser(updated)
-                });
-            } catch (error) {
-                return res.status(502).json({
-                    error: error.message || 'Unable to cancel subscription. Please try again.'
-                });
-            }
         })
     );
 
