@@ -1873,22 +1873,34 @@
             // the result. Roll individual ones back if their request fails.
             targets.forEach((t) => { t.checked = expose; });
 
-            const results = await Promise.allSettled(
-                targets.map((t) =>
-                    fetch(`/api/account/google-home/entities/${encodeURIComponent(t.dataset.entityId)}/expose`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            portal_session_token: userData.portal_session_token,
-                            exposed: expose
+            // Batch requests to stay under the server's per-minute rate limit.
+            // 10 in flight at a time, 150ms gap between batches.
+            const BATCH_SIZE = 10;
+            const BATCH_DELAY_MS = 150;
+            const results = [];
+            for (let i = 0; i < targets.length; i += BATCH_SIZE) {
+                const batch = targets.slice(i, i + BATCH_SIZE);
+                const batchResults = await Promise.allSettled(
+                    batch.map((t) =>
+                        fetch(`/api/account/google-home/entities/${encodeURIComponent(t.dataset.entityId)}/expose`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                portal_session_token: userData.portal_session_token,
+                                exposed: expose
+                            })
+                        }).then(async (res) => {
+                            const data = await res.json().catch(() => ({}));
+                            if (!res.ok) throw new Error(data.error || 'Request failed');
+                            return data;
                         })
-                    }).then(async (res) => {
-                        const data = await res.json().catch(() => ({}));
-                        if (!res.ok) throw new Error(data.error || 'Request failed');
-                        return data;
-                    })
-                )
-            );
+                    )
+                );
+                results.push(...batchResults);
+                if (i + BATCH_SIZE < targets.length) {
+                    await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
+                }
+            }
 
             let failed = 0;
             results.forEach((r, i) => {
