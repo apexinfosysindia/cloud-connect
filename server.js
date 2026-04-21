@@ -158,7 +158,7 @@ const signupRateLimiter = rateLimit({
 
 const generalApiRateLimiter = rateLimit({
     windowMs: 60 * 1000, // 1 minute
-    max: 100, // 100 requests per minute per IP
+    max: 500, // 500 requests per minute per IP (bulk dashboard ops can fan out to ~150 entities)
     standardHeaders: true,
     legacyHeaders: false,
     skip: (req) => req.path.startsWith('/internal/'),
