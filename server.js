@@ -139,7 +139,8 @@ const signupRateLimiter = rateLimit({
 
 const generalApiRateLimiter = rateLimit({
     windowMs: 60 * 1000, // 1 minute
-    max: 100, // 100 requests per minute per IP
+    max: 500, // 500 requests per minute per IP (bumped from 100 to accommodate
+              // bulk dashboard operations that fan out to multiple entities)
     standardHeaders: true,
     legacyHeaders: false,
     skip: (req) => req.path.startsWith('/internal/'),
@@ -166,7 +167,7 @@ app.use('/api/auth/verify-email', authRateLimiter);
 // Password-gated account-management endpoints. These all bcrypt.compare()
 // against the user's password, so they're brute-force targets for anyone
 // who hijacks a portal session token. Hold them under the strict auth
-// limiter rather than the relaxed 100/min general API bucket.
+// limiter rather than the relaxed 500/min general API bucket.
 app.use('/api/account/change-password', authRateLimiter);
 app.use('/api/account/delete', authRateLimiter);
 app.use('/api/account/cancel-subscription', authRateLimiter);

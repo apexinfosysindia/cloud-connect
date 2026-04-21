@@ -113,6 +113,110 @@ module.exports = function ({ dbGet, dbRun, utils, auth, googleCore, homegraph })
         })
     );
 
+    // Bulk expose/hide endpoint. Dashboard fan-out operations (e.g. "expose all
+    // lights in this room") previously hit the per-minute rate limit by issuing
+    // one request per entity. This endpoint accepts an array of updates and
+    // processes them server-side in batches of 10 with a 150ms delay between
+    // batches so any downstream work (DB writes, homegraph scheduling) is
+    // paced rather than bursted. The two homegraph schedule calls are issued
+    // once at the end of the request rather than per-entity.
+    const BULK_EXPOSE_BATCH_SIZE = 10;
+    const BULK_EXPOSE_BATCH_DELAY_MS = 150;
+    const BULK_EXPOSE_MAX_ITEMS = 200;
+
+    router.post(
+        '/api/account/google-home/entities/expose-bulk',
+        auth.requirePortalUser,
+        asyncHandler(async (req, res) => {
+            if (!req.portalUser.google_home_enabled || !req.portalUser.google_home_linked) {
+                return res.status(403).json({ error: 'Google Home integration is disabled for this account' });
+            }
+
+            const updates = Array.isArray(req.body?.updates) ? req.body.updates : null;
+            if (!updates || updates.length === 0) {
+                return res.status(400).json({ error: 'Body must include a non-empty "updates" array' });
+            }
+            if (updates.length > BULK_EXPOSE_MAX_ITEMS) {
+                return res.status(400).json({
+                    error: `Too many updates in one request (max ${BULK_EXPOSE_MAX_ITEMS})`
+                });
+            }
+
+            const results = [];
+            let anySucceeded = false;
+
+            for (let i = 0; i < updates.length; i += BULK_EXPOSE_BATCH_SIZE) {
+                const batch = updates.slice(i, i + BULK_EXPOSE_BATCH_SIZE);
+
+                // Process the batch concurrently. Each item resolves to a
+                // per-entity result so one bad entity id doesn't fail the batch.
+                const batchResults = await Promise.all(
+                    batch.map(async (update) => {
+                        const entityId = utils.sanitizeEntityId(update?.entity_id);
+                        if (!entityId) {
+                            return { entity_id: update?.entity_id ?? null, ok: false, error: 'Invalid entity id' };
+                        }
+                        const exposed = update?.exposed !== false;
+
+                        const entity = await dbGet(
+                            `
+                            SELECT id
+                            FROM google_home_entities
+                            WHERE user_id = ? AND entity_id = ?
+                            LIMIT 1
+                        `,
+                            [req.portalUser.id, entityId]
+                        );
+
+                        if (!entity) {
+                            return { entity_id: entityId, ok: false, error: 'Entity not found' };
+                        }
+
+                        await dbRun(
+                            `
+                            UPDATE google_home_entities
+                            SET exposed = ?,
+                                updated_at = ?
+                            WHERE id = ?
+                        `,
+                            [exposed ? 1 : 0, new Date().toISOString(), entity.id]
+                        );
+
+                        return { entity_id: entityId, ok: true, exposed };
+                    })
+                );
+
+                for (const r of batchResults) {
+                    results.push(r);
+                    if (r.ok) anySucceeded = true;
+                }
+
+                // Pace subsequent batches. Skip the delay after the final batch
+                // so the response isn't padded with 150ms of dead time.
+                const hasMore = i + BULK_EXPOSE_BATCH_SIZE < updates.length;
+                if (hasMore) {
+                    await new Promise((resolve) => setTimeout(resolve, BULK_EXPOSE_BATCH_DELAY_MS));
+                }
+            }
+
+            // Schedule homegraph work once for the whole batch rather than
+            // per-entity. These schedulers are designed to coalesce, so this
+            // is both cheaper and more correct than N individual calls.
+            if (anySucceeded) {
+                homegraph.scheduleGoogleRequestSyncForUser(req.portalUser.id, 'entity_exposure_changed');
+                homegraph.scheduleGoogleReportStateForUser(req.portalUser.id, { force: true });
+            }
+
+            return res.status(200).json({
+                processed: results.length,
+                succeeded: results.filter((r) => r.ok).length,
+                failed: results.filter((r) => !r.ok).length,
+                results
+            });
+        })
+    );
+
+
     router.get('/api/account/google-home/security-pin', auth.requirePortalUser, (req, res) => {
         try {
             const hasPin = Boolean(req.portalUser.google_home_security_pin);
