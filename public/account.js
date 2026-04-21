@@ -29,6 +29,10 @@
     const googleConsentMeta = document.getElementById('googleConsentMeta');
     const googleConsentApproveBtn = document.getElementById('googleConsentApproveBtn');
     const googleConsentDenyBtn = document.getElementById('googleConsentDenyBtn');
+    const alexaConsentCard = document.getElementById('alexaConsentCard');
+    const alexaConsentMeta = document.getElementById('alexaConsentMeta');
+    const alexaConsentApproveBtn = document.getElementById('alexaConsentApproveBtn');
+    const alexaConsentDenyBtn = document.getElementById('alexaConsentDenyBtn');
     const emailVerificationCard = document.getElementById('emailVerificationCard');
     const resendVerificationBtn = document.getElementById('resendVerificationBtn');
     const portalBrandTitle = 'ApexOS Cloud Connect Oasis';
@@ -42,6 +46,7 @@
     let accountRenderFingerprint = '';
     let manageViewActive = false;
     let googleOAuthRedirectInFlight = false;
+    let alexaOAuthRedirectInFlight = false;
     let googleEntitiesRefreshTimer = null;
     let googleEntitiesRefreshInFlight = false;
     let googleEntitiesRefreshKey = '';
@@ -59,6 +64,20 @@
         googleOAuthClientId,
         googleOAuthRedirectUri,
         googleOAuthState
+    ].join('|');
+
+    const alexaOAuthMode = oauthParams.get('alexa_oauth') === '1';
+    const alexaOAuthClientId = alexaOAuthMode ? (oauthParams.get('client_id') || '') : '';
+    const alexaOAuthRedirectUri = alexaOAuthMode ? (oauthParams.get('redirect_uri') || '') : '';
+    const alexaOAuthState = alexaOAuthMode ? (oauthParams.get('state') || '') : '';
+    const alexaOAuthError = alexaOAuthMode ? (oauthParams.get('error') || '') : '';
+    const alexaOAuthConsentMode = oauthParams.get('alexa_oauth_consent') === '1';
+    const alexaOAuthChallengeParam = alexaOAuthConsentMode ? (oauthParams.get('oauth_challenge') || '') : '';
+    const alexaOAuthCookieProbeKey = [
+        'apx_alexa_oauth_cookie_probe',
+        alexaOAuthClientId,
+        alexaOAuthRedirectUri,
+        alexaOAuthState
     ].join('|');
 
     function hasTriedGoogleOAuthCookieProbe() {
@@ -80,6 +99,30 @@
 
         try {
             window.sessionStorage.setItem(googleOAuthCookieProbeKey, '1');
+        } catch (_error) {
+            // ignore sessionStorage failures
+        }
+    }
+
+    function hasTriedAlexaOAuthCookieProbe() {
+        if (!alexaOAuthMode) {
+            return false;
+        }
+
+        try {
+            return window.sessionStorage.getItem(alexaOAuthCookieProbeKey) === '1';
+        } catch (_error) {
+            return false;
+        }
+    }
+
+    function markAlexaOAuthCookieProbeTried() {
+        if (!alexaOAuthMode) {
+            return;
+        }
+
+        try {
+            window.sessionStorage.setItem(alexaOAuthCookieProbeKey, '1');
         } catch (_error) {
             // ignore sessionStorage failures
         }
@@ -115,7 +158,7 @@
     }
 
     function normalizeSignedInUrl() {
-        if (googleOAuthMode) {
+        if (googleOAuthMode || alexaOAuthMode) {
             return;
         }
 
@@ -126,6 +169,10 @@
 
     function isGoogleOauthLinkingIntent() {
         return googleOAuthMode || googleOAuthConsentMode;
+    }
+
+    function isAlexaOauthLinkingIntent() {
+        return alexaOAuthMode || alexaOAuthConsentMode;
     }
 
     function maybeContinueGoogleOAuthFromCookie() {
@@ -148,6 +195,31 @@
         continueUrl.searchParams.set('redirect_uri', googleOAuthRedirectUri);
         continueUrl.searchParams.set('response_type', 'code');
         continueUrl.searchParams.set('state', googleOAuthState);
+        continueUrl.searchParams.set('from_cookie', '1');
+
+        window.location.assign(continueUrl.toString());
+    }
+
+    function maybeContinueAlexaOAuthFromCookie() {
+        if (!isAlexaOauthLinkingIntent() || alexaOAuthConsentMode || alexaOAuthRedirectInFlight) {
+            return;
+        }
+
+        if (hasTriedAlexaOAuthCookieProbe()) {
+            return;
+        }
+
+        if (!alexaOAuthClientId || !alexaOAuthRedirectUri) {
+            return;
+        }
+
+        alexaOAuthRedirectInFlight = true;
+        markAlexaOAuthCookieProbeTried();
+        const continueUrl = new URL('/api/alexa/oauth', window.location.origin);
+        continueUrl.searchParams.set('client_id', alexaOAuthClientId);
+        continueUrl.searchParams.set('redirect_uri', alexaOAuthRedirectUri);
+        continueUrl.searchParams.set('response_type', 'code');
+        continueUrl.searchParams.set('state', alexaOAuthState);
         continueUrl.searchParams.set('from_cookie', '1');
 
         window.location.assign(continueUrl.toString());
@@ -177,6 +249,7 @@
         stopAccountAutoRefresh();
         stopGoogleEntitiesAutoRefresh();
         googleOAuthRedirectInFlight = false;
+        alexaOAuthRedirectInFlight = false;
         localStorage.removeItem('apex_user');
         setHeaderState(null);
 
@@ -200,6 +273,7 @@
         stopAccountAutoRefresh();
         stopGoogleEntitiesAutoRefresh();
         googleOAuthRedirectInFlight = false;
+        alexaOAuthRedirectInFlight = false;
         manageViewActive = false;
         if (manageAccountView) manageAccountView.classList.add('hidden');
         if (signupForm) signupForm.classList.add('hidden');
@@ -222,12 +296,23 @@
         if (googleOAuthConsentMode) {
             showAlert('Sign in to review and approve Google Assistant access.', false);
         }
+
+        if (isAlexaOauthLinkingIntent() && !alexaOAuthConsentMode) {
+            window.setTimeout(() => {
+                maybeContinueAlexaOAuthFromCookie();
+            }, 80);
+        }
+
+        if (alexaOAuthConsentMode) {
+            showAlert('Sign in to review and approve Amazon Alexa access.', false);
+        }
     }
 
     function showSignupView() {
         stopAccountAutoRefresh();
         stopGoogleEntitiesAutoRefresh();
         googleOAuthRedirectInFlight = false;
+        alexaOAuthRedirectInFlight = false;
         manageViewActive = false;
         if (manageAccountView) manageAccountView.classList.add('hidden');
         if (loginForm) loginForm.classList.add('hidden');
@@ -248,6 +333,16 @@
 
         if (googleOAuthConsentMode) {
             showAlert('Sign in to review and approve Google Assistant access.', false);
+        }
+
+        if (isAlexaOauthLinkingIntent() && !alexaOAuthConsentMode) {
+            window.setTimeout(() => {
+                maybeContinueAlexaOAuthFromCookie();
+            }, 80);
+        }
+
+        if (alexaOAuthConsentMode) {
+            showAlert('Sign in to review and approve Amazon Alexa access.', false);
         }
     }
 
@@ -729,12 +824,21 @@
             return;
         }
 
+        const alexaConsentHandled = handleAlexaConsentFlow(userData);
+        if (alexaConsentHandled) {
+            if (shouldScroll) {
+                scrollToAccountShell();
+            }
+            return;
+        }
+
         if (shouldScroll) {
             scrollToAccountShell();
         }
 
         startAccountAutoRefresh();
         void appendGoogleOAuthPortalToken(userData);
+        void appendAlexaOAuthPortalToken(userData);
     }
 
     async function appendGoogleOAuthPortalToken(userData) {
@@ -920,6 +1024,220 @@
             googleConsentDenyBtn.onclick = () => {
                 const redirectUri = challenge.redirect_uri;
                 const denyUrl = new URL('/api/google/home/oauth', window.location.origin);
+                denyUrl.searchParams.set('client_id', challenge.client_id);
+                denyUrl.searchParams.set('redirect_uri', redirectUri);
+                denyUrl.searchParams.set('response_type', 'code');
+                denyUrl.searchParams.set('state', challenge.state || '');
+                denyUrl.searchParams.set('portal_session_token', activePortalToken);
+                denyUrl.searchParams.set('deny', '1');
+                window.location.assign(denyUrl.toString());
+            };
+        }
+
+        return true;
+    }
+
+    function parseAlexaOauthChallenge(encodedChallenge) {
+        if (!encodedChallenge) {
+            return null;
+        }
+
+        try {
+            const decoded = JSON.parse(decodeURIComponent(encodedChallenge));
+            const clientId = String(decoded?.client_id || '').trim();
+            const redirectUri = String(decoded?.redirect_uri || '').trim();
+            const state = String(decoded?.state || '').trim();
+            const portalToken = String(decoded?.portal_session_token || '').trim();
+            if (!clientId || !redirectUri || !isWellFormedPortalToken(portalToken)) {
+                return null;
+            }
+
+            return {
+                client_id: clientId,
+                redirect_uri: redirectUri,
+                state,
+                portal_session_token: portalToken
+            };
+        } catch (_error) {
+            return null;
+        }
+    }
+
+    async function appendAlexaOAuthPortalToken(userData) {
+        if (alexaOAuthRedirectInFlight) {
+            return;
+        }
+
+        if (!userData?.portal_session_token) {
+            return;
+        }
+
+        const portalToken = String(userData.portal_session_token || '');
+        if (!portalToken.includes('.') || portalToken.split('.').length !== 2) {
+            alexaOAuthRedirectInFlight = false;
+            showAlert('Session token is invalid. Please log out and sign in again.');
+            return;
+        }
+
+        if (!isAlexaOauthLinkingIntent() || alexaOAuthConsentMode) {
+            alexaOAuthRedirectInFlight = false;
+            return;
+        }
+
+        const oauthError = alexaOAuthError;
+        if (oauthError) {
+            alexaOAuthRedirectInFlight = false;
+            showAlert(`Alexa link failed: ${oauthError}`);
+            return;
+        }
+
+        // Alexa triggers OAuth again for re-linking (e.g. "Disable skill" then
+        // "Enable to Use" again) — do not early-return on alexa_linked=true,
+        // the user still needs to traverse consent → auth code.
+
+        const redirectUri = alexaOAuthRedirectUri;
+        const state = alexaOAuthState;
+        if (!redirectUri) {
+            alexaOAuthRedirectInFlight = false;
+            return;
+        }
+
+        const clientId = alexaOAuthClientId;
+        if (!clientId) {
+            alexaOAuthRedirectInFlight = false;
+            return;
+        }
+
+        alexaOAuthRedirectInFlight = true;
+        try {
+            const response = await fetch('/api/alexa/oauth/continue', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    client_id: clientId,
+                    redirect_uri: redirectUri,
+                    state,
+                    portal_session_token: portalToken
+                })
+            });
+
+            const data = await response.json();
+            if (!response.ok || !data?.redirect_url) {
+                throw new Error(data?.error || 'Unable to continue Alexa linking');
+            }
+
+            window.location.assign(data.redirect_url);
+        } catch (error) {
+            alexaOAuthRedirectInFlight = false;
+            showAlert(error.message || 'Unable to continue Alexa linking');
+        }
+    }
+
+    function renderAlexaConsentCard(userData, challenge) {
+        if (!alexaConsentCard) {
+            showAlert('Consent screen unavailable. Please try again.');
+            return;
+        }
+
+        if (loginForm) loginForm.classList.add('hidden');
+        if (signupForm) signupForm.classList.add('hidden');
+        if (dashboard) dashboard.classList.remove('hidden');
+
+        setHeaderState(userData || null);
+        setPageTitle(dashboardTitle);
+        accountTitle.textContent = 'Confirm Amazon Alexa Access';
+        headerSubtitle.textContent = 'Authorize Apex Connect for Amazon Alexa account linking.';
+        hideAlert();
+
+        const statusCard = document.getElementById('statusCard');
+        const detailGrid = dashboard ? dashboard.querySelector('.detail-grid') : null;
+        const logoutButton = document.getElementById('logoutBtn');
+
+        if (statusCard) {
+            statusCard.classList.add('hidden');
+        }
+
+        if (detailGrid) {
+            for (const card of detailGrid.children) {
+                if (card.id !== 'alexaConsentCard') {
+                    card.classList.add('hidden');
+                }
+            }
+        }
+
+        if (logoutButton) {
+            logoutButton.classList.remove('hidden');
+        }
+
+        if (alexaConsentMeta) {
+            const safeEmail = escapeHtml(userData?.email || 'your account');
+            let redirectHost = challenge.redirect_uri;
+            try {
+                redirectHost = new URL(challenge.redirect_uri).host;
+            } catch (_error) {
+                redirectHost = challenge.redirect_uri;
+            }
+
+            alexaConsentMeta.innerHTML = `
+                <div><strong>Alexa Client:</strong> ${escapeHtml(challenge.client_id)}</div>
+                <div><strong>Redirect Host:</strong> ${escapeHtml(redirectHost)}</div>
+                <div><strong>Account:</strong> ${safeEmail}</div>
+            `;
+        }
+
+        alexaConsentCard.classList.remove('hidden');
+        stopGoogleEntitiesAutoRefresh();
+        stopAccountAutoRefresh();
+    }
+
+    function handleAlexaConsentFlow(userData) {
+        if (!isAlexaOauthLinkingIntent() || !alexaOAuthConsentMode) {
+            return false;
+        }
+
+        const challenge = parseAlexaOauthChallenge(alexaOAuthChallengeParam);
+        if (!challenge) {
+            showAlert('Invalid Alexa consent request. Please start linking again.');
+            return true;
+        }
+
+        const activePortalToken = isWellFormedPortalToken(userData?.portal_session_token)
+            ? String(userData.portal_session_token).trim()
+            : '';
+
+        if (!activePortalToken) {
+            showAlert('Please sign in again to continue Alexa linking.', false);
+            return true;
+        }
+
+        renderAlexaConsentCard(userData, challenge);
+
+        if (alexaConsentApproveBtn) {
+            alexaConsentApproveBtn.onclick = () => {
+                alexaConsentApproveBtn.disabled = true;
+                alexaConsentApproveBtn.textContent = 'Authorizing...';
+
+                try {
+                    const authorizeUrl = new URL('/api/alexa/oauth', window.location.origin);
+                    authorizeUrl.searchParams.set('client_id', challenge.client_id);
+                    authorizeUrl.searchParams.set('redirect_uri', challenge.redirect_uri);
+                    authorizeUrl.searchParams.set('response_type', 'code');
+                    authorizeUrl.searchParams.set('state', challenge.state || '');
+                    authorizeUrl.searchParams.set('portal_session_token', activePortalToken);
+                    authorizeUrl.searchParams.set('approved', '1');
+                    window.location.assign(authorizeUrl.toString());
+                } catch (_error) {
+                    showAlert('Unable to continue Alexa authorization. Please try again.');
+                    alexaConsentApproveBtn.disabled = false;
+                    alexaConsentApproveBtn.textContent = 'Allow and Continue';
+                }
+            };
+        }
+
+        if (alexaConsentDenyBtn) {
+            alexaConsentDenyBtn.onclick = () => {
+                const redirectUri = challenge.redirect_uri;
+                const denyUrl = new URL('/api/alexa/oauth', window.location.origin);
                 denyUrl.searchParams.set('client_id', challenge.client_id);
                 denyUrl.searchParams.set('redirect_uri', redirectUri);
                 denyUrl.searchParams.set('response_type', 'code');
