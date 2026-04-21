@@ -23,12 +23,27 @@ function entity(overrides = {}) {
 describe('buildAlexaEndpoint', () => {
     it('produces a well-formed endpoint for a light', () => {
         const ep = mapping.buildAlexaEndpoint(entity(), null);
-        assert.equal(ep.endpointId, 'light.bedroom');
+        assert.equal(ep.endpointId, 'light__bedroom');
         assert.deepEqual(ep.displayCategories, ['LIGHT']);
         assert.ok(Array.isArray(ep.capabilities));
         const interfaces = ep.capabilities.map((c) => c.interface);
         assert.ok(interfaces.includes('Alexa.PowerController'));
         assert.ok(interfaces.includes('Alexa.BrightnessController'));
+    });
+
+    it('encodes dots in entity_id to pass Alexa endpointId regex', () => {
+        const ep = mapping.buildAlexaEndpoint(
+            entity({ entity_id: 'switch.main_door_cam_rich_notifications' }),
+            null
+        );
+        assert.equal(ep.endpointId, 'switch__main_door_cam_rich_notifications');
+        assert.match(ep.endpointId, /^[a-zA-Z0-9_\-=#;:?@&]{1,256}$/);
+    });
+
+    it('decodeAlexaEndpointId round-trips', () => {
+        const original = 'switch.bedside_switch_switch_2';
+        const encoded = mapping.encodeAlexaEndpointId(original);
+        assert.equal(mapping.decodeAlexaEndpointId(encoded), original);
     });
 
     it('returns null for null entity', () => {
