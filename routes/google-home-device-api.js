@@ -1,6 +1,6 @@
 const express = require('express');
 
-module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, googleCore, homegraph, state }) {
+module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, googleCore, homegraph, state, alexaCore, alexaEventGateway }) {
     const router = express.Router();
     const { asyncHandler } = utils;
 
@@ -151,6 +151,11 @@ module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, go
             const synced = [];
             const incomingEntityIds = [];
             let shouldRequestSync = false;
+            // Server-side fan-out: if the user has Alexa enabled, also upsert
+            // each entity into alexa_entities using the same HA-native
+            // payload. Addon still posts only to the Google endpoint.
+            const alexaFanoutEnabled = Boolean(user && user.alexa_enabled) && Boolean(alexaCore);
+            let alexaFanoutTouched = false;
 
             for (const entityPayload of entitiesPayload) {
                 const normalizedEntityId = utils.sanitizeEntityId(entityPayload?.entity_id);
@@ -167,6 +172,22 @@ module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, go
                     synced.push(upserted.entity.entity_id);
                     if (upserted.syncChanged) {
                         shouldRequestSync = true;
+                    }
+                }
+
+                if (alexaFanoutEnabled) {
+                    try {
+                        await alexaCore.upsertAlexaEntityFromDevice(
+                            device.user_id,
+                            device.id,
+                            entityPayload
+                        );
+                        alexaFanoutTouched = true;
+                    } catch (alexaFanoutError) {
+                        console.warn(
+                            'ALEXA ENTITY FANOUT FAILED (non-fatal):',
+                            alexaFanoutError?.message || alexaFanoutError
+                        );
                     }
                 }
             }
@@ -306,6 +327,19 @@ module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, go
                 homegraph.scheduleGoogleRequestSyncForUser(device.user_id, 'entity_inventory_changed');
             }
             homegraph.scheduleGoogleReportStateForUser(device.user_id, { force: false });
+
+            // Mirror to Alexa: if any entities were fanned out to alexa_entities,
+            // debounce an AddOrUpdateReport so the Alexa device graph matches.
+            if (alexaFanoutTouched && alexaEventGateway) {
+                try {
+                    alexaEventGateway.queueAlexaAddOrUpdateReport(device.user_id, null, 'entity_inventory_changed');
+                } catch (alexaQueueError) {
+                    console.warn(
+                        'ALEXA ADDORUPDATE QUEUE FAILED (non-fatal):',
+                        alexaQueueError?.message || alexaQueueError
+                    );
+                }
+            }
 
             return res.status(200).json({
                 message: 'Entities synced',

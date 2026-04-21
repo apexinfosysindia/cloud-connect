@@ -22,6 +22,9 @@
     const googleHomeCard = document.getElementById('googleHomeCard');
     const googleHomeStatus = document.getElementById('googleHomeStatus');
     const googleHomeEntities = document.getElementById('googleHomeEntities');
+    const alexaCard = document.getElementById('alexaCard');
+    const alexaStatus = document.getElementById('alexaStatus');
+    const alexaEntities = document.getElementById('alexaEntities');
     const googleConsentCard = document.getElementById('googleConsentCard');
     const googleConsentMeta = document.getElementById('googleConsentMeta');
     const googleConsentApproveBtn = document.getElementById('googleConsentApproveBtn');
@@ -447,6 +450,56 @@
         }
     }
 
+    let alexaEntitiesLastFingerprint = null;
+
+    async function loadAlexaEntities(userData) {
+        if (!alexaEntities || !userData?.portal_session_token) {
+            return;
+        }
+
+        if (!userData.alexa_enabled) {
+            alexaEntities.innerHTML = '<p class="detail-copy">Enable Alexa to manage exposed entities.</p>';
+            return;
+        }
+
+        const hasExistingList = alexaEntitiesLastFingerprint !== null;
+        if (!hasExistingList) {
+            alexaEntities.innerHTML = '<p class="detail-copy">Loading entities...</p>';
+        }
+
+        try {
+            const res = await fetch('/api/account/alexa/entities', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ portal_session_token: userData.portal_session_token })
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || 'Unable to load Alexa entities');
+            }
+
+            const entities = Array.isArray(data.entities) ? data.entities : [];
+            alexaEntitiesLastFingerprint = entities
+                .map((e) => `${e.entity_id}:${e.exposed ? 1 : 0}:${e.online ? 1 : 0}`)
+                .join('|');
+
+            if (entities.length === 0) {
+                alexaEntities.innerHTML = '<p class="detail-copy">No entities synced yet. Keep addon online and wait for next sync.</p>';
+                return;
+            }
+
+            alexaEntities.innerHTML = entities.map((entity) => `
+                <label class="google-entity-row">
+                    <input type="checkbox" class="alexa-entity-toggle" data-entity-id="${escapeHtml(entity.entity_id)}" ${entity.exposed ? 'checked' : ''}>
+                    <span class="google-entity-name">${escapeHtml(entity.display_name || entity.entity_id)}</span>
+                    <span class="google-entity-meta">${escapeHtml(entity.entity_type || 'switch')} | ${entity.online ? 'online' : 'offline'}</span>
+                </label>
+            `).join('');
+        } catch (error) {
+            alexaEntities.innerHTML = `<p class="detail-copy">${escapeHtml(error.message || 'Unable to load Alexa entities right now.')}</p>`;
+        }
+    }
+
     // Tracks the last fetched trial eligibility so we don't re-query on every
     // poll tick if nothing changed. null = unknown, true/false = known.
     let lastTrialEligibility = null;
@@ -612,6 +665,28 @@
             }
         } else {
             stopGoogleEntitiesAutoRefresh();
+        }
+
+        if (alexaCard) {
+            const alexaLinked = Boolean(userData.alexa_linked);
+            const showAlexaCard = accessEnabled && alexaLinked;
+            alexaCard.classList.toggle('hidden', !showAlexaCard);
+            if (showAlexaCard) {
+                if (alexaStatus) {
+                    alexaStatus.textContent = 'Linked to Alexa';
+                }
+                void loadAlexaEntities(userData);
+            } else {
+                if (alexaStatus) {
+                    alexaStatus.textContent = accessEnabled
+                        ? 'Link Apex Connect in Alexa app to manage exposed entities.'
+                        : 'Available after account activation.';
+                }
+                if (alexaEntities) {
+                    alexaEntities.innerHTML = '<p class="detail-copy">Link Apex Connect in Alexa app to manage exposed entities.</p>';
+                }
+                alexaEntitiesLastFingerprint = null;
+            }
         }
 
         const dashUrl = document.getElementById('dashUrl');
@@ -1743,6 +1818,53 @@
                 toggle.disabled = false;
             }
             updateGoogleEntitiesBulkBar();
+        });
+    }
+
+    if (alexaEntities) {
+        alexaEntities.addEventListener('change', async (event) => {
+            const toggle = event.target.closest('.alexa-entity-toggle');
+            if (!toggle) {
+                return;
+            }
+
+            const userData = JSON.parse(localStorage.getItem('apex_user') || 'null');
+            if (!userData?.portal_session_token) {
+                showAlert('Please log in again to continue.');
+                return;
+            }
+
+            if (!userData.alexa_linked) {
+                showAlert('Link Apex Connect in Alexa app first.');
+                toggle.checked = false;
+                return;
+            }
+
+            const entityId = toggle.dataset.entityId;
+            const exposed = toggle.checked;
+
+            toggle.disabled = true;
+            try {
+                const res = await fetch(`/api/account/alexa/entities/${encodeURIComponent(entityId)}/expose`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        portal_session_token: userData.portal_session_token,
+                        exposed
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data.error || 'Unable to update entity exposure');
+                }
+                showAlert(data.message, false);
+                toggle.checked = exposed;
+            } catch (error) {
+                toggle.checked = !exposed;
+                showAlert(error.message);
+            } finally {
+                toggle.disabled = false;
+            }
         });
     }
 

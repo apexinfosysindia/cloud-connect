@@ -53,8 +53,37 @@ const googleCore = require('./lib/google-home/core')({
 // Wire the circular dependency: entity-mapping needs to check homegraph credentials
 entityMapping.setHasGoogleHomegraphCredentials(() => homegraph.hasGoogleHomegraphCredentials());
 
-// Auth depends on device and googleCore, so it must be initialized after them
-const auth = require('./lib/auth')({ dbGet, config, utils, device, googleCore });
+// Alexa modules (factory order: state → entity-mapping → event-gateway → core)
+const alexaState = require('./lib/alexa/state');
+const alexaEntityMapping = require('./lib/alexa/entity-mapping');
+const alexaEventGateway = require('./lib/alexa/event-gateway')({
+    dbGet,
+    dbRun,
+    dbAll,
+    config,
+    utils,
+    state: alexaState,
+    entityMapping: alexaEntityMapping
+});
+const alexaCore = require('./lib/alexa/core')({
+    dbGet,
+    dbRun,
+    dbAll,
+    eventGateway: alexaEventGateway
+});
+
+// Auth depends on device, googleCore, and alexaCore
+const auth = require('./lib/auth')({ dbGet, config, utils, device, googleCore, alexaCore });
+
+// Warn loudly (but do NOT exit) if Alexa client creds are set but the
+// forwarder shared secret isn't — requests to /api/alexa/smarthome will
+// 503 until this is fixed.
+if (config.ALEXA_CLIENT_ID && !config.ALEXA_FORWARDER_SHARED_SECRET) {
+    console.warn(
+        'ALEXA FORWARDER SECRET MISSING: ALEXA_CLIENT_ID is set but ALEXA_FORWARDER_SHARED_SECRET is empty. ' +
+            '/api/alexa/smarthome will fail closed with 503 until this is configured.'
+    );
+}
 
 // Email module for verification and password reset flows
 const email = require('./lib/email')({ dbGet, dbRun, config, utils });
@@ -143,7 +172,7 @@ const generalApiRateLimiter = rateLimit({
               // bulk dashboard operations that fan out to multiple entities)
     standardHeaders: true,
     legacyHeaders: false,
-    skip: (req) => req.path.startsWith('/internal/'),
+    skip: (req) => req.path.startsWith('/internal/') || req.path === '/api/alexa/smarthome',
     message: { error: 'Too many requests. Please slow down.' }
 });
 
@@ -190,7 +219,11 @@ const deps = {
     googleCore,
     homegraph,
     entityMapping,
-    state
+    state,
+    alexaCore,
+    alexaEventGateway,
+    alexaEntityMapping,
+    alexaState
 };
 
 // --- Register routes ---
@@ -206,6 +239,11 @@ app.use(require('./routes/google-home-oauth')(deps));
 app.use(require('./routes/google-home-fulfillment')(deps));
 app.use(require('./routes/google-home-device-api')(deps));
 app.use(require('./routes/google-home-admin')(deps));
+app.use(require('./routes/alexa-portal')(deps));
+app.use(require('./routes/alexa-oauth')(deps));
+app.use(require('./routes/alexa-smarthome')(deps));
+app.use(require('./routes/alexa-device-api')(deps));
+app.use(require('./routes/alexa-admin')(deps));
 
 // --- Global error handler for uncaught route errors (used by asyncHandler) ---
 app.use((error, _req, res, _next) => {
@@ -240,6 +278,16 @@ db.ready
                     console.error('Google runtime schema migration failed:', error);
                 });
             googleCore.startStaleEntityInterval();
+
+            alexaCore
+                .ensureAlexaRuntimeSchemaReady()
+                .then(() => {
+                    console.log('Alexa runtime schema ready.');
+                })
+                .catch((error) => {
+                    console.error('Alexa runtime schema migration failed:', error);
+                });
+            alexaCore.startStaleEntityInterval();
 
             // Check for expired trial / admin-activated accounts every hour
             const EXPIRY_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
