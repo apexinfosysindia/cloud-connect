@@ -148,7 +148,8 @@ module.exports = function ({
             const entities = await googleCore.getGoogleEntitiesForUser(req.alexaUser.id, {
                 includeDisabled: false
             });
-            const entity = entities.find((e) => e.entity_id === endpointId);
+            const decodedEndpointId = alexaDirectiveMapping.decodeAlexaEndpointId(endpointId);
+            const entity = entities.find((e) => e.entity_id === decodedEndpointId);
             if (!entity) {
                 return res.status(200).json(
                     buildErrorResponse(directive, 'NO_SUCH_ENDPOINT', 'Endpoint not found')
