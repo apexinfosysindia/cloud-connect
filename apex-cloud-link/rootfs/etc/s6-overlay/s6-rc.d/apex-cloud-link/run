@@ -19,7 +19,6 @@ SSH_REMOTE_PORT=0
 SSH_LOCAL_PORT=22
 GOOGLE_ENTITY_SYNC_INTERVAL=5
 GOOGLE_COMMAND_SYNC_INTERVAL=1
-ALEXA_COMMAND_SYNC_INTERVAL=1
 GOOGLE_SYNC_PID=""
 GOOGLE_WARNED_NO_SUPERVISOR_TOKEN=0
 GOOGLE_WARNED_STATE_FETCH=0
@@ -597,20 +596,7 @@ except Exception:
 }
 
 execute_google_command() {
-    # Channel-aware command dispatcher.
-    #
-    # Historically this function was Google-only and POSTed to
-    # /api/internal/devices/google-home/commands/:id/result. To support Alexa
-    # without duplicating the entire HA-service case-switch, we accept an
-    # optional second positional arg ($2) — the "channel" — which selects the
-    # result endpoint at the final POST. The HA-side logic is identical for
-    # both channels because the server translates Alexa actions into the
-    # Google addon dialect (see lib/alexa/addon-action-map.js on the server).
-    #
-    #   $1 — command JSON item (as emitted by /commands poll)
-    #   $2 — "google" (default) or "alexa"
     local command_json="$1"
-    local channel="${2:-google}"
     local command_id
     local entity_id
     local action
@@ -1027,34 +1013,7 @@ except Exception:
         --argjson state "$resulting_state" \
         '{success: $success, error: ($error | if . == "" then null else . end), state: $state}' 2>/dev/null) || result_payload='{"success":false,"error":"result_payload_build_failed","state":{}}'
 
-    local result_endpoint
-    if [ "$channel" = "alexa" ]; then
-        result_endpoint="/api/internal/devices/alexa/commands/${command_id}/result"
-    else
-        result_endpoint="/api/internal/devices/google-home/commands/${command_id}/result"
-    fi
-    cloud_post "$result_endpoint" "$result_payload" "$DEVICE_TOKEN" >/dev/null 2>/dev/null || true
-}
-
-sync_alexa_commands() {
-    # Mirror of sync_google_commands for the Alexa channel. Reuses
-    # execute_google_command with channel="alexa" so the HA dispatcher
-    # logic stays DRY. Server has already translated Alexa directives into
-    # Google-dialect actions before enqueueing.
-    if [ "$FLEET_ACTIVE" -ne 1 ] || [ -z "$DEVICE_TOKEN" ]; then
-        return
-    fi
-
-    local response
-    response=$(cloud_post "/api/internal/devices/alexa/commands" '{}' "$DEVICE_TOKEN")
-    if [ -z "$response" ]; then
-        return
-    fi
-
-    while IFS= read -r command_item; do
-        [ -z "$command_item" ] && continue
-        execute_google_command "$command_item" "alexa"
-    done < <(printf '%s' "$response" | jq -c '.commands[]?')
+    cloud_post "/api/internal/devices/google-home/commands/${command_id}/result" "$result_payload" "$DEVICE_TOKEN" >/dev/null 2>/dev/null || true
 }
 
 sync_google_commands() {
@@ -1096,17 +1055,6 @@ validate_google_sync_intervals() {
             fi
             ;;
     esac
-
-    case "$ALEXA_COMMAND_SYNC_INTERVAL" in
-        ''|*[!0-9]*)
-            ALEXA_COMMAND_SYNC_INTERVAL=1
-            ;;
-        *)
-            if [ "$ALEXA_COMMAND_SYNC_INTERVAL" -lt 1 ]; then
-                ALEXA_COMMAND_SYNC_INTERVAL=1
-            fi
-            ;;
-    esac
 }
 
 start_google_sync_loop() {
@@ -1135,7 +1083,6 @@ start_google_sync_loop() {
             fi
 
             sync_google_commands || bashio::log.warning "Google command sync iteration failed (non-fatal, will retry)"
-            sync_alexa_commands || bashio::log.warning "Alexa command sync iteration failed (non-fatal, will retry)"
 
             sleep "$GOOGLE_COMMAND_SYNC_INTERVAL"
 
@@ -1497,7 +1444,6 @@ if [ "$FLEET_ACTIVE" -eq 1 ] && [ -n "$DEVICE_TOKEN" ]; then
         sync_google_entities || bashio::log.warning "Initial entity sync retry also failed (non-fatal)"
     fi
     sync_google_commands || true
-    sync_alexa_commands || true
     start_heartbeat_loop
     start_google_sync_loop
 fi
