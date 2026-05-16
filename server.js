@@ -59,6 +59,25 @@ const auth = require('./lib/auth')({ dbGet, config, utils, device, googleCore })
 // Email module for verification and password reset flows
 const email = require('./lib/email')({ dbGet, dbRun, config, utils });
 
+// Alexa Smart Home (v2 rebuild). lwaCrypto is its own module so the encryption
+// key (ALEXA_LWA_TOKEN_ENC_KEY) can be probed/rotated independently of the
+// rest of Alexa wiring. Routes consume the resulting `alexaCore` factory via
+// the shared `deps` object below.
+const lwaCrypto = require('./lib/alexa/crypto');
+const alexaCore = require('./lib/alexa/core')({ dbGet, dbRun, dbAll, lwaCrypto });
+const alexaEntityMapping = require('./lib/alexa/entity-mapping')();
+// Phase 11: proactive ChangeReport delivery to api.amazonalexa.com.
+// Auto-starts a debounced flush loop unless ALEXA_EVENT_GATEWAY_AUTO_START
+// is explicitly false (used by tests).
+const alexaEventGateway = require('./lib/alexa/event-gateway')({
+    dbGet,
+    dbRun,
+    alexaCore,
+    lwaCrypto,
+    entityMapping: alexaEntityMapping,
+    config
+});
+
 // --- Express app setup ---
 const app = express();
 
@@ -190,7 +209,11 @@ const deps = {
     googleCore,
     homegraph,
     entityMapping,
-    state
+    state,
+    alexaCore,
+    lwaCrypto,
+    alexaEntityMapping,
+    eventGateway: alexaEventGateway
 };
 
 // --- Register routes ---
@@ -206,6 +229,16 @@ app.use(require('./routes/google-home-oauth')(deps));
 app.use(require('./routes/google-home-fulfillment')(deps));
 app.use(require('./routes/google-home-device-api')(deps));
 app.use(require('./routes/google-home-admin')(deps));
+app.use(require('./routes/alexa-oauth')(deps));
+app.use(
+    require('./routes/alexa-smarthome')({
+        ...deps,
+        entityMapping: alexaEntityMapping
+    })
+);
+app.use(require('./routes/alexa-device-api')(deps));
+app.use(require('./routes/alexa-portal')(deps));
+app.use(require('./routes/alexa-admin')(deps));
 
 // --- Global error handler for uncaught route errors (used by asyncHandler) ---
 app.use((error, _req, res, _next) => {
@@ -227,8 +260,17 @@ try {
 // --- Start server ---
 const PORT = process.env.PORT || 3000;
 
+// Alexa schema baseline: residual schema from the abandoned v1/v2 attempts is
+// adopted as-is (see lib/alexa/schema-baseline.js). Asserted at boot so any
+// drift fails fast rather than surfacing as broken linking later.
+const alexaSchemaBaseline = require('./lib/alexa/schema-baseline')({ dbAll, dbGet });
+
 db.ready
-    .then(() => {
+    .then(() => alexaSchemaBaseline.assertBaseline())
+    .then((result) => {
+        console.log(
+            `Alexa schema baseline OK (adopted v${result.adoptedVersion} "${result.adoptedName}").`
+        );
         app.listen(PORT, () => {
             console.log(`Cloud Portal API is running on http://localhost:${PORT}`);
             googleCore

@@ -1,0 +1,14 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "apexos-alexa-forwarder-prod"
+resolve_s3 = true
+s3_prefix = "apexos-alexa-forwarder-prod"
+region = "eu-west-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "CloudConnectOrigin=\"https://cloud.apexinfosys.in\" CloudConnectPath=\"/api/alexa/smarthome\" AlexaSkillId=\"amzn1.ask.skill.c0e16df7-d46e-40f2-828e-e951f00ec4ed\" LogRetentionDays=\"7\" Stage=\"prod\""
+image_repositories = []
+
+[default.global.parameters]
+region = "eu-west-1"

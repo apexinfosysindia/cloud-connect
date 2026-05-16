@@ -1,0 +1,58 @@
+# CI gates for the Alexa rebuild (and the rest of the codebase).
+#
+# Two checks here are specifically driven by the v1 Alexa post-mortem:
+#
+#   1. migration-immutability — fails the build if a PR edits or deletes any
+#      migration file that already exists on main. This is the rule whose
+#      absence forced the abandoned 004_alexa_schema_reconciliation.sql.
+#
+#   2. node --test — runs lib/alexa/discovery-validator.js against every
+#      Discovery payload tests build, so the schema-rejection bugs that
+#      ate eight commits in v1 never reach Amazon again.
+#
+# Both checks are required for merge via branch protection (configure that
+# in GitHub settings; this file only declares the jobs).
+
+name: CI
+on:
+    pull_request:
+        branches: [main]
+    push:
+        branches: [main]
+
+permissions:
+    contents: read
+
+jobs:
+    migration-immutability:
+        # Pull-request only: nothing to compare against on a direct push to main
+        # (and pushes to main happen via merge-from-PR which already ran this).
+        if: github.event_name == 'pull_request'
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout PR head with enough history to diff
+              uses: actions/checkout@v5
+              with:
+                  # Need both PR head and the base branch reachable for the
+                  # `git diff base...HEAD` the script does. depth:0 = full
+                  # history; safer than guessing a fetch depth.
+                  fetch-depth: 0
+            - name: Verify no committed edits to existing migrations
+              run: bash scripts/check-migration-immutability.sh origin/${{ github.base_ref }}
+
+    test:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v5
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: '20'
+                  cache: npm
+            - name: Install
+              run: npm ci
+            - name: Backend syntax check
+              run: node --check server.js
+            - name: Lint
+              run: npm run lint
+            - name: Tests (includes Alexa Discovery validator)
+              run: npm test

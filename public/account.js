@@ -494,6 +494,151 @@
         noTrialOnly.forEach((el) => el.classList.toggle('hidden', trialAvailable));
     }
 
+    // ── Alexa card ──────────────────────────────────────────────────────
+    //
+    // Minimal v1 of the portal Alexa surface. Three buttons, one status
+    // string, one sync-meta line. Per-entity exposure UI is deliberately
+    // absent — the addon owns the entity set (Phase 8 design).
+    let alexaHandlersBound = false;
+
+    async function postAlexa(path, body) {
+        const portalToken = (() => {
+            try {
+                const u = JSON.parse(localStorage.getItem('user') || '{}');
+                return u.portal_session_token || '';
+            } catch (_e) {
+                return '';
+            }
+        })();
+        const res = await fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...(body || {}), portal_session_token: portalToken })
+        });
+        return { status: res.status, body: await res.json().catch(() => ({})) };
+    }
+
+    async function fetchAlexaStatus() {
+        const portalToken = (() => {
+            try {
+                const u = JSON.parse(localStorage.getItem('user') || '{}');
+                return u.portal_session_token || '';
+            } catch (_e) {
+                return '';
+            }
+        })();
+        const url = `/api/account/alexa/status?portal_session_token=${encodeURIComponent(portalToken)}`;
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        return await res.json().catch(() => null);
+    }
+
+    function bindAlexaHandlers() {
+        if (alexaHandlersBound) return;
+        alexaHandlersBound = true;
+        const enableBtn = document.getElementById('alexaEnableBtn');
+        const disableBtn = document.getElementById('alexaDisableBtn');
+        const unlinkBtn = document.getElementById('alexaUnlinkBtn');
+
+        if (enableBtn) {
+            enableBtn.addEventListener('click', async () => {
+                const out = await postAlexa('/api/account/alexa/enable', { enabled: true });
+                if (out.status === 200 && out.body?.data) {
+                    localStorage.setItem('user', JSON.stringify(out.body.data));
+                    // Once enabled, the customer must complete account linking
+                    // from the Alexa app — there's no in-portal LWA flow.
+                    showAlert('Alexa integration enabled. Open the Alexa app to link your account.', false);
+                    refreshAccountState({ silent: true });
+                } else {
+                    showAlert(out.body?.error || 'Unable to enable Alexa integration', true);
+                }
+            });
+        }
+        if (disableBtn) {
+            disableBtn.addEventListener('click', async () => {
+                if (!confirm('Disable Alexa integration? This will also unlink your Alexa account.')) return;
+                const out = await postAlexa('/api/account/alexa/enable', { enabled: false });
+                if (out.status === 200 && out.body?.data) {
+                    localStorage.setItem('user', JSON.stringify(out.body.data));
+                    showAlert('Alexa integration disabled.', false);
+                    refreshAccountState({ silent: true });
+                } else {
+                    showAlert(out.body?.error || 'Unable to disable Alexa integration', true);
+                }
+            });
+        }
+        if (unlinkBtn) {
+            unlinkBtn.addEventListener('click', async () => {
+                if (!confirm('Unlink Alexa account? You can re-link later from the Alexa app.')) return;
+                const out = await postAlexa('/api/account/alexa/unlink', {});
+                if (out.status === 200 && out.body?.data) {
+                    localStorage.setItem('user', JSON.stringify(out.body.data));
+                    showAlert('Alexa account unlinked.', false);
+                    refreshAccountState({ silent: true });
+                } else {
+                    showAlert(out.body?.error || 'Unable to unlink Alexa account', true);
+                }
+            });
+        }
+    }
+
+    function renderAlexaCard(userData, accessEnabled) {
+        const card = document.getElementById('alexaCard');
+        if (!card) return;
+        const enabled = Boolean(userData?.alexa_enabled);
+        const linked = Boolean(userData?.alexa_linked);
+        // Only show the card to active accounts — same gate as Google Home.
+        const show = accessEnabled;
+        card.classList.toggle('hidden', !show);
+        if (!show) return;
+
+        bindAlexaHandlers();
+
+        const status = document.getElementById('alexaStatus');
+        const syncMeta = document.getElementById('alexaSyncMeta');
+        const enableBtn = document.getElementById('alexaEnableBtn');
+        const disableBtn = document.getElementById('alexaDisableBtn');
+        const unlinkBtn = document.getElementById('alexaUnlinkBtn');
+
+        if (!enabled) {
+            if (status) status.textContent = 'Enable Alexa integration to use voice control with your devices.';
+            if (syncMeta) syncMeta.textContent = '';
+            enableBtn?.classList.remove('hidden');
+            disableBtn?.classList.add('hidden');
+            unlinkBtn?.classList.add('hidden');
+            return;
+        }
+
+        // Enabled but not linked → user needs to finish linking in Alexa app.
+        if (!linked) {
+            if (status) status.textContent = 'Alexa integration is enabled. Open the Alexa app and link "Apex Connect+" to finish setup.';
+            if (syncMeta) syncMeta.textContent = '';
+            enableBtn?.classList.add('hidden');
+            disableBtn?.classList.remove('hidden');
+            unlinkBtn?.classList.add('hidden');
+            return;
+        }
+
+        // Linked: show entity counts asynchronously.
+        if (status) status.textContent = 'Linked to Alexa.';
+        enableBtn?.classList.add('hidden');
+        disableBtn?.classList.remove('hidden');
+        unlinkBtn?.classList.remove('hidden');
+        if (syncMeta) {
+            syncMeta.textContent = 'Loading sync status…';
+            fetchAlexaStatus().then((s) => {
+                if (!s) {
+                    syncMeta.textContent = '';
+                    return;
+                }
+                const total = Number(s.total_entity_count || 0);
+                const exposed = Number(s.exposed_entity_count || 0);
+                const last = s.last_synced_at ? new Date(s.last_synced_at).toLocaleString() : 'never';
+                syncMeta.textContent = `${exposed} of ${total} entities exposed · last sync: ${last}`;
+            });
+        }
+    }
+
     function renderDashboard(userData, options = {}) {
         if (manageViewActive && !options.fromManageBack) {
             // Don't fight the manage account view: just refresh the cached
@@ -613,6 +758,8 @@
         } else {
             stopGoogleEntitiesAutoRefresh();
         }
+
+        renderAlexaCard(userData, accessEnabled);
 
         const dashUrl = document.getElementById('dashUrl');
         const dashUrlLabel = document.getElementById('dashUrlLabel');

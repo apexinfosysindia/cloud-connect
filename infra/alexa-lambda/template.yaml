@@ -1,0 +1,141 @@
+# SAM template for the Alexa Smart Home forwarder Lambda.
+#
+# Deploys lambda/alexa-forwarder/index.mjs as an AWS Lambda function with
+# the Alexa Smart Home trigger pre-wired, plus a CloudWatch log group with
+# a sane retention policy.
+#
+# Why SAM and not the Serverless Framework / CDK:
+#   - It's the AWS-native option; no third-party tooling beyond `aws-sam-cli`.
+#   - The forwarder has exactly one function and one trigger — anything more
+#     elaborate would be overkill.
+#   - The output is plain CloudFormation, which means the deploy is
+#     auditable from the AWS console without leaving the AWS toolchain.
+#
+# What this template DOES NOT do:
+#   - It does not register the Alexa skill itself. That happens in the
+#     Amazon Developer Console (see docs/alexa/private-skill-bringup.md).
+#     The skill ID you create there is passed back here as the SkillId
+#     parameter so the trigger can be locked to a single skill.
+#   - It does not provision DNS, certificates, or anything in front of the
+#     origin (cloud.apexinfosys.in). The origin is assumed to already be live.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Alexa Smart Home forwarder Lambda for ApexOS Cloud Connect.
+  Stateless network hop: receives a directive from Alexa, POSTs it
+  verbatim to the Cloud Connect Express app, returns whatever JSON the
+  app responds with.
+
+# ─── Parameters ────────────────────────────────────────────────────────────
+#
+# All parameters are required so a typo at deploy time fails fast rather
+# than producing a half-configured Lambda. Defaults are deliberately omitted
+# for the same reason.
+Parameters:
+  CloudConnectOrigin:
+    Type: String
+    Description: >
+      HTTPS origin for the Cloud Connect Express app. Must include the
+      scheme. Example: https://cloud.apexinfosys.in
+    AllowedPattern: ^https://[A-Za-z0-9.-]+(:[0-9]+)?$
+    ConstraintDescription: must be an https URL with no trailing slash
+
+  CloudConnectPath:
+    Type: String
+    Description: >
+      Path on the origin that hosts the Smart Home dispatcher. The
+      Express route is mounted at /api/alexa/smarthome — change here only
+      if you've remapped it in server.js.
+    Default: /api/alexa/smarthome
+
+  AlexaSkillId:
+    Type: String
+    Description: >
+      The Alexa Smart Home skill ID this Lambda is bound to. Format:
+      amzn1.ask.skill.<uuid>. Locking the trigger to one skill means an
+      attacker who somehow learns the Lambda's ARN cannot still invoke it
+      from a different skill.
+    AllowedPattern: ^amzn1\.ask\.skill\.[A-Za-z0-9-]+$
+    ConstraintDescription: must look like amzn1.ask.skill.<uuid>
+
+  LogRetentionDays:
+    Type: Number
+    Description: >
+      How long to retain CloudWatch logs for the forwarder. Keep this
+      short — the Lambda logs every directive payload, and directive
+      payloads carry user bearer tokens. Default 7 days minimises the
+      blast radius of a CloudWatch read leak.
+    Default: 7
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90]
+
+  Stage:
+    Type: String
+    Description: Deployment stage (used in the function name + tags).
+    AllowedValues: [prod, staging, dev]
+    Default: prod
+
+# ─── Resources ─────────────────────────────────────────────────────────────
+
+Resources:
+  # The forwarder function itself. Memory + timeout are intentionally tight:
+  #   - 128 MB is plenty for a JSON-in-JSON-out Lambda. Bumping it would
+  #     cost money without making anything faster.
+  #   - 8s matches Alexa's directive-response budget exactly. The Lambda
+  #     code aborts the upstream fetch at 6.5s to leave 1.5s of headroom
+  #     for typed-error formatting + Lambda overhead.
+  AlexaForwarderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub apexos-alexa-forwarder-${Stage}
+      CodeUri: ../../lambda/alexa-forwarder/
+      Handler: index.handler
+      Runtime: nodejs20.x
+      Architectures: [arm64]   # Graviton — cheaper, no perf cost for our payload sizes
+      MemorySize: 128
+      Timeout: 8
+      # No VPC — the Lambda only reaches the public internet (cloud.apexinfosys.in
+      # over TLS). VPC attachment would add cold-start latency for no
+      # security gain.
+      Environment:
+        Variables:
+          CLOUD_CONNECT_ORIGIN: !Ref CloudConnectOrigin
+          CLOUD_CONNECT_PATH: !Ref CloudConnectPath
+      Events:
+        AlexaTrigger:
+          Type: AlexaSkill
+          Properties:
+            # Locks invocations to the single skill ID supplied as a
+            # parameter — Alexa won't fan out a directive from any other
+            # skill into this Lambda.
+            SkillId: !Ref AlexaSkillId
+      Tags:
+        Project: apexos-cloud-connect
+        Component: alexa-forwarder
+        Stage: !Ref Stage
+
+  # Explicit log group so we can pin retention. Without this, SAM lets
+  # CloudWatch auto-create the group with infinite retention — exactly
+  # what we don't want for a function that logs bearer tokens.
+  AlexaForwarderLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/apexos-alexa-forwarder-${Stage}
+      RetentionInDays: !Ref LogRetentionDays
+
+# ─── Outputs ───────────────────────────────────────────────────────────────
+#
+# These are the values you'll need when configuring the skill in the
+# Amazon Developer Console.
+Outputs:
+  FunctionArn:
+    Description: ARN of the forwarder Lambda. Paste into the Alexa skill's "Default endpoint" field.
+    Value: !GetAtt AlexaForwarderFunction.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-FunctionArn
+  FunctionName:
+    Description: Lambda function name (useful for `sam logs` and the AWS console).
+    Value: !Ref AlexaForwarderFunction
+  LogGroupName:
+    Description: CloudWatch log group for the forwarder.
+    Value: !Ref AlexaForwarderLogGroup
