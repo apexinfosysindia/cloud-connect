@@ -32,7 +32,7 @@
  * inconsistent state. The accept-as-no-op contract is what prevents that.
  */
 
-const { describe, it, beforeEach, afterEach } = require('node:test');
+const { describe, it, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
@@ -284,7 +284,9 @@ describe('alexa end-to-end: directive → queue → addon → result', () => {
         const [resp] = await Promise.all([
             postDirective(base, turnOnDirective(accessToken)),
             (async () => {
-                await new Promise((r) => setTimeout(r, 250));
+                await new Promise((r) => {
+                    setTimeout(r, 250);
+                });
                 const { pending } = await pollCommands(base);
                 observedPending = pending;
                 if (pending.length > 0) {
@@ -368,7 +370,9 @@ describe('alexa end-to-end: directive → queue → addon → result', () => {
         const [resp] = await Promise.all([
             postDirective(base, turnOnDirective(accessToken)),
             (async () => {
-                await new Promise((r) => setTimeout(r, 200));
+                await new Promise((r) => {
+                    setTimeout(r, 200);
+                });
                 const { pending } = await pollCommands(base);
                 await postResult(base, pending[0].id, {
                     success: false,
@@ -423,7 +427,9 @@ describe('alexa end-to-end: directive → queue → addon → result', () => {
             (async () => {
                 // Single addon-side worker that drains whatever's pending.
                 // We poll once to grab both, then ack them.
-                await new Promise((r) => setTimeout(r, 250));
+                await new Promise((r) => {
+                    setTimeout(r, 250);
+                });
                 const { pending } = await pollCommands(base);
                 assert.equal(pending.length, 2, 'both directives should be queued');
                 for (const cmd of pending) {

@@ -195,7 +195,9 @@ module.exports = function ({ dbGet, dbRun, utils, auth, googleCore, homegraph })
                 // so the response isn't padded with 150ms of dead time.
                 const hasMore = i + BULK_EXPOSE_BATCH_SIZE < updates.length;
                 if (hasMore) {
-                    await new Promise((resolve) => setTimeout(resolve, BULK_EXPOSE_BATCH_DELAY_MS));
+                    await new Promise((resolve) => {
+                        setTimeout(resolve, BULK_EXPOSE_BATCH_DELAY_MS);
+                    });
                 }
             }
 
