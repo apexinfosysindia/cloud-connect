@@ -39,6 +39,7 @@
     let accountRenderFingerprint = '';
     let manageViewActive = false;
     let googleOAuthRedirectInFlight = false;
+    let alexaOAuthRedirectInFlight = false;
     let googleEntitiesRefreshTimer = null;
     let googleEntitiesRefreshInFlight = false;
     let googleEntitiesRefreshKey = '';
@@ -51,6 +52,15 @@
     const googleOAuthError = oauthParams.get('error') || '';
     const googleOAuthConsentMode = oauthParams.get('google_oauth_consent') === '1';
     const googleOAuthChallengeParam = oauthParams.get('oauth_challenge') || '';
+    // Alexa account-linking mirror of googleOAuthMode. Alexa intentionally has
+    // no consent step (the Alexa app already showed its own consent screen
+    // before bouncing here) and no cookie-probe step (login and OAuth both run
+    // on the portal host — no cross-host cookie round-trip needed).
+    const alexaOAuthMode = oauthParams.get('alexa_oauth') === '1';
+    const alexaOAuthClientId = oauthParams.get('client_id') || '';
+    const alexaOAuthRedirectUri = oauthParams.get('redirect_uri') || '';
+    const alexaOAuthState = oauthParams.get('state') || '';
+    const alexaOAuthError = oauthParams.get('error') || '';
     const googleOAuthCookieProbeKey = [
         'apx_google_oauth_cookie_probe',
         googleOAuthClientId,
@@ -112,7 +122,7 @@
     }
 
     function normalizeSignedInUrl() {
-        if (googleOAuthMode) {
+        if (googleOAuthMode || alexaOAuthMode) {
             return;
         }
 
@@ -807,6 +817,48 @@
 
         startAccountAutoRefresh();
         void appendGoogleOAuthPortalToken(userData);
+        void appendAlexaOAuthPortalToken(userData);
+    }
+
+    async function appendAlexaOAuthPortalToken(userData) {
+        if (alexaOAuthRedirectInFlight) {
+            return;
+        }
+
+        if (!alexaOAuthMode) {
+            return;
+        }
+
+        if (!userData?.portal_session_token) {
+            return;
+        }
+
+        const portalToken = String(userData.portal_session_token || '');
+        if (!isWellFormedPortalToken(portalToken)) {
+            showAlert('Session token is invalid. Please log out and sign in again.');
+            return;
+        }
+
+        if (alexaOAuthError) {
+            showAlert(`Alexa link failed: ${alexaOAuthError}`);
+            return;
+        }
+
+        if (!alexaOAuthClientId || !alexaOAuthRedirectUri) {
+            return;
+        }
+
+        alexaOAuthRedirectInFlight = true;
+        // Alexa's /api/alexa/oauth route reads portal_session_token from the
+        // cookie OR query param. Pass it explicitly to avoid cookie-timing
+        // races right after login. No consent step, no continue endpoint —
+        // the route mints the auth code and 302s straight back to Amazon.
+        const continueUrl = new URL('/api/alexa/oauth', window.location.origin);
+        continueUrl.searchParams.set('client_id', alexaOAuthClientId);
+        continueUrl.searchParams.set('redirect_uri', alexaOAuthRedirectUri);
+        continueUrl.searchParams.set('state', alexaOAuthState);
+        continueUrl.searchParams.set('portal_session_token', portalToken);
+        window.location.assign(continueUrl.toString());
     }
 
     async function appendGoogleOAuthPortalToken(userData) {
@@ -2236,6 +2288,8 @@
 
             if (isGoogleOauthLinkingIntent()) {
                 showAlert('Your session needs refresh. Please sign in again to continue Google linking.', false);
+            } else if (alexaOAuthMode) {
+                showAlert('Your session needs refresh. Please sign in again to continue Alexa linking.', false);
             }
         } else {
             accountRenderFingerprint = buildAccountRenderFingerprint(parsedUser);
@@ -2258,5 +2312,7 @@
         showAlert(googleOAuthConsentMode
             ? 'Sign in to review and approve Google Assistant access.'
             : 'Sign in to continue Google account linking.', false);
+    } else if (alexaOAuthMode && !storedUser) {
+        showAlert('Sign in to continue Alexa account linking.', false);
     }
 })();
