@@ -81,6 +81,15 @@ const alexaEventGateway = require('./lib/alexa/event-gateway')({
 // --- Express app setup ---
 const app = express();
 
+// Trust the first proxy hop (Caddy) so req.ip and X-Forwarded-For are honored.
+// Without this, express-rate-limit throws ERR_ERL_UNEXPECTED_X_FORWARDED_FOR on
+// every proxied request and 500s before route handlers run — which silently
+// breaks Amazon's Alexa OAuth account-linking flow (Alexa always traverses
+// Caddy; curl probes from outside Caddy don't, which is why this only shows up
+// in production). Do NOT remove as "cleanup": it is load-bearing behind any
+// reverse proxy that sets X-Forwarded-For.
+app.set('trust proxy', 1);
+
 app.use(cookieParser());
 
 // Security headers
