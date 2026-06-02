@@ -9,7 +9,9 @@
         "lint:fix": "eslint --fix .",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
-        "backup": "bash scripts/backup.sh"
+        "backup": "bash scripts/backup.sh",
+        "migrate:down": "node scripts/migrate-down.js",
+        "rollback": "bash scripts/rollback.sh"
     },
     "keywords": [],
     "author": "",

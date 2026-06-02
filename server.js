@@ -53,14 +53,32 @@ const googleCore = require('./lib/google-home/core')({
 // Wire the circular dependency: entity-mapping needs to check homegraph credentials
 entityMapping.setHasGoogleHomegraphCredentials(() => homegraph.hasGoogleHomegraphCredentials());
 
-// Auth depends on device and googleCore, so it must be initialized after them
-const auth = require('./lib/auth')({ dbGet, config, utils, device, googleCore });
+// Alexa Smart Home modules (mirror of the Google block; built before auth
+// because auth.requireAlexaBearer depends on alexaCore). Construction order:
+// crypto → core → eventGateway, then back-fill core's eventGateway reference.
+const alexaState = require('./lib/alexa/state');
+const alexaEntityMapping = require('./lib/alexa/entity-mapping');
+const alexaCrypto = require('./lib/alexa/crypto')({ config });
+const alexaCore = require('./lib/alexa/core')({ dbGet, dbRun, dbAll, alexaCrypto });
+const alexaEventGateway = require('./lib/alexa/event-gateway')({ dbGet, dbRun, dbAll, core: alexaCore });
+
+// Auth depends on device, googleCore, and alexaCore, so it must be initialized after them
+const auth = require('./lib/auth')({ dbGet, config, utils, device, googleCore, alexaCore });
 
 // Email module for verification and password reset flows
 const email = require('./lib/email')({ dbGet, dbRun, config, utils });
 
 // --- Express app setup ---
 const app = express();
+
+// Trust the first proxy hop (Caddy) so req.ip and X-Forwarded-For are honored.
+// Without this, express-rate-limit throws ERR_ERL_UNEXPECTED_X_FORWARDED_FOR on
+// every proxied request and 500s before route handlers run — which silently
+// breaks Amazon's Alexa OAuth account-linking flow (Alexa always traverses
+// Caddy; curl probes from outside Caddy don't, which is why this only shows up
+// in production). Do NOT remove as "cleanup": it is load-bearing behind any
+// reverse proxy that sets X-Forwarded-For.
+app.set('trust proxy', 1);
 
 app.use(cookieParser());
 
@@ -190,7 +208,12 @@ const deps = {
     googleCore,
     homegraph,
     entityMapping,
-    state
+    state,
+    // Alexa modules (route factories destructure `core`/`eventGateway`/`entityMapping`)
+    core: alexaCore,
+    eventGateway: alexaEventGateway,
+    alexaEntityMapping,
+    alexaState
 };
 
 // --- Register routes ---
@@ -206,6 +229,14 @@ app.use(require('./routes/google-home-oauth')(deps));
 app.use(require('./routes/google-home-fulfillment')(deps));
 app.use(require('./routes/google-home-device-api')(deps));
 app.use(require('./routes/google-home-admin')(deps));
+
+// Alexa routes share the deps object but need the Alexa entity-mapping bound to
+// the `entityMapping` key the fulfillment factory destructures.
+const alexaDeps = { ...deps, entityMapping: alexaEntityMapping };
+app.use(require('./routes/alexa-oauth')(alexaDeps));
+app.use(require('./routes/alexa-portal')(alexaDeps));
+app.use(require('./routes/alexa-fulfillment')(alexaDeps));
+app.use(require('./routes/alexa-device-api')(alexaDeps));
 
 // --- Global error handler for uncaught route errors (used by asyncHandler) ---
 app.use((error, _req, res, _next) => {

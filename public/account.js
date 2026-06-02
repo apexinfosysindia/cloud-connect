@@ -39,6 +39,7 @@
     let accountRenderFingerprint = '';
     let manageViewActive = false;
     let googleOAuthRedirectInFlight = false;
+    let alexaOAuthRedirectInFlight = false;
     let googleEntitiesRefreshTimer = null;
     let googleEntitiesRefreshInFlight = false;
     let googleEntitiesRefreshKey = '';
@@ -51,6 +52,15 @@
     const googleOAuthError = oauthParams.get('error') || '';
     const googleOAuthConsentMode = oauthParams.get('google_oauth_consent') === '1';
     const googleOAuthChallengeParam = oauthParams.get('oauth_challenge') || '';
+    // Alexa account-linking mirror of googleOAuthMode. Alexa intentionally has
+    // no consent step (the Alexa app already showed its own consent screen
+    // before bouncing here) and no cookie-probe step (login and OAuth both run
+    // on the portal host — no cross-host cookie round-trip needed).
+    const alexaOAuthMode = oauthParams.get('alexa_oauth') === '1';
+    const alexaOAuthClientId = oauthParams.get('client_id') || '';
+    const alexaOAuthRedirectUri = oauthParams.get('redirect_uri') || '';
+    const alexaOAuthState = oauthParams.get('state') || '';
+    const alexaOAuthError = oauthParams.get('error') || '';
     const googleOAuthCookieProbeKey = [
         'apx_google_oauth_cookie_probe',
         googleOAuthClientId,
@@ -112,7 +122,7 @@
     }
 
     function normalizeSignedInUrl() {
-        if (googleOAuthMode) {
+        if (googleOAuthMode || alexaOAuthMode) {
             return;
         }
 
@@ -447,6 +457,122 @@
         }
     }
 
+    // ── Amazon Alexa integration (mirror of the Google Home card) ───────
+    const alexaHomeCard = document.getElementById('alexaHomeCard');
+    const alexaHomeStatus = document.getElementById('alexaHomeStatus');
+    const alexaHomeEntities = document.getElementById('alexaHomeEntities');
+    const alexaBulkToggleBtn = document.getElementById('alexaEntitiesBulkToggle');
+    let alexaEntitiesCache = [];
+
+    function renderAlexaCard(userData, accessEnabled) {
+        if (!alexaHomeCard) {
+            return;
+        }
+        const linked = Boolean(userData.alexa_linked);
+        const show = accessEnabled && linked;
+        alexaHomeCard.classList.toggle('hidden', !show);
+        if (show) {
+            if (alexaHomeStatus) alexaHomeStatus.textContent = 'Linked to Alexa';
+            void loadAlexaEntities(userData);
+        } else {
+            if (alexaHomeStatus) {
+                alexaHomeStatus.textContent = accessEnabled
+                    ? 'Enable the Apex Oasis skill in the Alexa app to manage exposed devices.'
+                    : 'Available after account activation.';
+            }
+            if (alexaHomeEntities) {
+                alexaHomeEntities.innerHTML =
+                    '<p class="detail-copy">Link the Apex Oasis skill in the Alexa app to manage exposed devices.</p>';
+            }
+            if (alexaBulkToggleBtn) alexaBulkToggleBtn.classList.add('hidden');
+        }
+    }
+
+    async function loadAlexaEntities(userData) {
+        if (!alexaHomeEntities || !userData?.portal_session_token) {
+            return;
+        }
+        try {
+            const res = await fetch('/api/account/alexa/entities', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ portal_session_token: userData.portal_session_token })
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || 'Unable to load Alexa devices');
+            }
+            const entities = Array.isArray(data.entities) ? data.entities : [];
+            alexaEntitiesCache = entities;
+            if (entities.length === 0) {
+                alexaHomeEntities.innerHTML =
+                    '<p class="detail-copy">No devices synced yet. Keep the addon online and wait for the next sync.</p>';
+                if (alexaBulkToggleBtn) alexaBulkToggleBtn.classList.add('hidden');
+                return;
+            }
+            alexaHomeEntities.innerHTML = entities
+                .map(
+                    (entity) => `
+                <label class="google-entity-row">
+                    <input type="checkbox" class="alexa-entity-toggle" data-entity-id="${escapeHtml(entity.entity_id)}" ${entity.exposed ? 'checked' : ''}>
+                    <span class="google-entity-name">${escapeHtml(entity.display_name || entity.entity_id)}</span>
+                    <span class="google-entity-meta">${escapeHtml(entity.entity_type || 'switch')} | ${entity.online ? 'online' : 'offline'}</span>
+                </label>`
+                )
+                .join('');
+            if (alexaBulkToggleBtn) alexaBulkToggleBtn.classList.remove('hidden');
+            wireAlexaEntityToggles(userData);
+            wireAlexaBulkToggle(userData);
+        } catch (error) {
+            alexaHomeEntities.innerHTML = `<p class="detail-copy">${escapeHtml(error.message || 'Unable to load Alexa devices right now.')}</p>`;
+        }
+    }
+
+    function wireAlexaEntityToggles(userData) {
+        alexaHomeEntities.querySelectorAll('.alexa-entity-toggle').forEach((input) => {
+            input.addEventListener('change', async () => {
+                const entityId = input.getAttribute('data-entity-id');
+                input.disabled = true;
+                try {
+                    await fetch(`/api/account/alexa/entities/${encodeURIComponent(entityId)}/expose`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            portal_session_token: userData.portal_session_token,
+                            exposed: input.checked
+                        })
+                    });
+                } catch (_e) {
+                    input.checked = !input.checked; // revert on failure
+                } finally {
+                    input.disabled = false;
+                }
+            });
+        });
+    }
+
+    function wireAlexaBulkToggle(userData) {
+        if (!alexaBulkToggleBtn) return;
+        alexaBulkToggleBtn.onclick = async () => {
+            const allExposed = alexaEntitiesCache.every((e) => e.exposed);
+            const target = !allExposed;
+            const updates = alexaEntitiesCache.map((e) => ({ entity_id: e.entity_id, exposed: target }));
+            alexaBulkToggleBtn.disabled = true;
+            try {
+                await fetch('/api/account/alexa/entities/expose-bulk', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ portal_session_token: userData.portal_session_token, updates })
+                });
+                await loadAlexaEntities(userData);
+            } finally {
+                alexaBulkToggleBtn.disabled = false;
+            }
+        };
+        const allExposed = alexaEntitiesCache.length > 0 && alexaEntitiesCache.every((e) => e.exposed);
+        alexaBulkToggleBtn.textContent = allExposed ? 'Hide all' : 'Expose all';
+    }
+
     // Tracks the last fetched trial eligibility so we don't re-query on every
     // poll tick if nothing changed. null = unknown, true/false = known.
     let lastTrialEligibility = null;
@@ -614,6 +740,8 @@
             stopGoogleEntitiesAutoRefresh();
         }
 
+        renderAlexaCard(userData, accessEnabled);
+
         const dashUrl = document.getElementById('dashUrl');
         const dashUrlLabel = document.getElementById('dashUrlLabel');
         if (!subdomainConfigured) {
@@ -660,6 +788,48 @@
 
         startAccountAutoRefresh();
         void appendGoogleOAuthPortalToken(userData);
+        void appendAlexaOAuthPortalToken(userData);
+    }
+
+    async function appendAlexaOAuthPortalToken(userData) {
+        if (alexaOAuthRedirectInFlight) {
+            return;
+        }
+
+        if (!alexaOAuthMode) {
+            return;
+        }
+
+        if (!userData?.portal_session_token) {
+            return;
+        }
+
+        const portalToken = String(userData.portal_session_token || '');
+        if (!isWellFormedPortalToken(portalToken)) {
+            showAlert('Session token is invalid. Please log out and sign in again.');
+            return;
+        }
+
+        if (alexaOAuthError) {
+            showAlert(`Alexa link failed: ${alexaOAuthError}`);
+            return;
+        }
+
+        if (!alexaOAuthClientId || !alexaOAuthRedirectUri) {
+            return;
+        }
+
+        alexaOAuthRedirectInFlight = true;
+        // Alexa's /api/alexa/oauth route reads portal_session_token from the
+        // cookie OR query param. Pass it explicitly to avoid cookie-timing
+        // races right after login. No consent step, no continue endpoint —
+        // the route mints the auth code and 302s straight back to Amazon.
+        const continueUrl = new URL('/api/alexa/oauth', window.location.origin);
+        continueUrl.searchParams.set('client_id', alexaOAuthClientId);
+        continueUrl.searchParams.set('redirect_uri', alexaOAuthRedirectUri);
+        continueUrl.searchParams.set('state', alexaOAuthState);
+        continueUrl.searchParams.set('portal_session_token', portalToken);
+        window.location.assign(continueUrl.toString());
     }
 
     async function appendGoogleOAuthPortalToken(userData) {
@@ -2089,6 +2259,8 @@
 
             if (isGoogleOauthLinkingIntent()) {
                 showAlert('Your session needs refresh. Please sign in again to continue Google linking.', false);
+            } else if (alexaOAuthMode) {
+                showAlert('Your session needs refresh. Please sign in again to continue Alexa linking.', false);
             }
         } else {
             accountRenderFingerprint = buildAccountRenderFingerprint(parsedUser);
@@ -2111,5 +2283,7 @@
         showAlert(googleOAuthConsentMode
             ? 'Sign in to review and approve Google Assistant access.'
             : 'Sign in to continue Google account linking.', false);
+    } else if (alexaOAuthMode && !storedUser) {
+        showAlert('Sign in to continue Alexa account linking.', false);
     }
 })();

@@ -92,6 +92,10 @@ frps.toml
 *.bak
 backups/
 *.sqlite.gz
+# DB backup copies from migrate-down.js / rollback.sh (e.g.
+# database.sqlite.bak.pre-alexa-003, .bak.predown-<ts>) plus WAL/SHM sidecars.
+# These are full copies of the production DB and must never be committed.
+*.sqlite.bak*
 
 # OS-specific files
 .DS_Store
