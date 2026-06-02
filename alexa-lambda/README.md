@@ -70,9 +70,22 @@ ALEXA_CLIENT_SECRET=...
 ALEXA_LWA_CLIENT_ID=...          # LWA security profile (step 2)
 ALEXA_LWA_CLIENT_SECRET=...
 ALEXA_LWA_TOKEN_ENC_KEY=...      # 32-byte key, hex (64 chars) or base64 — REQUIRED
-ALEXA_EVENT_GATEWAY_URL=https://api.amazonalexa.com/v3/events   # default
+ALEXA_EVENT_GATEWAY_URL=https://api.eu.amazonalexa.com/v3/events   # EU skills
+# US skills use https://api.amazonalexa.com/v3/events instead. The host MUST
+# match the skill's region, or proactive ChangeReport/AddOrUpdateReport calls
+# fail. The Lambda region (step 3) must match too.
 ALEXA_REPORT_STATE_ENABLED=1
+ALEXA_FORWARDER_SECRET=...       # OPTIONAL; must equal the Lambda's FORWARDER_SECRET
 ```
+
+> **Forwarder secret (defense in depth).** The Lambda always sends the
+> `X-Alexa-Forwarder-Secret` header. The portal only *enforces* it when
+> `ALEXA_FORWARDER_SECRET` is set in the portal env — then any directive whose
+> header doesn't match (e.g. someone POSTing to `/api/alexa/fulfillment`
+> directly, bypassing the Lambda) is rejected. Leave both unset to disable the
+> check; the per-directive bearer token is the primary auth either way. If you
+> set it, the Lambda's `FORWARDER_SECRET` and the portal's
+> `ALEXA_FORWARDER_SECRET` must be byte-identical.
 
 Generate the encryption key once:
 

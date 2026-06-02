@@ -52,6 +52,26 @@ module.exports = function ({ dbGet, dbRun, config, utils, core, eventGateway, en
         );
     }
 
+    // Defense in depth: when ALEXA_FORWARDER_SECRET is configured, every
+    // directive must arrive with a matching X-Alexa-Forwarder-Secret header
+    // (set by alexa-lambda/index.js). This rejects directives POSTed to the
+    // portal directly, bypassing the Lambda. Skipped entirely when unset so an
+    // un-provisioned deployment is unaffected. Timing-safe to avoid leaking the
+    // secret via response-time analysis.
+    function forwarderSecretOk(req) {
+        const expected = config.ALEXA_FORWARDER_SECRET || '';
+        if (!expected) {
+            return true; // not configured → check disabled
+        }
+        const received = req.get('x-alexa-forwarder-secret') || '';
+        const expectedBuffer = Buffer.from(expected);
+        const receivedBuffer = Buffer.from(received);
+        if (expectedBuffer.length !== receivedBuffer.length) {
+            return false;
+        }
+        return require('crypto').timingSafeEqual(expectedBuffer, receivedBuffer);
+    }
+
     function buildContextProperties(endpointRow) {
         const props = entityMapping.parseAlexaEndpointState(endpointRow);
         return eventGateway.buildProperties(props);
@@ -60,6 +80,10 @@ module.exports = function ({ dbGet, dbRun, config, utils, core, eventGateway, en
     router.post(
         '/api/alexa/fulfillment',
         asyncHandler(async (req, res) => {
+            if (!forwarderSecretOk(req)) {
+                return errorResponse(res, 'INVALID_AUTHORIZATION_CREDENTIAL', 'Invalid forwarder secret');
+            }
+
             const directive = req.body?.directive;
             if (!directive || !directive.header) {
                 return errorResponse(res, 'INVALID_DIRECTIVE', 'Missing directive');
