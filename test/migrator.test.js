@@ -48,10 +48,7 @@ describe('migrator', () => {
         const result = await migrator.runPending();
 
         assert.deepEqual(result.applied, ['001_create_widgets.sql']);
-        const tables = await all(
-            db,
-            `SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`
-        );
+        const tables = await all(db, `SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`);
         const names = tables.map((t) => t.name);
         assert.ok(names.includes('widgets'));
         assert.ok(names.includes('schema_migrations'));
@@ -87,10 +84,7 @@ describe('migrator', () => {
 
     it('skips migrations that are already applied', async () => {
         const dir = makeTempDir();
-        fs.writeFileSync(
-            path.join(dir, '001_create.sql'),
-            `CREATE TABLE foo (id INTEGER);`
-        );
+        fs.writeFileSync(path.join(dir, '001_create.sql'), `CREATE TABLE foo (id INTEGER);`);
 
         const db = makeDb();
         const migrator = createMigrator({ db, migrationsDir: dir });
@@ -119,10 +113,7 @@ describe('migrator', () => {
         await assert.rejects(migrator.runPending());
 
         // `good` table should NOT exist — entire migration rolled back.
-        const tables = await all(
-            db,
-            `SELECT name FROM sqlite_master WHERE type='table'`
-        );
+        const tables = await all(db, `SELECT name FROM sqlite_master WHERE type='table'`);
         const names = tables.map((t) => t.name);
         assert.ok(!names.includes('good'), 'failed migration must be fully rolled back');
 
@@ -149,6 +140,109 @@ describe('migrator', () => {
         assert.deepEqual(
             versions.map((r) => r.version),
             [1, 2, 10]
+        );
+
+        db.close();
+    });
+
+    it('reverts a migration via its @DOWN, then re-applies it (down/up round-trip)', async () => {
+        const dir = makeTempDir();
+        fs.writeFileSync(
+            path.join(dir, '001_gadgets.sql'),
+            `-- @UP
+             CREATE TABLE gadgets (id INTEGER PRIMARY KEY, label TEXT);
+             -- @DOWN
+             DROP TABLE IF EXISTS gadgets;`
+        );
+
+        const db = makeDb();
+        const migrator = createMigrator({ db, migrationsDir: dir });
+        const [migration] = migrator.listMigrationFiles();
+
+        // UP
+        await migrator.runPending();
+        let names = (await all(db, `SELECT name FROM sqlite_master WHERE type='table'`)).map((t) => t.name);
+        assert.ok(names.includes('gadgets'), 'table should exist after apply');
+        assert.deepEqual(
+            (await all(db, `SELECT version FROM schema_migrations`)).map((r) => r.version),
+            [1]
+        );
+
+        // DOWN — table gone AND tracking row removed, atomically.
+        await migrator.revertMigration(migration);
+        names = (await all(db, `SELECT name FROM sqlite_master WHERE type='table'`)).map((t) => t.name);
+        assert.ok(!names.includes('gadgets'), 'table should be dropped after revert');
+        assert.equal(
+            (await all(db, `SELECT version FROM schema_migrations`)).length,
+            0,
+            'schema_migrations row must be removed on revert'
+        );
+
+        // UP again — runPending treats it as pending and re-applies cleanly.
+        const reapplied = await migrator.runPending();
+        assert.deepEqual(reapplied.applied, ['001_gadgets.sql']);
+        names = (await all(db, `SELECT name FROM sqlite_master WHERE type='table'`)).map((t) => t.name);
+        assert.ok(names.includes('gadgets'), 'table should be restored after re-apply');
+
+        db.close();
+    });
+
+    it('refuses to revert an irreversible migration (no @DOWN) without touching the DB', async () => {
+        const dir = makeTempDir();
+        // No @UP/@DOWN markers => entire body is "up", down is null => irreversible.
+        fs.writeFileSync(path.join(dir, '001_permanent.sql'), `CREATE TABLE permanent (id INTEGER PRIMARY KEY);`);
+
+        const db = makeDb();
+        const migrator = createMigrator({ db, migrationsDir: dir });
+        const [migration] = migrator.listMigrationFiles();
+
+        await migrator.runPending();
+
+        await assert.rejects(
+            migrator.revertMigration(migration),
+            (err) => err.irreversible === true && /irreversible/.test(err.message),
+            'revert of a no-@DOWN migration must reject with err.irreversible'
+        );
+
+        // DB untouched: table still present, tracking row intact.
+        const names = (await all(db, `SELECT name FROM sqlite_master WHERE type='table'`)).map((t) => t.name);
+        assert.ok(names.includes('permanent'), 'table must survive a refused revert');
+        assert.deepEqual(
+            (await all(db, `SELECT version FROM schema_migrations`)).map((r) => r.version),
+            [1],
+            'tracking row must survive a refused revert'
+        );
+
+        db.close();
+    });
+
+    it('rolls back the whole revert if the @DOWN section fails mid-way', async () => {
+        const dir = makeTempDir();
+        fs.writeFileSync(
+            path.join(dir, '001_keepme.sql'),
+            `-- @UP
+             CREATE TABLE keepme (id INTEGER PRIMARY KEY);
+             -- @DOWN
+             DROP TABLE keepme;
+             INSERT INTO nonexistent VALUES (1);` // fails AFTER the drop
+        );
+
+        const db = makeDb();
+        const migrator = createMigrator({ db, migrationsDir: dir });
+        const [migration] = migrator.listMigrationFiles();
+
+        await migrator.runPending();
+        await assert.rejects(migrator.revertMigration(migration));
+
+        // The DROP must have been rolled back along with the failing INSERT.
+        const names = (await all(db, `SELECT name FROM sqlite_master WHERE type='table'`)).map((t) => t.name);
+        assert.ok(names.includes('keepme'), 'failed revert must restore the dropped table');
+
+        // And the migration must still count as applied.
+        assert.deepEqual(
+            (await all(db, `SELECT version FROM schema_migrations`)).map((r) => r.version),
+            [1],
+            'failed revert must leave the tracking row in place'
         );
 
         db.close();
