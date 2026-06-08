@@ -12,9 +12,11 @@
  * Configure via Lambda environment variables:
  *   FULFILLMENT_URL   e.g. https://oasis.apexinfosys.in/api/alexa/fulfillment
  *   FORWARDER_SECRET  shared secret echoed in the X-Alexa-Forwarder-Secret
- *                     header so the portal can reject directives that didn't
- *                     come through this Lambda (defense in depth — the bearer
- *                     token is still the primary auth).
+ *                     header. The portal rejects mismatching directives ONLY
+ *                     when its ALEXA_FORWARDER_SECRET env is also set (must be
+ *                     byte-identical to this value); otherwise the header is
+ *                     ignored. Defense in depth — the bearer token in each
+ *                     directive is the primary auth either way.
  *
  * Runtime: nodejs18.x or later (uses global fetch).
  */
