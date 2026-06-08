@@ -22,6 +22,7 @@
     const googleHomeCard = document.getElementById('googleHomeCard');
     const googleHomeStatus = document.getElementById('googleHomeStatus');
     const googleHomeEntities = document.getElementById('googleHomeEntities');
+    const googleUnlinkBtn = document.getElementById('googleUnlinkBtn');
     const googleConsentCard = document.getElementById('googleConsentCard');
     const googleConsentMeta = document.getElementById('googleConsentMeta');
     const googleConsentApproveBtn = document.getElementById('googleConsentApproveBtn');
@@ -344,6 +345,8 @@
             userData.email_verified ? '1' : '0',
             userData.google_home_enabled ? '1' : '0',
             userData.google_home_linked ? '1' : '0',
+            userData.alexa_enabled ? '1' : '0',
+            userData.alexa_linked ? '1' : '0',
             userData.trial_ends_at || '',
             userData.trial_approved_at || '',
             userData.activated_at || '',
@@ -494,6 +497,37 @@
         }
     }
 
+    function wireGoogleUnlink(userData) {
+        if (!googleUnlinkBtn) return;
+        googleUnlinkBtn.onclick = async () => {
+            if (!userData?.portal_session_token) return;
+            googleUnlinkBtn.disabled = true;
+            try {
+                const res = await fetch('/api/account/google-home/enable', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ portal_session_token: userData.portal_session_token, enabled: false })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data.error || 'Unable to unlink Google');
+                }
+                // Server returns a fresh portal session + cleared google flags.
+                const merged = {
+                    ...(data.data || {}),
+                    portal_session_token: data.data?.portal_session_token || userData.portal_session_token
+                };
+                localStorage.setItem('apex_user', JSON.stringify(merged));
+                renderDashboard(merged, { scroll: false });
+                showAlert('Google unlinked. Your exposed devices are removed from the Google Home app automatically; you can remove the Apex Connect+ link entry there whenever you like.', false);
+            } catch (error) {
+                showAlert(error.message || 'Unable to unlink Google right now.');
+            } finally {
+                googleUnlinkBtn.disabled = false;
+            }
+        };
+    }
+
     function wireAlexaUnlink(userData) {
         if (!alexaUnlinkBtn) return;
         alexaUnlinkBtn.onclick = async () => {
@@ -516,7 +550,7 @@
                 };
                 localStorage.setItem('apex_user', JSON.stringify(merged));
                 renderDashboard(merged, { scroll: false });
-                showAlert('Alexa unlinked. Disable the skill in the Alexa app to finish removing it.', false);
+                showAlert('Alexa unlinked. Your devices stop responding right away, and the skill finishes disabling automatically within the hour.', false);
             } catch (error) {
                 showAlert(error.message || 'Unable to unlink Alexa right now.');
             } finally {
@@ -753,6 +787,10 @@
                 if (googleHomeStatus) {
                     googleHomeStatus.textContent = 'Linked to Google';
                 }
+                if (googleUnlinkBtn) {
+                    googleUnlinkBtn.classList.remove('hidden');
+                    wireGoogleUnlink(userData);
+                }
 
                 const nextRefreshKey = getGoogleEntitiesRefreshKey(userData);
                 if (googleEntitiesRefreshKey !== nextRefreshKey || googleEntitiesLastFingerprint === null) {
@@ -772,6 +810,7 @@
                 googleEntitiesLastFingerprint = null;
                 stopGoogleEntitiesAutoRefresh();
                 if (bulkToggleBtn) bulkToggleBtn.classList.add('hidden');
+                if (googleUnlinkBtn) googleUnlinkBtn.classList.add('hidden');
             }
         } else {
             stopGoogleEntitiesAutoRefresh();

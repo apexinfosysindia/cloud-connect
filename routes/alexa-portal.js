@@ -19,6 +19,19 @@ module.exports = function ({ dbGet, dbRun, utils, auth, core, eventGateway }) {
             const enable = req.body?.enabled !== false;
 
             if (!enable) {
+                // Drop the endpoints from Alexa BEFORE cleanup wipes the LWA token.
+                // AddOrUpdateReport is additive-only, so without an explicit
+                // DeleteReport the device tiles linger (dead) in the Alexa app.
+                // Best-effort and awaited so it runs while the link is still alive.
+                try {
+                    const rows = await core.getAlexaEndpointsForUser(req.portalUser.id, { includeDisabled: true });
+                    const endpointIds = (rows || []).map((r) => r.entity_id).filter(Boolean);
+                    if (endpointIds.length > 0) {
+                        await eventGateway.deleteEndpointsNow(req.portalUser.id, endpointIds, 'portal_unlink');
+                    }
+                } catch (error) {
+                    console.warn('ALEXA UNLINK DELETE_REPORT skipped:', error?.message);
+                }
                 await core.cleanupAlexaAuthDataForUser(req.portalUser.id);
             }
 

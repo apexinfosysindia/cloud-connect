@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 
-module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, email, billing, device }) {
+module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, email, billing, device, eventGateway }) {
     const router = express.Router();
     const { asyncHandler } = utils;
 
@@ -412,6 +412,15 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, e
             if (auth.portalTokenNeedsRotation(session)) {
                 portalSessionToken = auth.createPortalSessionToken(user.email, user.session_epoch);
                 auth.setPortalSessionCookie(res, portalSessionToken);
+            }
+
+            // Liveness probe: Amazon sends no directive when a customer disables
+            // the skill in the Alexa app — the only signal is a 403 on a proactive
+            // POST. Fire a throttled (≤1/min/user), fire-and-forget AddOrUpdateReport
+            // so the dashboard learns about an app-side disable and flips
+            // alexa_linked → 0 within a refresh cycle. Never blocks this response.
+            if (user.alexa_linked && user.alexa_enabled && eventGateway?.probeAlexaLinkLivenessThrottled) {
+                eventGateway.probeAlexaLinkLivenessThrottled(user.id);
             }
 
             return res.status(200).json({

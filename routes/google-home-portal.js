@@ -12,6 +12,16 @@ module.exports = function ({ dbGet, dbRun, utils, auth, googleCore, homegraph })
 
             if (!enable) {
                 await googleCore.cleanupGoogleAuthDataForUser(req.portalUser.id);
+                // Ask Google to re-sync now that the account is unlinked. requestSync
+                // authenticates via our service account (not the user's revoked
+                // tokens), and our SYNC handler returns an empty device list once
+                // google_home_enabled is 0 — so Google drops the stale devices from
+                // the Home app. Use the DIRECT sender, not scheduleGoogleRequestSyncForUser,
+                // which self-skips when the user is no longer linked/enabled.
+                // Fire-and-forget: never block or fail the unlink on this.
+                Promise.resolve()
+                    .then(() => homegraph.sendGoogleRequestSync(String(req.portalUser.id)))
+                    .catch((error) => console.warn('GOOGLE UNLINK requestSync skipped:', error?.message));
             }
 
             await dbRun(

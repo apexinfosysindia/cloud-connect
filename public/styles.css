@@ -1563,6 +1563,13 @@ code {
     margin: 0;
 }
 
+.card-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
 .google-pin-section .detail-label {
     display: block;
     margin-bottom: 4px;
