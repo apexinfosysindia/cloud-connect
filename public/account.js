@@ -822,13 +822,16 @@
         alexaOAuthRedirectInFlight = true;
         // Alexa's /api/alexa/oauth route reads portal_session_token from the
         // cookie OR query param. Pass it explicitly to avoid cookie-timing
-        // races right after login. No consent step, no continue endpoint —
-        // the route mints the auth code and 302s straight back to Amazon.
+        // races right after login. Alexa has no separate consent screen, so we
+        // pass approved=1 to satisfy the route's consent gate; it then mints the
+        // auth code and 302s straight back to Amazon (no consent bounce, which
+        // would otherwise drop client_id/redirect_uri and dead-end on the dashboard).
         const continueUrl = new URL('/api/alexa/oauth', window.location.origin);
         continueUrl.searchParams.set('client_id', alexaOAuthClientId);
         continueUrl.searchParams.set('redirect_uri', alexaOAuthRedirectUri);
         continueUrl.searchParams.set('state', alexaOAuthState);
         continueUrl.searchParams.set('portal_session_token', portalToken);
+        continueUrl.searchParams.set('approved', '1');
         window.location.assign(continueUrl.toString());
     }
 
