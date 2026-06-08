@@ -25,6 +25,11 @@ GOOGLE_WARNED_STATE_FETCH=0
 GOOGLE_WARNED_EMPTY_ENTITY_SYNC=0
 GOOGLE_ENTITY_SYNC_PAGE_LIMIT=300
 GOOGLE_ENTITY_SYNC_BATCH_SIZE=120
+ALEXA_ENTITY_SYNC_INTERVAL=5
+ALEXA_COMMAND_SYNC_INTERVAL=1
+ALEXA_SYNC_PID=""
+ALEXA_WARNED_EMPTY_ENTITY_SYNC=0
+ALEXA_ENTITY_SYNC_BATCH_SIZE=120
 CLOUD_POST_STATUS=""
 CLOUD_POST_BODY=""
 
@@ -126,7 +131,7 @@ ha_api_get() {
 
     if [ -z "${SUPERVISOR_TOKEN:-}" ]; then
         if [ "$GOOGLE_WARNED_NO_SUPERVISOR_TOKEN" -eq 0 ]; then
-            bashio::log.warning "Google sync disabled: SUPERVISOR_TOKEN unavailable. Ensure addon has required API permissions."
+            bashio::log.warning "Entity sync disabled: SUPERVISOR_TOKEN unavailable. Ensure addon has required API permissions."
             GOOGLE_WARNED_NO_SUPERVISOR_TOKEN=1
         fi
         return
@@ -145,7 +150,7 @@ ha_api_post() {
 
     if [ -z "${SUPERVISOR_TOKEN:-}" ]; then
         if [ "$GOOGLE_WARNED_NO_SUPERVISOR_TOKEN" -eq 0 ]; then
-            bashio::log.warning "Google command execution disabled: SUPERVISOR_TOKEN unavailable."
+            bashio::log.warning "Command execution disabled: SUPERVISOR_TOKEN unavailable."
             GOOGLE_WARNED_NO_SUPERVISOR_TOKEN=1
         fi
         return
@@ -595,6 +600,231 @@ except Exception:
     esac
 }
 
+# Fetch entity+device+area registries (manufacturer/model + room hints) via the
+# Supervisor WebSocket API. Echoes a JSON object {device_info:{}, areas:{}}.
+# Shared helper used by the Alexa entity sync; mirrors the inline block in
+# sync_google_entities so the Google path stays byte-for-byte unchanged.
+fetch_ha_registry_maps() {
+    if [ -z "${SUPERVISOR_TOKEN:-}" ]; then
+        printf '%s' '{"device_info":{},"areas":{}}'
+        return
+    fi
+    python3 -c "
+import json, os, sys
+try:
+    from websocket import create_connection
+    token = os.environ.get('SUPERVISOR_TOKEN', '')
+    ws = create_connection('ws://supervisor/core/websocket', timeout=8)
+    msg = json.loads(ws.recv())
+    if msg.get('type') == 'auth_required':
+        ws.send(json.dumps({'type': 'auth', 'access_token': token}))
+    msg = json.loads(ws.recv())
+    if msg.get('type') != 'auth_ok':
+        ws.close()
+        print(json.dumps({'device_info': {}, 'areas': {}}))
+        sys.exit(0)
+    ws.send(json.dumps({'id': 1, 'type': 'config/entity_registry/list'}))
+    ent_resp = json.loads(ws.recv())
+    ws.send(json.dumps({'id': 2, 'type': 'config/device_registry/list'}))
+    dev_resp = json.loads(ws.recv())
+    ws.send(json.dumps({'id': 3, 'type': 'config/area_registry/list'}))
+    area_resp = json.loads(ws.recv())
+    ws.close()
+    entities = ent_resp.get('result', []) if ent_resp.get('success') else []
+    devices = dev_resp.get('result', []) if dev_resp.get('success') else []
+    areas = area_resp.get('result', []) if area_resp.get('success') else []
+    area_name_map = {}
+    for a in areas:
+        aid = a.get('area_id', '')
+        aname = a.get('name', '')
+        if aid and aname:
+            area_name_map[aid] = aname
+    dev_map = {}
+    for d in devices:
+        did = d.get('id', '')
+        if did:
+            dev_map[did] = {
+                'manufacturer': d.get('manufacturer') or None,
+                'model': d.get('model') or None,
+                'sw_version': d.get('sw_version') or None,
+                'area_id': d.get('area_id') or None
+            }
+    dev_result = {}
+    area_result = {}
+    for e in entities:
+        eid = e.get('entity_id', '')
+        did = e.get('device_id', '')
+        if eid and did and did in dev_map:
+            dev_result[eid] = {
+                'manufacturer': dev_map[did]['manufacturer'],
+                'model': dev_map[did]['model'],
+                'sw_version': dev_map[did]['sw_version']
+            }
+        if eid:
+            ent_area = e.get('area_id') or None
+            dev_area = dev_map.get(did, {}).get('area_id') if did else None
+            resolved_area = ent_area or dev_area
+            if resolved_area and resolved_area in area_name_map:
+                area_result[eid] = area_name_map[resolved_area]
+    print(json.dumps({'device_info': dev_result, 'areas': area_result}))
+except Exception:
+    print(json.dumps({'device_info': {}, 'areas': {}}))
+" 2>/dev/null || printf '%s' '{"device_info":{},"areas":{}}'
+}
+
+# Alexa entity sync — mirror of sync_google_entities, restricted to the 5 entity
+# types the Alexa Smart Home portal accepts (light, switch, outlet, fan,
+# input_boolean). Posts to /api/internal/devices/alexa/endpoints. Same two-phase
+# (batched delta + full_snapshot commit) protocol and status ladder.
+sync_alexa_entities() {
+    if [ "$FLEET_ACTIVE" -ne 1 ] || [ -z "$DEVICE_TOKEN" ]; then
+        return
+    fi
+
+    local states_json
+    states_json=$(ha_api_get "/states")
+    if [ -z "$states_json" ]; then
+        return
+    fi
+
+    local registry_maps device_info_map='{}' area_map='{}'
+    registry_maps=$(fetch_ha_registry_maps)
+    device_info_map=$(printf '%s' "$registry_maps" | jq -c '.device_info // {}' 2>/dev/null) || device_info_map='{}'
+    area_map=$(printf '%s' "$registry_maps" | jq -c '.areas // {}' 2>/dev/null) || area_map='{}'
+    if ! printf '%s' "$device_info_map" | jq -e 'type == "object"' >/dev/null 2>&1; then
+        device_info_map='{}'
+    fi
+    if ! printf '%s' "$area_map" | jq -e 'type == "object"' >/dev/null 2>&1; then
+        area_map='{}'
+    fi
+
+    local entities_json='[]'
+    entities_json=$(printf '%s' "$states_json" | jq -c --argjson devinfo "$device_info_map" --argjson areamap "$area_map" '
+            map(select(.entity_id | test("^(light|fan|switch|input_boolean)\\.")))
+            | map(
+                . as $s
+                | (($s.state // "") | tostring | ascii_downcase) as $state_text
+                | ($s.attributes.supported_features // 0) as $sf
+                | ($s.attributes.device_class // null) as $dc
+                | {
+                    entity_id: $s.entity_id,
+                    display_name: ($s.attributes.friendly_name // $s.entity_id),
+                    room_hint: ($areamap[$s.entity_id] // ""),
+                    online: ($state_text != "unavailable"),
+                    entity_type: (
+                        if ($s.entity_id | startswith("light.")) then "light"
+                        elif ($s.entity_id | startswith("fan.")) then "fan"
+                        elif ($s.entity_id | startswith("input_boolean.")) then "input_boolean"
+                        elif (($dc // "") == "outlet") then "outlet"
+                        else "switch"
+                        end
+                    ),
+                    state: (
+                        if ($s.entity_id | startswith("light.")) then {
+                            on: ($s.state == "on"),
+                            brightness: (((($s.attributes.brightness | tonumber?) // 0) * 100 / 255) | floor),
+                            color_mode: ($s.attributes.color_mode // null),
+                            color_temp_kelvin: ($s.attributes.color_temp_kelvin // null),
+                            hs_color: ($s.attributes.hs_color // null),
+                            rgb_color: ($s.attributes.rgb_color // null),
+                            supported_features: $sf,
+                            supported_color_modes: ($s.attributes.supported_color_modes // []),
+                            min_color_temp_kelvin: ($s.attributes.min_color_temp_kelvin // null),
+                            max_color_temp_kelvin: ($s.attributes.max_color_temp_kelvin // null)
+                        }
+                        elif ($s.entity_id | startswith("fan.")) then {
+                            on: ($s.state == "on"),
+                            percentage: (($s.attributes.percentage | tonumber?) // 0),
+                            supported_features: $sf
+                        }
+                        else {
+                            on: ($s.state == "on")
+                        }
+                        end
+                    ),
+                    manufacturer: (($devinfo[$s.entity_id].manufacturer // null) | if . == "" then null else . end),
+                    model: (($devinfo[$s.entity_id].model // null) | if . == "" then null else . end)
+                }
+            )
+        ' 2>/tmp/alexa_entity_jq_err || { bashio::log.warning "Alexa entity jq pipeline failed: $(cat /tmp/alexa_entity_jq_err 2>/dev/null | head -1)"; printf '[]'; })
+
+    local entities_count
+    entities_count=$(printf '%s' "$entities_json" | jq -r 'length' 2>/dev/null || printf '0')
+    if [ "$entities_count" -eq 0 ]; then
+        if [ "$ALEXA_WARNED_EMPTY_ENTITY_SYNC" -eq 0 ]; then
+            bashio::log.warning "Alexa entity sync produced zero entities (no light/switch/fan/input_boolean exposed)."
+            ALEXA_WARNED_EMPTY_ENTITY_SYNC=1
+        fi
+        return
+    else
+        ALEXA_WARNED_EMPTY_ENTITY_SYNC=0
+    fi
+
+    local all_entity_ids_json='[]'
+    all_entity_ids_json=$(printf '%s' "$entities_json" | jq -c 'map(.entity_id)' 2>/dev/null || printf '[]')
+
+    local offset=0
+    local chunk='[]'
+    local payload
+    while true; do
+        chunk=$(printf '%s' "$entities_json" | jq -c --argjson offset "$offset" --argjson limit "$ALEXA_ENTITY_SYNC_BATCH_SIZE" '.[$offset:($offset + $limit)]' 2>/dev/null || printf '[]')
+        if [ -z "$chunk" ] || [ "$chunk" = "[]" ]; then
+            break
+        fi
+
+        payload=$(jq -n --argjson entities "$chunk" '{entities: $entities, full_snapshot: false}')
+        cloud_post_capture "/api/internal/devices/alexa/endpoints" "$payload" "$DEVICE_TOKEN"
+
+        case "$CLOUD_POST_STATUS" in
+            2??)
+                ;;
+            502|503|504|000)
+                bashio::log.warning "Alexa entity sync batch got transient status=${CLOUD_POST_STATUS}, retrying in 3s..."
+                sleep 3
+                cloud_post_capture "/api/internal/devices/alexa/endpoints" "$payload" "$DEVICE_TOKEN"
+                case "$CLOUD_POST_STATUS" in
+                    2??)
+                        ;;
+                    *)
+                        bashio::log.warning "Alexa entity sync batch retry failed with status=${CLOUD_POST_STATUS} body=${CLOUD_POST_BODY}"
+                        return
+                        ;;
+                esac
+                ;;
+            *)
+                bashio::log.warning "Alexa entity sync batch failed with status=${CLOUD_POST_STATUS} body=${CLOUD_POST_BODY}"
+                return
+                ;;
+        esac
+
+        offset=$((offset + ALEXA_ENTITY_SYNC_BATCH_SIZE))
+    done
+
+    payload=$(jq -n --argjson entities '[]' --argjson snapshot_entity_ids "$all_entity_ids_json" '{entities: $entities, full_snapshot: true, snapshot_entity_ids: $snapshot_entity_ids}')
+    cloud_post_capture "/api/internal/devices/alexa/endpoints" "$payload" "$DEVICE_TOKEN"
+    case "$CLOUD_POST_STATUS" in
+        2??)
+            ;;
+        502|503|504|000)
+            bashio::log.warning "Alexa entity sync snapshot commit got transient status=${CLOUD_POST_STATUS}, retrying in 3s..."
+            sleep 3
+            cloud_post_capture "/api/internal/devices/alexa/endpoints" "$payload" "$DEVICE_TOKEN"
+            case "$CLOUD_POST_STATUS" in
+                2??)
+                    ;;
+                *)
+                    bashio::log.warning "Alexa entity sync snapshot commit retry failed with status=${CLOUD_POST_STATUS} body=${CLOUD_POST_BODY}"
+                    return
+                    ;;
+            esac
+            ;;
+        *)
+            bashio::log.warning "Alexa entity sync snapshot commit failed with status=${CLOUD_POST_STATUS} body=${CLOUD_POST_BODY}"
+            return
+            ;;
+    esac
+}
+
 execute_google_command() {
     local command_json="$1"
     local command_id
@@ -1016,6 +1246,94 @@ except Exception:
     cloud_post "/api/internal/devices/google-home/commands/${command_id}/result" "$result_payload" "$DEVICE_TOKEN" >/dev/null 2>/dev/null || true
 }
 
+# Execute one Alexa control command. Alexa's action vocabulary (from the portal's
+# translateControlDirective) is a small subset: turn_on, turn_off, set_brightness,
+# set_color, set_color_temp. Results are reported to the Alexa result endpoint.
+execute_alexa_command() {
+    local command_json="$1"
+    local command_id entity_id action payload_json
+    local success=true
+    local error_msg=''
+    local resulting_state='{}'
+
+    command_id=$(printf '%s' "$command_json" | jq -r '.id // 0' 2>/dev/null) || command_id=0
+    entity_id=$(printf '%s' "$command_json" | jq -r '.entity_id // empty' 2>/dev/null) || entity_id=''
+    action=$(printf '%s' "$command_json" | jq -r '.action // empty' 2>/dev/null) || action=''
+    payload_json=$(printf '%s' "$command_json" | jq -c '.payload // {}' 2>/dev/null) || payload_json='{}'
+
+    case "$command_id" in
+        ''|*[!0-9]*) command_id=0 ;;
+    esac
+
+    if [ -z "$entity_id" ] || [ -z "$action" ] || [ "$command_id" -le 0 ]; then
+        return
+    fi
+
+    local domain
+    domain=${entity_id%%.*}
+
+    if [ "$action" = "turn_on" ]; then
+        ha_api_post "/services/${domain}/turn_on" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        resulting_state='{"on":true}'
+    elif [ "$action" = "turn_off" ]; then
+        ha_api_post "/services/${domain}/turn_off" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        resulting_state='{"on":false}'
+    elif [ "$action" = "set_brightness" ]; then
+        local brightness_percent brightness_255
+        brightness_percent=$(printf '%s' "$payload_json" | jq -r '.brightness // 0')
+        brightness_255=$(printf '%s' "$brightness_percent" | awk '{v=int($1*255/100); if (v<0) v=0; if (v>255) v=255; print v}')
+        ha_api_post "/services/light/turn_on" "$(jq -n --arg entity_id "$entity_id" --argjson brightness "$brightness_255" '{entity_id: $entity_id, brightness: $brightness}')" >/dev/null || success=false
+        resulting_state=$(jq -n --argjson brightness "$brightness_percent" '{on: true, brightness: $brightness}')
+    elif [ "$action" = "set_color" ]; then
+        local hue saturation
+        hue=$(printf '%s' "$payload_json" | jq -r '.hs_color[0] // 0')
+        saturation=$(printf '%s' "$payload_json" | jq -r '.hs_color[1] // 100')
+        ha_api_post "/services/light/turn_on" "$(jq -n --arg entity_id "$entity_id" --argjson hue "$hue" --argjson sat "$saturation" '{entity_id: $entity_id, hs_color: [$hue, $sat]}')" >/dev/null || success=false
+        resulting_state=$(jq -n --argjson h "$hue" --argjson s "$saturation" '{on: true, hs_color: [$h, $s]}')
+    elif [ "$action" = "set_color_temp" ]; then
+        local color_temp_kelvin
+        color_temp_kelvin=$(printf '%s' "$payload_json" | jq -r '.color_temp_kelvin // 3000')
+        ha_api_post "/services/light/turn_on" "$(jq -n --arg entity_id "$entity_id" --argjson kelvin "$color_temp_kelvin" '{entity_id: $entity_id, color_temp_kelvin: $kelvin}')" >/dev/null || success=false
+        resulting_state=$(jq -n --argjson kelvin "$color_temp_kelvin" '{on: true, color_temp_kelvin: $kelvin}')
+    else
+        success=false
+        error_msg="Unsupported action ${action}"
+    fi
+
+    if [ "$success" = "false" ] && [ -z "$error_msg" ]; then
+        error_msg="Failed to apply command"
+    fi
+
+    local result_payload
+    if ! printf '%s' "$resulting_state" | jq -e '.' >/dev/null 2>&1; then
+        resulting_state='{}'
+    fi
+    result_payload=$(jq -n \
+        --argjson success "$success" \
+        --arg error "$error_msg" \
+        --argjson state "$resulting_state" \
+        '{success: $success, error: ($error | if . == "" then null else . end), state: $state}' 2>/dev/null) || result_payload='{"success":false,"error":"result_payload_build_failed","state":{}}'
+
+    cloud_post "/api/internal/devices/alexa/commands/${command_id}/result" "$result_payload" "$DEVICE_TOKEN" >/dev/null 2>/dev/null || true
+}
+
+sync_alexa_commands() {
+    if [ "$FLEET_ACTIVE" -ne 1 ] || [ -z "$DEVICE_TOKEN" ]; then
+        return
+    fi
+
+    local response
+    response=$(cloud_post "/api/internal/devices/alexa/commands" '{}' "$DEVICE_TOKEN")
+    if [ -z "$response" ]; then
+        return
+    fi
+
+    while IFS= read -r command_item; do
+        [ -z "$command_item" ] && continue
+        execute_alexa_command "$command_item"
+    done < <(printf '%s' "$response" | jq -c '.commands[]?')
+}
+
 sync_google_commands() {
     if [ "$FLEET_ACTIVE" -ne 1 ] || [ -z "$DEVICE_TOKEN" ]; then
         return
@@ -1094,6 +1412,43 @@ start_google_sync_loop() {
     ) &
 
     GOOGLE_SYNC_PID=$!
+}
+
+start_alexa_sync_loop() {
+    if [ "$FLEET_ACTIVE" -ne 1 ] || [ -z "$DEVICE_TOKEN" ]; then
+        return
+    fi
+
+    (
+        # Disable set -e inside the sync loop: individual sync/command failures must
+        # NOT kill the loop (mirrors the Google sync loop rationale). Runs in its own
+        # subshell so an Alexa-side failure cannot affect Google sync or heartbeat.
+        set +e
+
+        local entity_tick=0
+        local entity_interval="$ALEXA_ENTITY_SYNC_INTERVAL"
+        if [ "$entity_interval" -lt 1 ]; then
+            entity_interval=1
+        fi
+
+        while true; do
+            if [ "$entity_tick" -le 0 ]; then
+                sync_alexa_entities || bashio::log.warning "Alexa entity sync iteration failed (non-fatal, will retry)"
+                entity_tick="$entity_interval"
+            fi
+
+            sync_alexa_commands || bashio::log.warning "Alexa command sync iteration failed (non-fatal, will retry)"
+
+            sleep "$ALEXA_COMMAND_SYNC_INTERVAL"
+
+            entity_tick=$((entity_tick - ALEXA_COMMAND_SYNC_INTERVAL))
+            if [ "$entity_tick" -lt 0 ]; then
+                entity_tick=0
+            fi
+        done
+    ) &
+
+    ALEXA_SYNC_PID=$!
 }
 
 save_device_token() {
@@ -1310,6 +1665,11 @@ cleanup() {
         wait "$GOOGLE_SYNC_PID" 2>/dev/null || true
     fi
 
+    if [ -n "$ALEXA_SYNC_PID" ]; then
+        kill "$ALEXA_SYNC_PID" 2>/dev/null || true
+        wait "$ALEXA_SYNC_PID" 2>/dev/null || true
+    fi
+
     if [ -n "$HEARTBEAT_PID" ]; then
         kill "$HEARTBEAT_PID" 2>/dev/null || true
         wait "$HEARTBEAT_PID" 2>/dev/null || true
@@ -1444,8 +1804,12 @@ if [ "$FLEET_ACTIVE" -eq 1 ] && [ -n "$DEVICE_TOKEN" ]; then
         sync_google_entities || bashio::log.warning "Initial entity sync retry also failed (non-fatal)"
     fi
     sync_google_commands || true
+    # Alexa initial sync (portal no-ops users who haven't linked Alexa)
+    sync_alexa_entities || bashio::log.warning "Initial Alexa entity sync failed (non-fatal, sync loop will retry)"
+    sync_alexa_commands || true
     start_heartbeat_loop
     start_google_sync_loop
+    start_alexa_sync_loop
 fi
 
 bashio::log.info "Configuration generated. Connecting to cloud"
