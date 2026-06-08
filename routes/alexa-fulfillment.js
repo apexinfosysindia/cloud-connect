@@ -206,7 +206,7 @@ module.exports = function ({ dbGet, dbRun, config, utils, core, eventGateway, en
                     user.id,
                     utils.sanitizeEntityId(endpointId)
                 ]);
-                if (!row) {
+                if (!row || !row.exposed) {
                     return errorResponse(res, 'NO_SUCH_ENDPOINT', 'Unknown endpoint', correlationToken, endpointId);
                 }
                 return res.status(200).json({
@@ -232,7 +232,7 @@ module.exports = function ({ dbGet, dbRun, config, utils, core, eventGateway, en
                     user.id,
                     utils.sanitizeEntityId(endpointId)
                 ]);
-                if (!row) {
+                if (!row || !row.exposed) {
                     return errorResponse(res, 'NO_SUCH_ENDPOINT', 'Unknown endpoint', correlationToken, endpointId);
                 }
 

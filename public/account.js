@@ -462,6 +462,7 @@
     const alexaHomeStatus = document.getElementById('alexaHomeStatus');
     const alexaHomeEntities = document.getElementById('alexaHomeEntities');
     const alexaBulkToggleBtn = document.getElementById('alexaEntitiesBulkToggle');
+    const alexaUnlinkBtn = document.getElementById('alexaUnlinkBtn');
     let alexaEntitiesCache = [];
 
     function renderAlexaCard(userData, accessEnabled) {
@@ -473,6 +474,10 @@
         alexaHomeCard.classList.toggle('hidden', !show);
         if (show) {
             if (alexaHomeStatus) alexaHomeStatus.textContent = 'Linked to Alexa';
+            if (alexaUnlinkBtn) {
+                alexaUnlinkBtn.classList.remove('hidden');
+                wireAlexaUnlink(userData);
+            }
             void loadAlexaEntities(userData);
         } else {
             if (alexaHomeStatus) {
@@ -485,7 +490,39 @@
                     '<p class="detail-copy">Link the Apex Oasis skill in the Alexa app to manage exposed devices.</p>';
             }
             if (alexaBulkToggleBtn) alexaBulkToggleBtn.classList.add('hidden');
+            if (alexaUnlinkBtn) alexaUnlinkBtn.classList.add('hidden');
         }
+    }
+
+    function wireAlexaUnlink(userData) {
+        if (!alexaUnlinkBtn) return;
+        alexaUnlinkBtn.onclick = async () => {
+            if (!userData?.portal_session_token) return;
+            alexaUnlinkBtn.disabled = true;
+            try {
+                const res = await fetch('/api/account/alexa/enable', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ portal_session_token: userData.portal_session_token, enabled: false })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data.error || 'Unable to unlink Alexa');
+                }
+                // Server returns a fresh portal session + cleared alexa flags.
+                const merged = {
+                    ...(data.data || {}),
+                    portal_session_token: data.data?.portal_session_token || userData.portal_session_token
+                };
+                localStorage.setItem('apex_user', JSON.stringify(merged));
+                renderDashboard(merged, { scroll: false });
+                showAlert('Alexa unlinked. Disable the skill in the Alexa app to finish removing it.', false);
+            } catch (error) {
+                showAlert(error.message || 'Unable to unlink Alexa right now.');
+            } finally {
+                alexaUnlinkBtn.disabled = false;
+            }
+        };
     }
 
     async function loadAlexaEntities(userData) {

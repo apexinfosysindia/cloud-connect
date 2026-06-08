@@ -91,8 +91,14 @@ module.exports = function ({ dbGet, dbRun, utils, auth, core, eventGateway }) {
                 entity.id
             ]);
 
-            eventGateway.scheduleAlexaAddOrUpdateReportForUser(req.portalUser.id, 'entity_exposure_changed');
-            eventGateway.scheduleAlexaChangeReportForUser(req.portalUser.id, { force: true });
+            if (exposed) {
+                eventGateway.scheduleAlexaAddOrUpdateReportForUser(req.portalUser.id, 'entity_exposure_changed');
+                eventGateway.scheduleAlexaChangeReportForUser(req.portalUser.id, { force: true });
+            } else {
+                // Hidden: AddOrUpdateReport is additive-only and won't remove the
+                // endpoint from Alexa — a DeleteReport is required.
+                eventGateway.scheduleAlexaDeleteReportForUser(req.portalUser.id, [entityId], 'entity_hidden');
+            }
 
             return res.status(200).json({
                 message: exposed ? 'Entity exposed to Alexa' : 'Entity hidden from Alexa'
@@ -156,8 +162,15 @@ module.exports = function ({ dbGet, dbRun, utils, auth, core, eventGateway }) {
             }
 
             if (anySucceeded) {
-                eventGateway.scheduleAlexaAddOrUpdateReportForUser(req.portalUser.id, 'entity_exposure_changed');
+                const hiddenIds = results.filter((r) => r.ok && r.exposed === false).map((r) => r.entity_id);
+                const anyExposed = results.some((r) => r.ok && r.exposed === true);
+                if (anyExposed) {
+                    eventGateway.scheduleAlexaAddOrUpdateReportForUser(req.portalUser.id, 'entity_exposure_changed');
+                }
                 eventGateway.scheduleAlexaChangeReportForUser(req.portalUser.id, { force: true });
+                if (hiddenIds.length > 0) {
+                    eventGateway.scheduleAlexaDeleteReportForUser(req.portalUser.id, hiddenIds, 'entities_hidden');
+                }
             }
 
             return res.status(200).json({
