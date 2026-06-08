@@ -50,9 +50,6 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, c
             }
 
             const callbackUrl = new URL(redirectUri);
-            const consentChallenge = encodeURIComponent(
-                JSON.stringify({ client_id: clientId, redirect_uri: redirectUri, state, portal_session_token: portalToken })
-            );
 
             if (req.query?.deny === '1') {
                 callbackUrl.searchParams.set('error', 'access_denied');
@@ -71,13 +68,12 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, c
                 return res.status(403).send('Account is not active for Alexa');
             }
 
-            if (req.query?.approved !== '1') {
-                const consentUrl = `/login.html?alexa_oauth=1&alexa_oauth_consent=1&oauth_challenge=${consentChallenge}`;
-                if (req.hostname !== config.CUSTOMER_PORTAL_HOST) {
-                    return res.redirect(`https://${config.CUSTOMER_PORTAL_HOST}${consentUrl}`);
-                }
-                return res.redirect(consentUrl);
-            }
+            // No portal-side consent screen for Alexa: Amazon already shows its
+            // own account-linking consent in the Alexa app before redirecting
+            // here. Once we have a valid portal session we mint the auth code
+            // and redirect straight back to Amazon — for both freshly-logged-in
+            // and already-logged-in users. (A consent bounce here would drop
+            // client_id/redirect_uri and dead-end already-authenticated users.)
 
             if (!user.alexa_enabled) {
                 await dbRun(`UPDATE users SET alexa_enabled = 1 WHERE id = ?`, [user.id]);
