@@ -11,17 +11,26 @@ module.exports = function ({ dbGet, dbRun, utils, auth, googleCore, homegraph })
             const enable = req.body?.enabled !== false;
 
             if (!enable) {
+                // Google has NO partner-initiated "remove devices / unlink" API
+                // (confirmed: only the inbound DISCONNECT intent exists). The only
+                // lever to clear the user's devices from Google Home on a
+                // portal-side unlink is to make an *authenticated* SYNC return an
+                // empty device list. So we do it in this exact order:
+                //   1. Flip google_home_linked=0 but KEEP the token + enabled=1, so
+                //      Google's SYNC callback still authenticates (requireGoogleBearer).
+                //   2. Fire a SYNCHRONOUS requestSync (async:false) and await it —
+                //      Google delivers SYNC before this returns; our handler sees
+                //      linked=0 and returns [], so Google removes the devices.
+                //   3. THEN cleanup: delete the token and flip enabled=0.
+                // The account-link entry itself cannot be removed from our side —
+                // only the user unlinking inside Google Home removes that.
+                try {
+                    await dbRun(`UPDATE users SET google_home_linked = 0 WHERE id = ?`, [req.portalUser.id]);
+                    await homegraph.sendGoogleRequestSync(String(req.portalUser.id), { sync: true });
+                } catch (error) {
+                    console.warn('GOOGLE UNLINK empty-sync skipped:', error?.message);
+                }
                 await googleCore.cleanupGoogleAuthDataForUser(req.portalUser.id);
-                // Ask Google to re-sync now that the account is unlinked. requestSync
-                // authenticates via our service account (not the user's revoked
-                // tokens), and our SYNC handler returns an empty device list once
-                // google_home_enabled is 0 — so Google drops the stale devices from
-                // the Home app. Use the DIRECT sender, not scheduleGoogleRequestSyncForUser,
-                // which self-skips when the user is no longer linked/enabled.
-                // Fire-and-forget: never block or fail the unlink on this.
-                Promise.resolve()
-                    .then(() => homegraph.sendGoogleRequestSync(String(req.portalUser.id)))
-                    .catch((error) => console.warn('GOOGLE UNLINK requestSync skipped:', error?.message));
             }
 
             await dbRun(
