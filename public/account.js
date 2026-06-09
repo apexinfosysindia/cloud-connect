@@ -497,66 +497,111 @@
         }
     }
 
+    // Vendor-specific copy for the shared unlink confirmation modal.
+    const UNLINK_CONFIG = {
+        google: {
+            endpoint: '/api/account/google-home/enable',
+            title: 'Unlink Google',
+            body: 'This unlinks Google Home from this account. Your exposed devices are removed from the Google Home app automatically. The "Apex Connect+" link entry stays in the Google Home app until you remove it there yourself.',
+            confirmLabel: 'Unlink Google',
+            error: 'Unable to unlink Google',
+            success: 'Google unlinked. Your exposed devices are removed from the Google Home app automatically; you can remove the Apex Connect+ link entry there whenever you like.'
+        },
+        alexa: {
+            endpoint: '/api/account/alexa/enable',
+            title: 'Unlink Alexa',
+            body: 'Unlink here while still linked and we ask Alexa to remove your devices from the app, then the skill disables itself automatically within the hour. Note: if you instead disable the skill from the Alexa app first, Alexa keeps the (now unresponsive) device tiles and you will need to remove them manually in the Alexa app.',
+            confirmLabel: 'Unlink Alexa',
+            error: 'Unable to unlink Alexa',
+            success: 'Alexa unlinked. Your devices stop responding right away and we ask Alexa to remove them from the app; the skill finishes disabling automatically within the hour.'
+        }
+    };
+
     function wireGoogleUnlink(userData) {
         if (!googleUnlinkBtn) return;
-        googleUnlinkBtn.onclick = async () => {
-            if (!userData?.portal_session_token) return;
-            googleUnlinkBtn.disabled = true;
-            try {
-                const res = await fetch('/api/account/google-home/enable', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ portal_session_token: userData.portal_session_token, enabled: false })
-                });
-                const data = await res.json();
-                if (!res.ok) {
-                    throw new Error(data.error || 'Unable to unlink Google');
-                }
-                // Server returns a fresh portal session + cleared google flags.
-                const merged = {
-                    ...(data.data || {}),
-                    portal_session_token: data.data?.portal_session_token || userData.portal_session_token
-                };
-                localStorage.setItem('apex_user', JSON.stringify(merged));
-                renderDashboard(merged, { scroll: false });
-                showAlert('Google unlinked. Your exposed devices are removed from the Google Home app automatically; you can remove the Apex Connect+ link entry there whenever you like.', false);
-            } catch (error) {
-                showAlert(error.message || 'Unable to unlink Google right now.');
-            } finally {
-                googleUnlinkBtn.disabled = false;
-            }
-        };
+        googleUnlinkBtn.onclick = () => openUnlinkConfirm('google', userData, googleUnlinkBtn);
     }
 
     function wireAlexaUnlink(userData) {
         if (!alexaUnlinkBtn) return;
-        alexaUnlinkBtn.onclick = async () => {
-            if (!userData?.portal_session_token) return;
-            alexaUnlinkBtn.disabled = true;
-            try {
-                const res = await fetch('/api/account/alexa/enable', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ portal_session_token: userData.portal_session_token, enabled: false })
-                });
-                const data = await res.json();
-                if (!res.ok) {
-                    throw new Error(data.error || 'Unable to unlink Alexa');
-                }
-                // Server returns a fresh portal session + cleared alexa flags.
-                const merged = {
-                    ...(data.data || {}),
-                    portal_session_token: data.data?.portal_session_token || userData.portal_session_token
-                };
-                localStorage.setItem('apex_user', JSON.stringify(merged));
-                renderDashboard(merged, { scroll: false });
-                showAlert('Alexa unlinked. Your devices stop responding right away, and the skill finishes disabling automatically within the hour.', false);
-            } catch (error) {
-                showAlert(error.message || 'Unable to unlink Alexa right now.');
-            } finally {
-                alexaUnlinkBtn.disabled = false;
+        alexaUnlinkBtn.onclick = () => openUnlinkConfirm('alexa', userData, alexaUnlinkBtn);
+    }
+
+    async function performUnlink(vendor, userData, triggerBtn) {
+        const cfg = UNLINK_CONFIG[vendor];
+        if (!cfg || !userData?.portal_session_token) return;
+        try {
+            const res = await fetch(cfg.endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ portal_session_token: userData.portal_session_token, enabled: false })
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || cfg.error);
             }
-        };
+            // Server returns a fresh portal session + cleared link flags.
+            const merged = {
+                ...(data.data || {}),
+                portal_session_token: data.data?.portal_session_token || userData.portal_session_token
+            };
+            localStorage.setItem('apex_user', JSON.stringify(merged));
+            renderDashboard(merged, { scroll: false });
+            showAlert(cfg.success, false);
+        } catch (error) {
+            showAlert(error.message || `${cfg.error} right now.`);
+        } finally {
+            if (triggerBtn) triggerBtn.disabled = false;
+        }
+    }
+
+    // ── Shared unlink confirmation modal ────────────────────────────────
+    const unlinkConfirmModal = document.getElementById('unlinkConfirmModal');
+    const unlinkModalTitle = document.getElementById('unlinkModalTitle');
+    const unlinkModalBody = document.getElementById('unlinkModalBody');
+    const unlinkModalConfirmBtn = document.getElementById('unlinkModalConfirmBtn');
+    const unlinkModalClose = document.getElementById('unlinkModalClose');
+    let pendingUnlink = null; // { vendor, userData, triggerBtn }
+
+    function openUnlinkConfirm(vendor, userData, triggerBtn) {
+        const cfg = UNLINK_CONFIG[vendor];
+        if (!cfg || !unlinkConfirmModal || !userData?.portal_session_token) return;
+        pendingUnlink = { vendor, userData, triggerBtn };
+        if (unlinkModalTitle) unlinkModalTitle.textContent = cfg.title;
+        if (unlinkModalBody) unlinkModalBody.textContent = cfg.body;
+        if (unlinkModalConfirmBtn) {
+            unlinkModalConfirmBtn.textContent = cfg.confirmLabel;
+            unlinkModalConfirmBtn.disabled = false;
+        }
+        unlinkConfirmModal.classList.remove('hidden');
+    }
+
+    function closeUnlinkConfirm() {
+        if (!unlinkConfirmModal) return;
+        unlinkConfirmModal.classList.add('hidden');
+        pendingUnlink = null;
+    }
+
+    if (unlinkConfirmModal) {
+        unlinkConfirmModal.addEventListener('click', (event) => {
+            if (event.target.closest('[data-close-unlink-modal]')) {
+                closeUnlinkConfirm();
+            }
+        });
+    }
+    if (unlinkModalClose) {
+        unlinkModalClose.addEventListener('click', closeUnlinkConfirm);
+    }
+    if (unlinkModalConfirmBtn) {
+        unlinkModalConfirmBtn.addEventListener('click', async () => {
+            if (!pendingUnlink) return;
+            const { vendor, userData, triggerBtn } = pendingUnlink;
+            if (triggerBtn) triggerBtn.disabled = true;
+            unlinkModalConfirmBtn.disabled = true;
+            unlinkModalConfirmBtn.textContent = 'Unlinking...';
+            closeUnlinkConfirm();
+            await performUnlink(vendor, userData, triggerBtn);
+        });
     }
 
     async function loadAlexaEntities(userData) {

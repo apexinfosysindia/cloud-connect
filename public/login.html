@@ -285,6 +285,20 @@
     </div>
 </div>
 
+<div id="unlinkConfirmModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="unlinkModalTitle">
+    <div class="modal__backdrop" data-close-unlink-modal="true"></div>
+    <div class="modal__panel">
+        <div class="modal__header">
+            <div>
+                <h2 id="unlinkModalTitle" class="section-title section-title--small danger-label">Unlink</h2>
+                <p id="unlinkModalBody" class="section-text"></p>
+            </div>
+            <button id="unlinkModalClose" class="button button-secondary button-small" data-close-unlink-modal="true">Cancel</button>
+        </div>
+        <button type="button" id="unlinkModalConfirmBtn" class="button button-danger button-full">Unlink</button>
+    </div>
+</div>
+
 <script src="/account.js"></script>
 </body>
 </html>
