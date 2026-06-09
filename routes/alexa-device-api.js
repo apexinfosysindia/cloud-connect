@@ -27,7 +27,12 @@ module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, co
                     device.user_id,
                     device.id
                 ]);
-                await core.saveAlexaDeviceSnapshotEntityIds(device.user_id, device.id, []);
+                // Do NOT write a snapshot row here. alexa_enabled=0 only happens
+                // via cleanupAlexaAuthDataForUser (portal unlink / Amazon revoke),
+                // which deletes alexa_sync_snapshots for a clean slate. A device
+                // inventory push lands within seconds of unlink; writing an empty
+                // snapshot here would resurrect the row and defeat the clean slate.
+                // There is nothing to snapshot while unlinked, so skip the write.
                 return res.status(200).json({ message: 'Alexa integration is disabled for this account', synced_count: 0, synced_entities: [] });
             }
 
