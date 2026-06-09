@@ -13,9 +13,15 @@ module.exports = function ({ config, utils, auth, googleCore, homegraph, entityM
             await homegraph.markGoogleEntitiesStaleByFreshness();
 
             if (intent === 'action.devices.SYNC') {
-                const entities = await googleCore.getGoogleEntitiesForUser(req.googleUser.id, {
-                    includeDisabled: false
-                });
+                // During a portal-initiated unlink we briefly keep the OAuth token
+                // and google_home_enabled alive (so this request authenticates) but
+                // set google_home_linked=0, then trigger a synchronous requestSync.
+                // Returning an empty device list here is how Google removes the
+                // user's devices — Google has no partner-initiated delete API, so an
+                // authenticated empty SYNC is the only lever we have.
+                const entities = req.googleUser.google_home_linked
+                    ? await googleCore.getGoogleEntitiesForUser(req.googleUser.id, { includeDisabled: false })
+                    : [];
                 const userPin = req.googleUser.google_home_security_pin || null;
                 const devices = entities.map((entity) => entityMapping.buildGoogleDeviceObject(entity, userPin));
 
