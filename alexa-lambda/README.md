@@ -93,9 +93,33 @@ Generate the encryption key once:
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-## 6. MVP scope
+## 6. Domain coverage
 
-This first cut supports: account linking, `Alexa.Discovery`,
-`Alexa.PowerController` (on/off), `Alexa.BrightnessController`, and
-`Alexa.ColorController` / `Alexa.ColorTemperatureController` for lights.
-Fans, locks, thermostats, covers, sensors, and scenes are follow-ups.
+The skill exposes the same Home Assistant domains as the Google Assistant
+bridge (minus those Alexa's custom-skill API cannot represent):
+
+| Domain(s) | Alexa interface(s) |
+|---|---|
+| light | Power + Brightness + Color + ColorTemperature |
+| switch, outlet, input_boolean, automation, group | PowerController |
+| scene, script, button, input_button | SceneController |
+| lock | LockController |
+| fan | Power + RangeController (speed) + ToggleController (oscillate) + ModeController (preset/direction) |
+| cover, valve | RangeController (position/tilt) or ModeController (garage/discrete) + open/close semantics |
+| sensor (temperature/humidity) | TemperatureSensor / HumiditySensor |
+| binary_sensor (door/window/opening/motion/occupancy) | ContactSensor / MotionSensor |
+| select, input_select | ModeController |
+| humidifier | Power + RangeController (humidity) + ModeController |
+| water_heater | Power + ThermostatController (single setpoint) + TemperatureSensor |
+| climate | ThermostatController (dual setpoint + modes) + TemperatureSensor + ModeController (fan/preset/swing) |
+| vacuum, lawn_mower | Power + ModeController (+ vacuum suction) |
+| media_player | Power + PlaybackController + Speaker + InputController |
+| alarm_control_panel | SecurityPanelController (PIN required to disarm when configured) |
+
+**Excluded (no Alexa custom-skill equivalent):** air-quality sensors
+(pm25/pm10/co2/co/voc/aqi) and smoke/CO/gas/leak binary_sensors — these are
+dropped from Discovery rather than exposed as broken endpoints. **Deferred:**
+`camera` (CameraStreamController needs a public media endpoint the frp tunnel
+doesn't provide) and `event` doorbells (DoorbellEventSource needs a real-time
+push path the snapshot poll can't supply).
+
