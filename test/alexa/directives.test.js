@@ -154,6 +154,21 @@ describe('translateControlDirective — climate (Phase 9)', () => {
         assert.equal(r.payload.temperature, 23);
     });
 
+    it('snaps a half-degree setpoint to whole degrees and reports it back', () => {
+        // Alexa sends 22.5 when you press 23 on a whole-degree AC. We snap to 23
+        // and report 23 in optimisticState so Alexa stops drifting by .5.
+        const d = { header: { namespace: 'Alexa.ThermostatController', name: 'SetTargetTemperature' }, payload: { targetSetpoint: { value: 22.5, scale: 'CELSIUS' } } };
+        const r = translateControlDirective('Alexa.ThermostatController', 'SetTargetTemperature', d, { entity_id: 'climate.ac', state_json: JSON.stringify({ target_temperature: 22 }) });
+        assert.equal(r.payload.temperature, 23);
+        assert.equal(r.optimisticState.target_temperature, 23);
+    });
+
+    it('preserves half-degrees for a device that reports a 0.5 step', () => {
+        const d = { header: { namespace: 'Alexa.ThermostatController', name: 'SetTargetTemperature' }, payload: { targetSetpoint: { value: 22.5, scale: 'CELSIUS' } } };
+        const r = translateControlDirective('Alexa.ThermostatController', 'SetTargetTemperature', d, { entity_id: 'climate.precise', state_json: JSON.stringify({ target_temperature: 22, target_temp_step: 0.5 }) });
+        assert.equal(r.payload.temperature, 22.5);
+    });
+
     it('SetTargetTemperature (dual) → set_thermostat_setpoint_range', () => {
         const d = { header: { namespace: 'Alexa.ThermostatController', name: 'SetTargetTemperature' }, payload: { lowerSetpoint: { value: 18 }, upperSetpoint: { value: 25 } } };
         const r = translateControlDirective('Alexa.ThermostatController', 'SetTargetTemperature', d, climateRow);
