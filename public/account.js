@@ -45,6 +45,10 @@
     let googleEntitiesRefreshInFlight = false;
     let googleEntitiesRefreshKey = '';
     let googleEntitiesLastFingerprint = null;
+    // Alexa mirror of the Google fingerprint: the Alexa card reloads on every
+    // 5s account-refresh tick, so guard structural re-renders behind a content
+    // fingerprint to avoid wiping innerHTML (and the user's scroll) needlessly.
+    let alexaEntitiesLastFingerprint = null;
     const oauthParams = new URLSearchParams(window.location.search);
     const googleOAuthMode = oauthParams.get('google_oauth') === '1';
     const googleOAuthClientId = oauthParams.get('client_id') || '';
@@ -407,6 +411,504 @@
         }
     }
 
+    // ── Shared entity card: domain filter + HA-device grouping ──────────
+    // Both the Google and Alexa integration cards render through this one
+    // subsystem. Each entity carries `entity_type` (its HA domain) and a
+    // `state` object; the add-on now also stuffs `_ha_device_id` /
+    // `_ha_device_name` into state (see lib/{google-home,alexa}/core.js), which
+    // lets us group entities by their Home Assistant device. State is held in
+    // JS (not the DOM) so it survives the 15s silent re-render: `selectedDomain`
+    // is the active domain filter and `expanded` is the set of open device
+    // groups (empty = all collapsed, matching "show the device first, expand on
+    // click").
+    const ENTITY_DOMAIN_LABELS = {
+        light: 'Light',
+        switch: 'Switch',
+        outlet: 'Outlet',
+        fan: 'Fan',
+        cover: 'Cover',
+        lock: 'Lock',
+        climate: 'Climate',
+        media_player: 'Media player',
+        sensor: 'Sensor',
+        binary_sensor: 'Binary sensor',
+        scene: 'Scene',
+        script: 'Script',
+        button: 'Button',
+        vacuum: 'Vacuum',
+        humidifier: 'Humidifier',
+        alarm_control_panel: 'Alarm panel',
+        water_heater: 'Water heater',
+        automation: 'Automation',
+        group: 'Group',
+        input_boolean: 'Input boolean',
+        input_button: 'Input button',
+        input_select: 'Input select',
+        select: 'Select',
+        valve: 'Valve',
+        lawn_mower: 'Lawn mower',
+        event: 'Event',
+        camera: 'Camera'
+    };
+    const ENTITY_OTHER_GROUP_KEY = '__ungrouped__';
+
+    // Container/filter/bulk are referenced by id (resolved lazily) so this
+    // config can be declared before the Alexa elements exist in source order.
+    const entityCards = {
+        google: {
+            containerId: 'googleHomeEntities',
+            filterId: 'googleDomainFilter',
+            bulkId: 'googleEntitiesBulkToggle',
+            toggleClass: 'google-entity-toggle',
+            linkedKey: 'google_home_linked',
+            linkMsg: 'Link Apex Connect+ in Google Home app first.',
+            exposeBase: '/api/account/google-home/entities',
+            bulkUrl: '/api/account/google-home/entities/expose-bulk',
+            cache: [],
+            selectedDomain: 'all',
+            expanded: new Set(),
+            wired: false
+        },
+        alexa: {
+            containerId: 'alexaHomeEntities',
+            filterId: 'alexaDomainFilter',
+            bulkId: 'alexaEntitiesBulkToggle',
+            toggleClass: 'alexa-entity-toggle',
+            linkedKey: 'alexa_linked',
+            linkMsg: 'Link the Apex Oasis skill in the Alexa app first.',
+            exposeBase: '/api/account/alexa/entities',
+            bulkUrl: '/api/account/alexa/entities/expose-bulk',
+            cache: [],
+            selectedDomain: 'all',
+            expanded: new Set(),
+            wired: false
+        }
+    };
+
+    function getVendorCfg(vendor) {
+        return entityCards[vendor];
+    }
+
+    function friendlyDomainLabel(type) {
+        const base =
+            ENTITY_DOMAIN_LABELS[type] ||
+            (type ? type.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : 'Other');
+        return base.endsWith('s') ? base : `${base}s`;
+    }
+
+    function entityDomainOf(entity) {
+        return entity.entity_type || 'switch';
+    }
+
+    function entityGroupKey(entity) {
+        const st = entity.state || {};
+        if (st._ha_device_id) return `id:${st._ha_device_id}`;
+        if (st._ha_device_name) return `name:${st._ha_device_name}`;
+        return ENTITY_OTHER_GROUP_KEY;
+    }
+
+    function entityGroupName(entity) {
+        const st = entity.state || {};
+        if (st._ha_device_name) return st._ha_device_name;
+        if (st._ha_device_id) return 'Unnamed device';
+        return 'Other (no device)';
+    }
+
+    function getFilteredEntities(vendor) {
+        const cfg = getVendorCfg(vendor);
+        if (cfg.selectedDomain === 'all') return cfg.cache.slice();
+        return cfg.cache.filter((e) => entityDomainOf(e) === cfg.selectedDomain);
+    }
+
+    function groupEntities(list) {
+        const map = new Map();
+        list.forEach((e) => {
+            const key = entityGroupKey(e);
+            if (!map.has(key)) {
+                map.set(key, { key, name: entityGroupName(e), entities: [] });
+            }
+            map.get(key).entities.push(e);
+        });
+        const groups = Array.from(map.values());
+        groups.sort((a, b) => {
+            if (a.key === ENTITY_OTHER_GROUP_KEY) return 1;
+            if (b.key === ENTITY_OTHER_GROUP_KEY) return -1;
+            return a.name.localeCompare(b.name);
+        });
+        return groups;
+    }
+
+    function entityRowHtml(vendor, entity) {
+        const cfg = getVendorCfg(vendor);
+        return `
+                <label class="google-entity-row">
+                    <input type="checkbox" class="${cfg.toggleClass}" data-entity-id="${escapeHtml(entity.entity_id)}" ${entity.exposed ? 'checked' : ''}>
+                    <span class="google-entity-name">${escapeHtml(entity.display_name || entity.entity_id)}</span>
+                    <span class="google-entity-meta">${escapeHtml(entity.entity_type || 'switch')} | ${entity.online ? 'online' : 'offline'}</span>
+                </label>`;
+    }
+
+    function deviceGroupHtml(vendor, group) {
+        const cfg = getVendorCfg(vendor);
+        const open = cfg.expanded.has(group.key);
+        const total = group.entities.length;
+        const exposed = group.entities.filter((e) => e.exposed).length;
+        const allExposed = total > 0 && exposed === total;
+        return `
+                <div class="device-group ${open ? 'is-open' : ''}" data-group-key="${escapeHtml(group.key)}">
+                    <div class="device-group__header" role="button" tabindex="0" aria-expanded="${open ? 'true' : 'false'}">
+                        <input type="checkbox" class="device-group__checkbox" ${allExposed ? 'checked' : ''} aria-label="Expose all entities for ${escapeHtml(group.name)}">
+                        <span class="device-group__name">${escapeHtml(group.name)}</span>
+                        <span class="device-group__count">${exposed}/${total}</span>
+                        <span class="device-group__chevron" aria-hidden="true">▾</span>
+                    </div>
+                    <div class="device-group__entities">
+                        ${group.entities.map((e) => entityRowHtml(vendor, e)).join('')}
+                    </div>
+                </div>`;
+    }
+
+    function getVisibleToggles(vendor) {
+        const cfg = getVendorCfg(vendor);
+        const container = document.getElementById(cfg.containerId);
+        if (!container) return [];
+        return Array.from(container.querySelectorAll(`.${cfg.toggleClass}`));
+    }
+
+    function updateEntityBulkLabel(vendor) {
+        const cfg = getVendorCfg(vendor);
+        const bulk = document.getElementById(cfg.bulkId);
+        if (!bulk) return;
+        const toggles = getVisibleToggles(vendor);
+        if (toggles.length === 0) {
+            bulk.classList.add('hidden');
+            return;
+        }
+        bulk.classList.remove('hidden');
+        // "Hide all" only when every entity in the current (filtered) view is
+        // already exposed; otherwise "Expose all" (covers mixed + all-hidden).
+        const allExposed = toggles.every((t) => t.checked);
+        bulk.dataset.nextExpose = allExposed ? '0' : '1';
+        bulk.textContent = allExposed ? 'Hide all' : 'Expose all';
+    }
+
+    // Recompute each device group's checkbox (checked / indeterminate) and
+    // count from the live DOM toggles, plus the bulk button label — without
+    // rebuilding innerHTML (avoids the scroll jump a full re-render causes).
+    function refreshEntityGroupChrome(vendor) {
+        const cfg = getVendorCfg(vendor);
+        const container = document.getElementById(cfg.containerId);
+        if (container) {
+            container.querySelectorAll('.device-group').forEach((groupEl) => {
+                const rows = groupEl.querySelectorAll(`.${cfg.toggleClass}`);
+                const total = rows.length;
+                let exposed = 0;
+                rows.forEach((r) => {
+                    if (r.checked) exposed += 1;
+                });
+                const cb = groupEl.querySelector('.device-group__checkbox');
+                if (cb) {
+                    cb.checked = total > 0 && exposed === total;
+                    cb.indeterminate = exposed > 0 && exposed < total;
+                }
+                const count = groupEl.querySelector('.device-group__count');
+                if (count) count.textContent = `${exposed}/${total}`;
+            });
+        }
+        updateEntityBulkLabel(vendor);
+    }
+
+    // Keep the silent-poll baseline in lockstep with our optimistic in-memory
+    // cache after a local expose/hide. Without this, the next 15s poll sees the
+    // server state differ from a stale fingerprint and does a full rebuild —
+    // undoing the in-place update and jumping scroll to the top.
+    function resyncEntitiesFingerprint(vendor) {
+        if (vendor === 'google') {
+            googleEntitiesLastFingerprint = buildGoogleEntitiesFingerprint(entityCards.google.cache);
+        } else if (vendor === 'alexa') {
+            alexaEntitiesLastFingerprint = buildGoogleEntitiesFingerprint(entityCards.alexa.cache);
+        }
+    }
+
+    // Reconcile every visible toggle to cfg.cache, refresh group chrome, and
+    // resync the fingerprint — all without rebuilding innerHTML, so a device-
+    // group or global bulk action keeps the user's scroll position and the set
+    // of expanded groups intact (the DOM structure is unchanged by exposure-
+    // only edits; only checkbox states move).
+    function syncEntityCardInPlace(vendor) {
+        const cfg = getVendorCfg(vendor);
+        const container = document.getElementById(cfg.containerId);
+        if (container) {
+            const exposedById = new Map(cfg.cache.map((e) => [e.entity_id, Boolean(e.exposed)]));
+            container.querySelectorAll(`.${cfg.toggleClass}`).forEach((box) => {
+                if (exposedById.has(box.dataset.entityId)) {
+                    box.checked = exposedById.get(box.dataset.entityId);
+                }
+            });
+        }
+        refreshEntityGroupChrome(vendor);
+        resyncEntitiesFingerprint(vendor);
+    }
+
+    function populateDomainFilter(vendor) {
+        const cfg = getVendorCfg(vendor);
+        const sel = document.getElementById(cfg.filterId);
+        if (!sel) return;
+        const domains = Array.from(new Set(cfg.cache.map(entityDomainOf))).sort();
+        // A single domain (or none) isn't worth filtering — hide the control.
+        if (domains.length <= 1) {
+            sel.classList.add('hidden');
+            cfg.selectedDomain = 'all';
+        } else {
+            sel.classList.remove('hidden');
+        }
+        if (cfg.selectedDomain !== 'all' && !domains.includes(cfg.selectedDomain)) {
+            cfg.selectedDomain = 'all';
+        }
+        const opts = ['<option value="all">All domains</option>'].concat(
+            domains.map((d) => `<option value="${escapeHtml(d)}">${escapeHtml(friendlyDomainLabel(d))}</option>`)
+        );
+        sel.innerHTML = opts.join('');
+        sel.value = cfg.selectedDomain;
+    }
+
+    function renderEntityCard(vendor) {
+        const cfg = getVendorCfg(vendor);
+        const container = document.getElementById(cfg.containerId);
+        if (!container) return;
+
+        populateDomainFilter(vendor);
+
+        if (cfg.cache.length === 0) {
+            container.innerHTML =
+                '<p class="detail-copy">No entities synced yet. Keep the addon online and wait for the next sync.</p>';
+            const bulk = document.getElementById(cfg.bulkId);
+            if (bulk) bulk.classList.add('hidden');
+            return;
+        }
+
+        const filtered = getFilteredEntities(vendor);
+        if (filtered.length === 0) {
+            container.innerHTML = '<p class="detail-copy">No entities match this filter.</p>';
+            updateEntityBulkLabel(vendor);
+            return;
+        }
+
+        const groups = groupEntities(filtered);
+        const hasRealDevices = groups.some((g) => g.key !== ENTITY_OTHER_GROUP_KEY);
+        if (!hasRealDevices) {
+            // No HA device metadata yet (e.g. add-on not redeployed) — fall back
+            // to a flat list so nothing hides behind a single "Other" group.
+            container.innerHTML = filtered.map((e) => entityRowHtml(vendor, e)).join('');
+        } else {
+            container.innerHTML = groups.map((g) => deviceGroupHtml(vendor, g)).join('');
+        }
+        refreshEntityGroupChrome(vendor);
+    }
+
+    function hideEntityCardControls(vendor) {
+        const cfg = getVendorCfg(vendor);
+        const bulk = document.getElementById(cfg.bulkId);
+        if (bulk) bulk.classList.add('hidden');
+        const filt = document.getElementById(cfg.filterId);
+        if (filt) filt.classList.add('hidden');
+    }
+
+    async function onEntityToggle(vendor, input) {
+        const cfg = getVendorCfg(vendor);
+        const userData = JSON.parse(localStorage.getItem('apex_user') || 'null');
+        if (!userData?.portal_session_token) {
+            showAlert('Please log in again to continue.');
+            input.checked = !input.checked;
+            return;
+        }
+        if (!userData[cfg.linkedKey]) {
+            showAlert(cfg.linkMsg);
+            input.checked = false;
+            return;
+        }
+        const entityId = input.dataset.entityId;
+        const exposed = input.checked;
+        input.disabled = true;
+        try {
+            const res = await fetch(`${cfg.exposeBase}/${encodeURIComponent(entityId)}/expose`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ portal_session_token: userData.portal_session_token, exposed })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Unable to update entity exposure');
+            const item = cfg.cache.find((e) => e.entity_id === entityId);
+            if (item) item.exposed = exposed;
+            if (data.message) showAlert(data.message, false);
+        } catch (error) {
+            input.checked = !exposed;
+            showAlert(error.message);
+        } finally {
+            input.disabled = false;
+            // In-place chrome update + fingerprint resync keeps scroll position
+            // (the list isn't rebuilt) and stops the 15s poll from undoing this.
+            refreshEntityGroupChrome(vendor);
+            resyncEntitiesFingerprint(vendor);
+        }
+    }
+
+    // Shared expose/hide for a set of entities via the batched server endpoint.
+    async function applyEntityBulk(vendor, targets, expose, triggerBtn) {
+        const cfg = getVendorCfg(vendor);
+        const userData = JSON.parse(localStorage.getItem('apex_user') || 'null');
+        if (!userData?.portal_session_token) {
+            showAlert('Please log in again to continue.');
+            syncEntityCardInPlace(vendor);
+            return;
+        }
+        const updates = targets.map((e) => ({ entity_id: e.entity_id, exposed: expose }));
+        const originalLabel = triggerBtn ? triggerBtn.textContent : '';
+        if (triggerBtn) {
+            triggerBtn.disabled = true;
+            triggerBtn.textContent = expose ? 'Exposing...' : 'Hiding...';
+        }
+        try {
+            const res = await fetch(cfg.bulkUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ portal_session_token: userData.portal_session_token, updates })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || 'Unable to update entities');
+            const ids = new Set(targets.map((t) => t.entity_id));
+            cfg.cache.forEach((e) => {
+                if (ids.has(e.entity_id)) e.exposed = expose;
+            });
+            // Exposure-only change: the rendered groups/rows are unchanged, so
+            // update checkboxes + chrome in place (no rebuild → no scroll jump,
+            // expanded groups stay open).
+            syncEntityCardInPlace(vendor);
+            const failed = Array.isArray(data.results) ? data.results.filter((r) => !r.ok).length : 0;
+            if (!failed) {
+                showAlert(expose ? 'Entities exposed.' : 'Entities hidden.', false);
+            } else {
+                showAlert(`${updates.length - failed} updated, ${failed} failed. Please retry the failures.`);
+            }
+        } catch (error) {
+            showAlert(error.message);
+            syncEntityCardInPlace(vendor);
+        } finally {
+            if (triggerBtn) {
+                triggerBtn.disabled = false;
+                triggerBtn.textContent = originalLabel;
+            }
+        }
+    }
+
+    async function onEntityBulkToggle(vendor) {
+        const cfg = getVendorCfg(vendor);
+        const userData = JSON.parse(localStorage.getItem('apex_user') || 'null');
+        if (!userData?.portal_session_token) {
+            showAlert('Please log in again to continue.');
+            return;
+        }
+        if (!userData[cfg.linkedKey]) {
+            showAlert(cfg.linkMsg);
+            return;
+        }
+        const bulk = document.getElementById(cfg.bulkId);
+        const expose = bulk?.dataset.nextExpose === '1';
+        // Act only on the currently-filtered set, and only on entities whose
+        // state actually differs from the target (avoids pointless writes).
+        const targets = getFilteredEntities(vendor).filter((e) => Boolean(e.exposed) !== expose);
+        if (targets.length === 0) {
+            updateEntityBulkLabel(vendor);
+            return;
+        }
+        await applyEntityBulk(vendor, targets, expose, bulk);
+    }
+
+    async function onDeviceGroupToggle(vendor, groupCheckbox, groupKey) {
+        const cfg = getVendorCfg(vendor);
+        const userData = JSON.parse(localStorage.getItem('apex_user') || 'null');
+        if (!userData?.portal_session_token) {
+            showAlert('Please log in again to continue.');
+            groupCheckbox.checked = !groupCheckbox.checked;
+            return;
+        }
+        if (!userData[cfg.linkedKey]) {
+            showAlert(cfg.linkMsg);
+            groupCheckbox.checked = !groupCheckbox.checked;
+            return;
+        }
+        const expose = groupCheckbox.checked;
+        groupCheckbox.indeterminate = false;
+        // Respect the active domain filter: a device's checkbox acts on the
+        // entities currently shown for it (the filtered subset).
+        const targets = getFilteredEntities(vendor).filter(
+            (e) => entityGroupKey(e) === groupKey && Boolean(e.exposed) !== expose
+        );
+        if (targets.length === 0) return;
+        await applyEntityBulk(vendor, targets, expose, null);
+    }
+
+    // Delegated listeners, attached once per card, survive innerHTML swaps.
+    function wireEntityCard(vendor) {
+        const cfg = getVendorCfg(vendor);
+        const container = document.getElementById(cfg.containerId);
+        if (container && !cfg.wired) {
+            cfg.wired = true;
+            container.addEventListener('change', (event) => {
+                const entityToggle = event.target.closest(`.${cfg.toggleClass}`);
+                if (entityToggle) {
+                    void onEntityToggle(vendor, entityToggle);
+                    return;
+                }
+                const groupCb = event.target.closest('.device-group__checkbox');
+                if (groupCb) {
+                    const wrap = groupCb.closest('.device-group');
+                    void onDeviceGroupToggle(vendor, groupCb, wrap?.getAttribute('data-group-key'));
+                }
+            });
+            const toggleHeader = (header) => {
+                const wrap = header.closest('.device-group');
+                const key = wrap?.getAttribute('data-group-key');
+                if (!wrap || !key) return;
+                if (cfg.expanded.has(key)) cfg.expanded.delete(key);
+                else cfg.expanded.add(key);
+                wrap.classList.toggle('is-open');
+                header.setAttribute('aria-expanded', cfg.expanded.has(key) ? 'true' : 'false');
+            };
+            container.addEventListener('click', (event) => {
+                if (event.target.closest('.device-group__checkbox')) return;
+                const header = event.target.closest('.device-group__header');
+                if (header) toggleHeader(header);
+            });
+            container.addEventListener('keydown', (event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                if (event.target.closest('.device-group__checkbox')) return;
+                const header = event.target.closest('.device-group__header');
+                if (header) {
+                    event.preventDefault();
+                    toggleHeader(header);
+                }
+            });
+        }
+
+        const filterEl = document.getElementById(cfg.filterId);
+        if (filterEl && !filterEl.dataset.wired) {
+            filterEl.dataset.wired = '1';
+            filterEl.addEventListener('change', () => {
+                cfg.selectedDomain = filterEl.value || 'all';
+                renderEntityCard(vendor);
+            });
+        }
+
+        const bulkBtn = document.getElementById(cfg.bulkId);
+        if (bulkBtn && !bulkBtn.dataset.wired) {
+            bulkBtn.dataset.wired = '1';
+            bulkBtn.addEventListener('click', () => {
+                void onEntityBulkToggle(vendor);
+            });
+        }
+    }
+
     async function loadGoogleHomeEntities(userData) {
         if (!googleHomeEntities || !userData?.portal_session_token) {
             return;
@@ -414,8 +916,11 @@
 
         if (!userData.google_home_enabled) {
             googleHomeEntities.innerHTML = '<p class="detail-copy">Enable Google Home to manage exposed entities.</p>';
+            hideEntityCardControls('google');
             return;
         }
+
+        wireEntityCard('google');
 
         // Only show the "Loading entities..." placeholder on the very first
         // load (or after a reset). On subsequent reloads triggered by the
@@ -441,20 +946,11 @@
 
             const entities = Array.isArray(data.entities) ? data.entities : [];
             googleEntitiesLastFingerprint = buildGoogleEntitiesFingerprint(entities);
-            if (entities.length === 0) {
-                googleHomeEntities.innerHTML = '<p class="detail-copy">No entities synced yet. Keep addon online and wait for next sync.</p>';
-                updateGoogleEntitiesBulkBar();
-                return;
-            }
-
-            googleHomeEntities.innerHTML = entities.map((entity) => `
-                <label class="google-entity-row">
-                    <input type="checkbox" class="google-entity-toggle" data-entity-id="${escapeHtml(entity.entity_id)}" ${entity.exposed ? 'checked' : ''}>
-                    <span class="google-entity-name">${escapeHtml(entity.display_name || entity.entity_id)}</span>
-                    <span class="google-entity-meta">${escapeHtml(entity.entity_type || 'switch')} | ${entity.online ? 'online' : 'offline'}</span>
-                </label>
-            `).join('');
-            updateGoogleEntitiesBulkBar();
+            entityCards.google.cache = entities;
+            // Filter + device-group render. selectedDomain and the set of
+            // expanded device groups live in entityCards.google, so they
+            // persist across the 15s silent re-render.
+            renderEntityCard('google');
         } catch (error) {
             googleHomeEntities.innerHTML = `<p class="detail-copy">${escapeHtml(error.message || 'Unable to load Google Home entities right now.')}</p>`;
         }
@@ -464,9 +960,7 @@
     const alexaHomeCard = document.getElementById('alexaHomeCard');
     const alexaHomeStatus = document.getElementById('alexaHomeStatus');
     const alexaHomeEntities = document.getElementById('alexaHomeEntities');
-    const alexaBulkToggleBtn = document.getElementById('alexaEntitiesBulkToggle');
     const alexaUnlinkBtn = document.getElementById('alexaUnlinkBtn');
-    let alexaEntitiesCache = [];
 
     function renderAlexaCard(userData, accessEnabled) {
         if (!alexaHomeCard) {
@@ -492,7 +986,9 @@
                 alexaHomeEntities.innerHTML =
                     '<p class="detail-copy">Link the Apex Oasis skill in the Alexa app to manage exposed devices.</p>';
             }
-            if (alexaBulkToggleBtn) alexaBulkToggleBtn.classList.add('hidden');
+            alexaEntitiesLastFingerprint = null;
+            entityCards.alexa.cache = [];
+            hideEntityCardControls('alexa');
             if (alexaUnlinkBtn) alexaUnlinkBtn.classList.add('hidden');
         }
     }
@@ -608,6 +1104,7 @@
         if (!alexaHomeEntities || !userData?.portal_session_token) {
             return;
         }
+        wireEntityCard('alexa');
         try {
             const res = await fetch('/api/account/alexa/entities', {
                 method: 'POST',
@@ -619,74 +1116,23 @@
                 throw new Error(data.error || 'Unable to load Alexa devices');
             }
             const entities = Array.isArray(data.entities) ? data.entities : [];
-            alexaEntitiesCache = entities;
-            if (entities.length === 0) {
-                alexaHomeEntities.innerHTML =
-                    '<p class="detail-copy">No devices synced yet. Keep the addon online and wait for the next sync.</p>';
-                if (alexaBulkToggleBtn) alexaBulkToggleBtn.classList.add('hidden');
+            const fingerprint = buildGoogleEntitiesFingerprint(entities);
+            // Skip the structural rebuild when nothing changed (the Alexa card
+            // reloads on every 5s account tick). This keeps scroll position and
+            // expanded device groups intact mid-interaction.
+            if (fingerprint === alexaEntitiesLastFingerprint && alexaHomeEntities.querySelector('.google-entity-row')) {
+                entityCards.alexa.cache = entities;
                 return;
             }
-            alexaHomeEntities.innerHTML = entities
-                .map(
-                    (entity) => `
-                <label class="google-entity-row">
-                    <input type="checkbox" class="alexa-entity-toggle" data-entity-id="${escapeHtml(entity.entity_id)}" ${entity.exposed ? 'checked' : ''}>
-                    <span class="google-entity-name">${escapeHtml(entity.display_name || entity.entity_id)}</span>
-                    <span class="google-entity-meta">${escapeHtml(entity.entity_type || 'switch')} | ${entity.online ? 'online' : 'offline'}</span>
-                </label>`
-                )
-                .join('');
-            if (alexaBulkToggleBtn) alexaBulkToggleBtn.classList.remove('hidden');
-            wireAlexaEntityToggles(userData);
-            wireAlexaBulkToggle(userData);
+            alexaEntitiesLastFingerprint = fingerprint;
+            entityCards.alexa.cache = entities;
+            // Filter + device-group render (mirror of the Google card). The
+            // active domain filter and expanded device groups persist in
+            // entityCards.alexa across reloads.
+            renderEntityCard('alexa');
         } catch (error) {
             alexaHomeEntities.innerHTML = `<p class="detail-copy">${escapeHtml(error.message || 'Unable to load Alexa devices right now.')}</p>`;
         }
-    }
-
-    function wireAlexaEntityToggles(userData) {
-        alexaHomeEntities.querySelectorAll('.alexa-entity-toggle').forEach((input) => {
-            input.addEventListener('change', async () => {
-                const entityId = input.getAttribute('data-entity-id');
-                input.disabled = true;
-                try {
-                    await fetch(`/api/account/alexa/entities/${encodeURIComponent(entityId)}/expose`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            portal_session_token: userData.portal_session_token,
-                            exposed: input.checked
-                        })
-                    });
-                } catch (_e) {
-                    input.checked = !input.checked; // revert on failure
-                } finally {
-                    input.disabled = false;
-                }
-            });
-        });
-    }
-
-    function wireAlexaBulkToggle(userData) {
-        if (!alexaBulkToggleBtn) return;
-        alexaBulkToggleBtn.onclick = async () => {
-            const allExposed = alexaEntitiesCache.every((e) => e.exposed);
-            const target = !allExposed;
-            const updates = alexaEntitiesCache.map((e) => ({ entity_id: e.entity_id, exposed: target }));
-            alexaBulkToggleBtn.disabled = true;
-            try {
-                await fetch('/api/account/alexa/entities/expose-bulk', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ portal_session_token: userData.portal_session_token, updates })
-                });
-                await loadAlexaEntities(userData);
-            } finally {
-                alexaBulkToggleBtn.disabled = false;
-            }
-        };
-        const allExposed = alexaEntitiesCache.length > 0 && alexaEntitiesCache.every((e) => e.exposed);
-        alexaBulkToggleBtn.textContent = allExposed ? 'Hide all' : 'Expose all';
     }
 
     // Tracks the last fetched trial eligibility so we don't re-query on every
@@ -854,7 +1300,7 @@
                 }
                 googleEntitiesLastFingerprint = null;
                 stopGoogleEntitiesAutoRefresh();
-                if (bulkToggleBtn) bulkToggleBtn.classList.add('hidden');
+                hideEntityCardControls('google');
                 if (googleUnlinkBtn) googleUnlinkBtn.classList.add('hidden');
             }
         } else {
@@ -1168,7 +1614,11 @@
                 entity?.display_name || '',
                 entity?.entity_type || '',
                 entity?.exposed ? '1' : '0',
-                entity?.online ? '1' : '0'
+                entity?.online ? '1' : '0',
+                // Include the HA device identity so a rename/regroup in Home
+                // Assistant is reflected by the next silent refresh.
+                entity?.state?._ha_device_id || '',
+                entity?.state?._ha_device_name || ''
             ].join('|'))
             .sort()
             .join('||');
@@ -1983,156 +2433,6 @@
                 showAlert(err.message);
             } finally {
                 restoreButton(saveSubdomainBtn, originalText);
-            }
-        });
-    }
-
-    if (googleHomeEntities) {
-        googleHomeEntities.addEventListener('change', async (event) => {
-            const toggle = event.target.closest('.google-entity-toggle');
-            if (!toggle) {
-                return;
-            }
-
-            const userData = JSON.parse(localStorage.getItem('apex_user') || 'null');
-            if (!userData?.portal_session_token) {
-                showAlert('Please log in again to continue.');
-                return;
-            }
-
-            if (!userData.google_home_linked) {
-                showAlert('Link Apex Connect+ in Google Home app first.');
-                toggle.checked = false;
-                return;
-            }
-
-            const entityId = toggle.dataset.entityId;
-            const exposed = toggle.checked;
-
-            toggle.disabled = true;
-            try {
-                const res = await fetch(`/api/account/google-home/entities/${encodeURIComponent(entityId)}/expose`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        portal_session_token: userData.portal_session_token,
-                        exposed
-                    })
-                });
-                const data = await res.json();
-                if (!res.ok) {
-                    throw new Error(data.error || 'Unable to update entity exposure');
-                }
-                showAlert(data.message, false);
-                // No reload needed — the checkbox is already in the correct
-                // visual state from the user's click, and the server accepted
-                // it. Wiping innerHTML + re-fetching caused a scroll jump to
-                // the top of the list every time. Update the in-memory
-                // fingerprint so the 15s silent poll's diff stays stable.
-                toggle.checked = exposed;
-            } catch (error) {
-                toggle.checked = !exposed;
-                showAlert(error.message);
-            } finally {
-                toggle.disabled = false;
-            }
-            updateGoogleEntitiesBulkBar();
-        });
-    }
-
-    // Bulk expose/hide all entities. Reuses the per-entity /expose endpoint
-    // so no server changes are needed — we just fan out in parallel.
-    const bulkToggleBtn = document.getElementById('googleEntitiesBulkToggle');
-
-    function getEntityToggleInputs() {
-        if (!googleHomeEntities) return [];
-        return Array.from(googleHomeEntities.querySelectorAll('.google-entity-toggle'));
-    }
-
-    function updateGoogleEntitiesBulkBar() {
-        if (!bulkToggleBtn) return;
-        const toggles = getEntityToggleInputs();
-        if (toggles.length === 0) {
-            bulkToggleBtn.classList.add('hidden');
-            return;
-        }
-        bulkToggleBtn.classList.remove('hidden');
-        // If every entity is already exposed, the bulk action becomes "Hide all";
-        // otherwise it's "Expose all" (covers the mixed and all-hidden cases).
-        const allExposed = toggles.every((t) => t.checked);
-        bulkToggleBtn.dataset.nextExpose = allExposed ? '0' : '1';
-        bulkToggleBtn.textContent = allExposed ? 'Hide all' : 'Expose all';
-    }
-
-    if (bulkToggleBtn) {
-        bulkToggleBtn.addEventListener('click', async () => {
-            const userData = JSON.parse(localStorage.getItem('apex_user') || 'null');
-            if (!userData?.portal_session_token) {
-                showAlert('Please log in again to continue.');
-                return;
-            }
-            if (!userData.google_home_linked) {
-                showAlert('Link Apex Connect+ in Google Home app first.');
-                return;
-            }
-
-            const toggles = getEntityToggleInputs();
-            if (toggles.length === 0) return;
-
-            const expose = bulkToggleBtn.dataset.nextExpose === '1';
-            // Only act on entities whose current state differs from the target —
-            // avoids pointless writes, Homegraph re-syncs, and log noise.
-            const targets = toggles.filter((t) => t.checked !== expose);
-            if (targets.length === 0) {
-                updateGoogleEntitiesBulkBar();
-                return;
-            }
-
-            const originalLabel = bulkToggleBtn.textContent;
-            bulkToggleBtn.disabled = true;
-            bulkToggleBtn.textContent = expose ? 'Exposing...' : 'Hiding...';
-            toggles.forEach((t) => { t.disabled = true; });
-
-            // Optimistic UI: flip the checkboxes immediately so the user sees
-            // the result. Roll individual ones back if their request fails.
-            targets.forEach((t) => { t.checked = expose; });
-
-            const results = await Promise.allSettled(
-                targets.map((t) =>
-                    fetch(`/api/account/google-home/entities/${encodeURIComponent(t.dataset.entityId)}/expose`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            portal_session_token: userData.portal_session_token,
-                            exposed: expose
-                        })
-                    }).then(async (res) => {
-                        const data = await res.json().catch(() => ({}));
-                        if (!res.ok) throw new Error(data.error || 'Request failed');
-                        return data;
-                    })
-                )
-            );
-
-            let failed = 0;
-            results.forEach((r, i) => {
-                if (r.status === 'rejected') {
-                    targets[i].checked = !expose; // roll back this one
-                    failed += 1;
-                }
-            });
-
-            toggles.forEach((t) => { t.disabled = false; });
-            bulkToggleBtn.disabled = false;
-            bulkToggleBtn.textContent = originalLabel;
-            updateGoogleEntitiesBulkBar();
-
-            if (failed === 0) {
-                showAlert(expose ? 'All entities exposed to Google Home.' : 'All entities hidden from Google Home.', false);
-            } else if (failed < targets.length) {
-                showAlert(`${targets.length - failed} updated, ${failed} failed. Please retry the failures.`);
-            } else {
-                showAlert('Unable to update entities. Please try again.');
             }
         });
     }

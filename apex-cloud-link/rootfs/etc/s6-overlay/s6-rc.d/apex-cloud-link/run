@@ -231,7 +231,8 @@ try:
                 'manufacturer': d.get('manufacturer') or None,
                 'model': d.get('model') or None,
                 'sw_version': d.get('sw_version') or None,
-                'area_id': d.get('area_id') or None
+                'area_id': d.get('area_id') or None,
+                'name': (d.get('name_by_user') or d.get('name') or None)
             }
     # Build entity_id -> device info map and entity_id -> area_name map
     dev_result = {}
@@ -244,7 +245,9 @@ try:
             dev_result[eid] = {
                 'manufacturer': dev_map[did]['manufacturer'],
                 'model': dev_map[did]['model'],
-                'sw_version': dev_map[did]['sw_version']
+                'sw_version': dev_map[did]['sw_version'],
+                'ha_device_id': did,
+                'ha_device_name': dev_map[did]['name']
             }
         # Area: entity's own area_id takes priority, then device's area_id
         if eid:
@@ -517,7 +520,9 @@ except Exception:
                     ),
                     manufacturer: (($devinfo[$s.entity_id].manufacturer // null) | if . == "" then null else . end),
                     model: (($devinfo[$s.entity_id].model // null) | if . == "" then null else . end),
-                    sw_version: (($devinfo[$s.entity_id].sw_version // null) | if . == "" then null else . end)
+                    sw_version: (($devinfo[$s.entity_id].sw_version // null) | if . == "" then null else . end),
+                    ha_device_id: (($devinfo[$s.entity_id].ha_device_id // null) | if . == "" then null else . end),
+                    ha_device_name: (($devinfo[$s.entity_id].ha_device_name // null) | if . == "" then null else . end)
                 }
             )
         ' 2>/tmp/google_entity_jq_err || { bashio::log.warning "Google entity jq pipeline failed: $(cat /tmp/google_entity_jq_err 2>/dev/null | head -1)"; printf '[]'; })
@@ -647,7 +652,8 @@ try:
                 'manufacturer': d.get('manufacturer') or None,
                 'model': d.get('model') or None,
                 'sw_version': d.get('sw_version') or None,
-                'area_id': d.get('area_id') or None
+                'area_id': d.get('area_id') or None,
+                'name': (d.get('name_by_user') or d.get('name') or None)
             }
     dev_result = {}
     area_result = {}
@@ -658,7 +664,9 @@ try:
             dev_result[eid] = {
                 'manufacturer': dev_map[did]['manufacturer'],
                 'model': dev_map[did]['model'],
-                'sw_version': dev_map[did]['sw_version']
+                'sw_version': dev_map[did]['sw_version'],
+                'ha_device_id': did,
+                'ha_device_name': dev_map[did]['name']
             }
         if eid:
             ent_area = e.get('area_id') or None
@@ -884,7 +892,9 @@ sync_alexa_entities() {
                         end
                     ),
                     manufacturer: (($devinfo[$s.entity_id].manufacturer // null) | if . == "" then null else . end),
-                    model: (($devinfo[$s.entity_id].model // null) | if . == "" then null else . end)
+                    model: (($devinfo[$s.entity_id].model // null) | if . == "" then null else . end),
+                    ha_device_id: (($devinfo[$s.entity_id].ha_device_id // null) | if . == "" then null else . end),
+                    ha_device_name: (($devinfo[$s.entity_id].ha_device_name // null) | if . == "" then null else . end)
                 }
             )
         ' 2>/tmp/alexa_entity_jq_err || { bashio::log.warning "Alexa entity jq pipeline failed: $(cat /tmp/alexa_entity_jq_err 2>/dev/null | head -1)"; printf '[]'; })

@@ -4,9 +4,24 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sign In | ApexOS Cloud Connect Oasis</title>
+    <script>
+        // No-flash theme bootstrap: resolve light/dark/auto before CSS paints.
+        (function () {
+            try {
+                var c = localStorage.getItem('apex_theme');
+                if (c !== 'light' && c !== 'dark' && c !== 'auto') c = 'auto';
+                var eff = c === 'dark' || (c === 'auto' && window.matchMedia &&
+                    window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+                var r = document.documentElement;
+                r.setAttribute('data-theme', c);
+                r.setAttribute('data-theme-effective', eff);
+            } catch (e) {}
+        })();
+    </script>
     <link rel="stylesheet" href="/styles.css">
     <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
     <link rel="icon" href="/favicon.ico">
+    <script src="/theme.js" defer></script>
 </head>
 <body class="portal-page auth-page" data-auth-mode="login">
 <div class="page-shell page-shell--portal">
@@ -24,11 +39,13 @@
         </div>
 
         <div class="masthead-actions" id="guestNavActions">
+            <button type="button" class="theme-toggle"></button>
             <a href="/index.html" class="button button-secondary">Overview</a>
             <a href="/signup.html" class="button button-primary">Create Account</a>
         </div>
 
         <div class="masthead-actions hidden" id="signedInNavActions">
+            <button type="button" class="theme-toggle"></button>
             <span id="headerUserEmail" class="identity-pill"></span>
             <button id="headerLogoutBtn" type="button" class="button button-secondary">Log Out</button>
         </div>
@@ -145,6 +162,7 @@
                         <div class="google-home-header">
                             <span class="detail-label">Google Home Integration</span>
                             <div class="card-header-actions">
+                                <select id="googleDomainFilter" class="entity-domain-filter hidden" aria-label="Filter entities by domain"></select>
                                 <button id="googleEntitiesBulkToggle" type="button" class="button button-secondary button-small hidden">Expose all</button>
                                 <button id="googleUnlinkBtn" type="button" class="button button-danger button-small hidden">Unlink</button>
                             </div>
@@ -177,6 +195,7 @@
                         <div class="google-home-header">
                             <span class="detail-label">Amazon Alexa Integration</span>
                             <div class="card-header-actions">
+                                <select id="alexaDomainFilter" class="entity-domain-filter hidden" aria-label="Filter devices by domain"></select>
                                 <button id="alexaEntitiesBulkToggle" type="button" class="button button-secondary button-small hidden">Expose all</button>
                                 <button id="alexaUnlinkBtn" type="button" class="button button-danger button-small hidden">Unlink</button>
                             </div>
@@ -246,6 +265,7 @@
         </section>
     </main>
 </div>
+<footer class="site-footer">AII IoTech (India) Private Limited, dba APEX. All rights reserved.</footer>
 
 <div id="cancelSubscriptionModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="cancelSubModalTitle">
     <div class="modal__backdrop" data-close-cancel-sub-modal="true"></div>
