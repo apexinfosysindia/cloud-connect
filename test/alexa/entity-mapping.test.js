@@ -771,3 +771,34 @@ describe('ThermostatController stays within Amazon schema', () => {
         assert.ok(em.validateAlexaEndpoint(bad).some((e) => /DEHUMIDIFY/.test(e)));
     });
 });
+
+// Universality: a climate entity that is NOT a real thermostat (only off/dry/
+// fan_only — e.g. a standalone dehumidifier or fan-only unit) must NOT emit a
+// ThermostatController (Amazon requires >=1 of HEAT/COOL). It is surfaced via
+// TemperatureSensor + its ModeControllers instead. This is the "works for other
+// users' device types too" guard.
+describe('climate variants are universally valid', () => {
+    const mk = (s) => em.buildAlexaEndpoint({ entity_id: 'climate.x', entity_type: 'climate', display_name: 'X', online: 1, state_json: JSON.stringify(s) }, {});
+
+    it('dehumidifier-only climate emits no ThermostatController', () => {
+        const ep = mk({ mode: 'dry', hvac_modes: ['off', 'dry'], fan_modes: ['low', 'high'], ambient_temperature: 60, supported_features: 9, temperature_unit: 'C' });
+        assert.ok(!ep.capabilities.some((c) => c.interface === 'Alexa.ThermostatController'));
+        assert.ok(ep.capabilities.some((c) => c.interface === 'Alexa.TemperatureSensor'));
+        assert.deepEqual(em.validateAlexaEndpoint(ep), []);
+    });
+
+    it('heat-only and cool-only thermostats are both valid', () => {
+        for (const modes of [['off', 'heat'], ['off', 'cool', 'dry', 'fan_only']]) {
+            const ep = mk({ mode: modes[1], hvac_modes: modes, target_temperature: 21, supported_features: 1, temperature_unit: 'C' });
+            const t = ep.capabilities.find((c) => c.interface === 'Alexa.ThermostatController');
+            assert.ok(t, `${modes} should be a thermostat`);
+            assert.ok(t.configuration.supportedModes.includes('HEAT') || t.configuration.supportedModes.includes('COOL'));
+            assert.deepEqual(em.validateAlexaEndpoint(ep), []);
+        }
+    });
+
+    it('validateAlexaEndpoint flags a thermostat with no HEAT/COOL', () => {
+        const bad = { endpointId: 'x', friendlyName: 'X', displayCategories: ['THERMOSTAT'], capabilities: [{ type: 'AlexaInterface', interface: 'Alexa', version: '3' }, { type: 'AlexaInterface', interface: 'Alexa.ThermostatController', version: '3', properties: { supported: [{ name: 'targetSetpoint' }] }, configuration: { supportedModes: ['OFF'] } }] };
+        assert.ok(em.validateAlexaEndpoint(bad).some((e) => /HEAT\/COOL/.test(e)));
+    });
+});
