@@ -677,3 +677,58 @@ describe('capabilities satisfy Amazon structural schema rules', () => {
         assert.deepEqual(spPin.configuration.supportedAuthorizationTypes, [{ type: 'FOUR_DIGIT_PIN' }]);
     });
 });
+
+// Real HA values routinely contain %, /, +, parentheses, accents, emoji in mode
+// names, source names, and labels. These must be sanitized (not just validated)
+// or the capability fails Amazon's schema and 400s the whole batch. The exported
+// validateAlexaEndpoint is the final backstop: a bad endpoint is dropped, never
+// allowed to poison the batch.
+describe('label sanitization + endpoint validation backstop', () => {
+    const mk = (t, s, o = {}) => em.buildAlexaEndpoint({ entity_id: `${t}.x`, display_name: 'X', entity_type: t, online: 1, state_json: JSON.stringify(s) }, o);
+
+    it('sanitizes ModeController text labels (keeps endpoint, cleans labels)', () => {
+        const ep = mk('select', { current_option: '50%', options: ['50%', 'Auto-Eco', 'High »'] });
+        const mc = ep.capabilities.find((c) => c.interface === 'Alexa.ModeController');
+        for (const m of mc.configuration.supportedModes) {
+            const text = m.modeResources.friendlyNames[0].value.text;
+            assert.ok(/^[a-zA-Z0-9 ]+$/.test(text), `mode text "${text}" must be clean`);
+        }
+        // The mode VALUE (identifier) stays raw so commands still map.
+        assert.deepEqual(mc.configuration.supportedModes.map((m) => m.value), ['50%', 'Auto-Eco', 'High »']);
+    });
+
+    it('sanitizes + dedups InputController source names', () => {
+        const ep = mk('media_player', { on: true, volume: 30, source: 'Apple TV+', source_list: ['Apple TV+', 'HDMI #1', 'Netflix™'], supported_features: 22965, device_class: 'tv' });
+        const ic = ep.capabilities.find((c) => c.interface === 'Alexa.InputController');
+        for (const i of ic.inputs) assert.ok(/^[a-zA-Z0-9 ]+$/.test(i.name), `input "${i.name}" clean`);
+    });
+
+    it('coerces an invalid RangeController range (min>=max) to a valid one', () => {
+        const ep = mk('humidifier', { on: true, target_humidity: 50, min_humidity: 50, max_humidity: 50, available_modes: ['a', 'b'] });
+        const rc = ep.capabilities.find((c) => c.interface === 'Alexa.RangeController' && c.instance === 'Humidifier.Humidity');
+        assert.ok(rc.configuration.supportedRange.minimumValue < rc.configuration.supportedRange.maximumValue);
+        assert.ok(rc.configuration.supportedRange.precision > 0);
+    });
+
+    it('validateAlexaEndpoint passes every supported domain (messy data included)', () => {
+        const rows = [
+            mk('select', { current_option: '50%', options: ['50%', 'Auto-Eco', 'High »'] }),
+            mk('fan', { on: true, percentage: 50, supported_features: 15, preset_modes: ['Auto/Eco', 'Sleep+'], preset_mode: 'Auto/Eco', direction: 'forward' }),
+            mk('media_player', { on: true, volume: 30, source: 'Apple TV+', source_list: ['Apple TV+', 'HDMI #1'], supported_features: 22965, device_class: 'tv' }),
+            mk('climate', { mode: 'cool', hvac_modes: ['off', 'cool'], fan_mode: 'Auto (Quiet)', fan_modes: ['Auto (Quiet)', 'High »'], ambient_temperature: 21, temperature_unit: 'C', supported_features: 8 }),
+            mk('humidifier', { on: true, target_humidity: 50, min_humidity: 50, max_humidity: 50, available_modes: ['a', 'b'] }),
+            mk('alarm_control_panel', { arm_state: 'disarmed' }),
+            mk('cover', { openPercent: 40, supported_features: 132, device_class: 'blind' }),
+            mk('light', { on: true, supported_color_modes: ['brightness'] })
+        ].filter(Boolean);
+        for (const ep of rows) {
+            assert.deepEqual(em.validateAlexaEndpoint(ep), [], `${ep.endpointId} should be schema-valid`);
+        }
+    });
+
+    it('validateAlexaEndpoint flags a deliberately broken endpoint', () => {
+        const bad = { endpointId: 'x', friendlyName: 'Bad#Name', displayCategories: ['NOPE'], capabilities: [] };
+        const errs = em.validateAlexaEndpoint(bad);
+        assert.ok(errs.length >= 3, 'should flag friendlyName, category, capabilities, base');
+    });
+});
