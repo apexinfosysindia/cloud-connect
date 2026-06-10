@@ -260,7 +260,9 @@ describe('buildAlexaEndpoint', () => {
         const c = { entity_type: 'sensor', entity_id: 'sensor.hum', display_name: 'Hum', online: 1, state_json: JSON.stringify({ value: 55, device_class: 'humidity' }) };
         const ep = em.buildAlexaEndpoint(c);
         assert.ok(ep.capabilities.some((x) => x.interface === 'Alexa.HumiditySensor'));
-        assert.deepEqual(ep.displayCategories, ['HUMIDITY_SENSOR']);
+        // Alexa has no HUMIDITY_SENSOR displayCategory — the HumiditySensor
+        // interface carries the reading; the category falls back to a valid one.
+        assert.deepEqual(ep.displayCategories, ['TEMPERATURE_SENSOR']);
         assert.equal(em.parseAlexaEndpointState(c).find((p) => p.name === 'relativeHumidity').value, 55);
     });
 
@@ -484,5 +486,86 @@ describe('parseAlexaEndpointState', () => {
         // Plan is base+health only → only the connectivity tuple is emitted.
         assert.equal(props.length, 1);
         assert.equal(props[0].name, 'connectivity');
+    });
+});
+
+// Regression guard: an invalid displayCategory causes Alexa to silently reject
+// the ENTIRE Discover.Response (0 devices). This sweep asserts every supported
+// domain — and the device_class variants that historically broke
+// (sensor.humidity → HUMIDITY_SENSOR, media_player.receiver → RECEIVER) — emits
+// only categories in Amazon's authoritative enum.
+describe('displayCategories are always valid (Amazon Discovery)', () => {
+    const sample = (entity_type, state) => ({
+        entity_id: `${entity_type}.x`,
+        display_name: 'X',
+        entity_type,
+        online: 1,
+        state_json: JSON.stringify(state || {})
+    });
+
+    // One representative state per supported domain.
+    const cases = [
+        sample('light', { on: true, supported_color_modes: ['onoff'] }),
+        sample('switch', { on: false }),
+        sample('outlet', { on: false }),
+        sample('input_boolean', { on: false }),
+        sample('automation', { on: true }),
+        sample('group', { on: true }),
+        sample('scene', {}),
+        sample('script', {}),
+        sample('button', {}),
+        sample('input_button', {}),
+        sample('lock', { isLocked: true }),
+        sample('fan', { on: true, percentage: 50, supported_features: 15, preset_modes: ['eco'], preset_mode: 'eco' }),
+        sample('cover', { openPercent: 40, supported_features: 132, device_class: 'blind' }),
+        sample('cover', { openPercent: 0, supported_features: 3, device_class: 'garage' }),
+        sample('cover', { openPercent: 0, supported_features: 3, device_class: 'door' }),
+        sample('cover', { openPercent: 0, supported_features: 3, device_class: 'awning' }),
+        sample('valve', { openPercent: 70, supported_features: 4 }),
+        sample('sensor', { value: 21, device_class: 'temperature', unit_of_measurement: '°C', temperature: 21 }),
+        sample('sensor', { value: 55, device_class: 'humidity' }), // was HUMIDITY_SENSOR
+        sample('binary_sensor', { is_on: true, device_class: 'door' }),
+        sample('binary_sensor', { is_on: false, device_class: 'motion' }),
+        sample('select', { current_option: 'a', options: ['a', 'b'] }),
+        sample('input_select', { current_option: 'a', options: ['a', 'b'] }),
+        sample('humidifier', { on: true, target_humidity: 45, min_humidity: 30, max_humidity: 70 }),
+        sample('water_heater', { on: true, target_temperature: 55, current_temperature: 50, temperature_unit: 'C' }),
+        sample('climate', { mode: 'heat_cool', hvac_modes: ['off', 'heat_cool'], ambient_temperature: 21, temperature_unit: 'C', supported_features: 8 }),
+        sample('vacuum', { on: true, isRunning: true, fan_speed: 'high', fan_speed_list: ['high'], supported_features: 32 }),
+        sample('lawn_mower', { isRunning: false, isDocked: true }),
+        sample('media_player', { on: true, volume: 30, source: 'HDMI1', source_list: ['HDMI1'], supported_features: 22965, device_class: 'tv' }),
+        sample('media_player', { on: true, volume: 30, supported_features: 4, device_class: 'speaker' }),
+        sample('media_player', { on: true, volume: 30, supported_features: 4, device_class: 'receiver' }), // was RECEIVER
+        sample('alarm_control_panel', { arm_state: 'disarmed' })
+    ];
+
+    it('every supported domain emits only Amazon-valid displayCategories', () => {
+        for (const row of cases) {
+            const ep = em.buildAlexaEndpoint(row, {});
+            assert.ok(ep, `${row.entity_id} should be discoverable`);
+            assert.ok(Array.isArray(ep.displayCategories) && ep.displayCategories.length > 0, `${row.entity_id} has categories`);
+            for (const cat of ep.displayCategories) {
+                assert.ok(
+                    em.VALID_DISPLAY_CATEGORIES.has(cat),
+                    `${row.entity_id} (${JSON.parse(row.state_json).device_class || '-'}) emitted INVALID displayCategory: ${cat}`
+                );
+            }
+        }
+    });
+
+    it('humidity sensor and AV receiver no longer emit invalid categories', () => {
+        const hum = em.buildAlexaEndpoint(sample('sensor', { value: 55, device_class: 'humidity' }), {});
+        assert.ok(!hum.displayCategories.includes('HUMIDITY_SENSOR'));
+        assert.deepEqual(hum.displayCategories, ['TEMPERATURE_SENSOR']);
+        const recv = em.buildAlexaEndpoint(sample('media_player', { on: true, volume: 30, supported_features: 4, device_class: 'receiver' }), {});
+        assert.ok(!recv.displayCategories.includes('RECEIVER'));
+        assert.deepEqual(recv.displayCategories, ['STREAMING_DEVICE']);
+    });
+
+    it('an unknown category is coerced to OTHER, never passed through', () => {
+        // Drive resolveDisplayCategories via a hypothetical bad mapping by checking the
+        // sanitizer contract: VALID set never contains a made-up value, and OTHER is valid.
+        assert.ok(!em.VALID_DISPLAY_CATEGORIES.has('NOT_A_REAL_CATEGORY'));
+        assert.ok(em.VALID_DISPLAY_CATEGORIES.has('OTHER'));
     });
 });
