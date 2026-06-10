@@ -732,3 +732,42 @@ describe('label sanitization + endpoint validation backstop', () => {
         assert.ok(errs.length >= 3, 'should flag friendlyName, category, capabilities, base');
     });
 });
+
+// Regression: a cool-only AC (HA modes off/cool/dry/fan_only, single setpoint)
+// must NOT emit invalid thermostatMode values (DEHUMIDIFY/FAN — not in Amazon's
+// enum) nor advertise lower/upperSetpoint. This was the field that 400d the
+// whole batch in production (found by bisecting the live payload against Amazon).
+describe('ThermostatController stays within Amazon schema', () => {
+    const ac = () => em.buildAlexaEndpoint({
+        entity_id: 'climate.ac', entity_type: 'climate', display_name: 'AC', online: 1,
+        state_json: JSON.stringify({ mode: 'off', hvac_modes: ['off', 'cool', 'dry', 'fan_only'], fan_mode: 'high', fan_modes: ['low', 'mid', 'high', 'auto'], target_temperature: 21, target_temp_low: null, target_temp_high: null, min_temp: 18, max_temp: 32, supported_features: 393, temperature_unit: 'C' })
+    }, {});
+
+    it('drops unmappable HA modes (dry/fan_only) from supportedModes', () => {
+        const t = ac().capabilities.find((c) => c.interface === 'Alexa.ThermostatController');
+        assert.deepEqual(t.configuration.supportedModes, ['OFF', 'COOL']);
+        const VALID = new Set(['AUTO', 'COOL', 'ECO', 'EM_HEAT', 'HEAT', 'OFF']);
+        for (const m of t.configuration.supportedModes) assert.ok(VALID.has(m), `invalid mode ${m}`);
+    });
+
+    it('a single-setpoint AC does not advertise lower/upperSetpoint', () => {
+        const t = ac().capabilities.find((c) => c.interface === 'Alexa.ThermostatController');
+        const props = t.properties.supported.map((p) => p.name);
+        assert.ok(props.includes('targetSetpoint'));
+        assert.ok(!props.includes('lowerSetpoint'));
+        assert.ok(!props.includes('upperSetpoint'));
+    });
+
+    it('a dual-capable climate (heat_cool) still gets lower/upperSetpoint', () => {
+        const ep = em.buildAlexaEndpoint({ entity_id: 'climate.h', entity_type: 'climate', display_name: 'H', online: 1, state_json: JSON.stringify({ mode: 'heat_cool', hvac_modes: ['off', 'heat', 'cool', 'heat_cool'], target_temp_low: 19, target_temp_high: 24, ambient_temperature: 21, temperature_unit: 'C', supported_features: 2 }) }, {});
+        const t = ep.capabilities.find((c) => c.interface === 'Alexa.ThermostatController');
+        const props = t.properties.supported.map((p) => p.name);
+        assert.ok(props.includes('lowerSetpoint') && props.includes('upperSetpoint'));
+        assert.ok(t.configuration.supportedModes.includes('AUTO'));
+    });
+
+    it('validateAlexaEndpoint flags an invalid thermostatMode', () => {
+        const bad = { endpointId: 'x', friendlyName: 'X', displayCategories: ['THERMOSTAT'], capabilities: [{ type: 'AlexaInterface', interface: 'Alexa', version: '3' }, { type: 'AlexaInterface', interface: 'Alexa.ThermostatController', version: '3', properties: { supported: [{ name: 'targetSetpoint' }] }, configuration: { supportedModes: ['COOL', 'DEHUMIDIFY'] } }] };
+        assert.ok(em.validateAlexaEndpoint(bad).some((e) => /DEHUMIDIFY/.test(e)));
+    });
+});
