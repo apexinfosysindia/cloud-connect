@@ -190,7 +190,10 @@ module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, co
                 ]
             );
 
-            if (success && req.body?.state) {
+            // Camera stream results are transient (stream/image URLs), not entity
+            // state — they're read from result_json by waitForAlexaCommandResult.
+            // Skip the endpoint-state merge for them (avoids a spurious ChangeReport).
+            if (success && req.body?.state && command.action !== 'get_camera_stream') {
                 const normalizedState = req.body.state || {};
                 const existing = await dbGet(
                     `SELECT entity_type, state_json FROM alexa_endpoints WHERE user_id = ? AND device_id = ? AND entity_id = ? LIMIT 1`,
@@ -217,6 +220,34 @@ module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, co
             }
 
             return res.status(200).json({ message: 'Command result recorded' });
+        })
+    );
+
+    // Doorbell press — a proactive, latency-sensitive push from the add-on's
+    // real-time WebSocket watcher (NOT the command poll). The add-on fires this
+    // the instant an event.<doorbell> entity triggers; we immediately forward a
+    // DoorbellPress to Amazon so the Echo announces it. Kept minimal/fast.
+    router.post(
+        '/api/internal/devices/alexa/doorbell',
+        auth.requireDeviceAuth,
+        asyncHandler(async (req, res) => {
+            const device = req.device;
+            const entityId = utils.sanitizeEntityId(req.body?.entity_id);
+            if (!entityId) {
+                return res.status(400).json({ error: 'entity_id is required' });
+            }
+            // Confirm this is a real, exposed endpoint for this device's user
+            // before bothering Amazon.
+            const row = await dbGet(
+                `SELECT id FROM alexa_endpoints WHERE user_id = ? AND device_id = ? AND entity_id = ? AND exposed = 1 LIMIT 1`,
+                [device.user_id, device.id, entityId]
+            );
+            if (!row) {
+                return res.status(404).json({ error: 'Unknown or unexposed doorbell endpoint' });
+            }
+            // Fire-and-forward; sendDoorbellPressEvent is best-effort and never throws.
+            const result = await eventGateway.sendDoorbellPressEvent(device.user_id, entityId);
+            return res.status(200).json({ message: 'Doorbell event forwarded', skipped: Boolean(result?.skipped) });
         })
     );
 

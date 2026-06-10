@@ -108,3 +108,66 @@ describe('alexa event-gateway report collection', () => {
         assert.deepEqual(health.value, { value: 'OK' });
     });
 });
+
+describe('sendDoorbellPressEvent', () => {
+    let core;
+    let eventGateway;
+    let helpers;
+    const captured = [];
+
+    before(async () => {
+        helpers = makeDb();
+        await new Promise((res, rej) =>
+            helpers.db.serialize(() =>
+                require('../../lib/migrator')({ db: helpers.db, migrationsDir: path.join(__dirname, '../../migrations') })
+                    .runPending()
+                    .then(res, rej)
+            )
+        );
+        // Credentials must be present for hasAlexaCredentials().
+        process.env.ALEXA_LWA_CLIENT_ID = 'cid';
+        process.env.ALEXA_LWA_CLIENT_SECRET = 'secret';
+        process.env.ALEXA_REPORT_STATE_ENABLED = '1';
+        delete require.cache[require.resolve('../../lib/config')];
+        const freshConfig = require('../../lib/config');
+        const alexaCrypto = require('../../lib/alexa/crypto')({ config: freshConfig });
+        core = require('../../lib/alexa/core')({ ...helpers, alexaCrypto });
+        eventGateway = require('../../lib/alexa/event-gateway')({ ...helpers, core });
+        await helpers.dbRun(
+            "INSERT INTO users (email,password,status,alexa_enabled,alexa_linked) VALUES (?,?,?,1,1)",
+            ['d@x.com', 'pw', 'active']
+        );
+        await core.storeAlexaLwaTokens(1, { accessToken: 'lwa-acc', refreshToken: 'lwa-ref', region: 'NA', expiresInSeconds: 3600 });
+
+        // Stub fetch: token refresh returns an access token; event POST returns 202
+        // and captures the envelope.
+        global.fetch = async (url, opts) => {
+            if (String(url).includes('/auth/') || String(url).includes('token')) {
+                return { ok: true, status: 200, json: async () => ({ access_token: 'acc-tok', expires_in: 3600 }) };
+            }
+            captured.push({ url, body: JSON.parse(opts.body) });
+            return { ok: true, status: 202, text: async () => '', json: async () => ({}) };
+        };
+    });
+
+    it('posts a DoorbellPress envelope with PHYSICAL_INTERACTION cause', async () => {
+        const res = await eventGateway.sendDoorbellPressEvent(1, 'event.front_doorbell');
+        assert.equal(res.ok, true);
+        assert.equal(res.statusCode, 202);
+        const ev = captured[captured.length - 1].body.event;
+        assert.equal(ev.header.namespace, 'Alexa.DoorbellEventSource');
+        assert.equal(ev.header.name, 'DoorbellPress');
+        assert.equal(ev.endpoint.endpointId, 'event.front_doorbell');
+        assert.equal(ev.endpoint.scope.type, 'BearerToken');
+        assert.equal(ev.payload.cause.type, 'PHYSICAL_INTERACTION');
+        assert.ok(ev.payload.timestamp);
+    });
+
+    it('skips (does not throw) for an unlinked user', async () => {
+        await helpers.dbRun('UPDATE users SET alexa_linked = 0 WHERE id = 1');
+        const res = await eventGateway.sendDoorbellPressEvent(1, 'event.front_doorbell');
+        assert.equal(res.skipped, true);
+        assert.equal(res.reason, 'not_linked');
+        await helpers.dbRun('UPDATE users SET alexa_linked = 1 WHERE id = 1');
+    });
+});

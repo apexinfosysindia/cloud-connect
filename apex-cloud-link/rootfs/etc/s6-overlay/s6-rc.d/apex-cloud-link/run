@@ -28,6 +28,7 @@ GOOGLE_ENTITY_SYNC_BATCH_SIZE=120
 ALEXA_ENTITY_SYNC_INTERVAL=5
 ALEXA_COMMAND_SYNC_INTERVAL=1
 ALEXA_SYNC_PID=""
+ALEXA_DOORBELL_PID=""
 ALEXA_WARNED_EMPTY_ENTITY_SYNC=0
 ALEXA_ENTITY_SYNC_BATCH_SIZE=120
 CLOUD_POST_STATUS=""
@@ -708,12 +709,14 @@ sync_alexa_entities() {
 
     local entities_json='[]'
     entities_json=$(printf '%s' "$states_json" | jq -c --argjson devinfo "$device_info_map" --argjson areamap "$area_map" '
-            map(select(.entity_id | test("^(light|fan|switch|input_boolean|automation|group|scene|script|button|input_button|lock|cover|valve|sensor|binary_sensor|select|input_select|humidifier|water_heater|climate|vacuum|lawn_mower|media_player|alarm_control_panel)\\.")))
+            map(select(.entity_id | test("^(light|fan|switch|input_boolean|automation|group|scene|script|button|input_button|lock|cover|valve|sensor|binary_sensor|select|input_select|humidifier|water_heater|climate|vacuum|lawn_mower|media_player|alarm_control_panel|camera|event)\\.")))
             | map(select(
                 if (.entity_id | startswith("sensor."))
                 then (((.attributes.device_class // "") | tostring) | test("^(temperature|humidity)$"))
                 elif (.entity_id | startswith("binary_sensor."))
                 then (((.attributes.device_class // "") | tostring) | test("^(door|window|garage_door|opening|motion|occupancy|presence)$"))
+                elif (.entity_id | startswith("event."))
+                then (((.attributes.device_class // "") | tostring) | test("^(doorbell)$"))
                 else true
                 end
             ))
@@ -727,7 +730,7 @@ sync_alexa_entities() {
                     display_name: ($s.attributes.friendly_name // $s.entity_id),
                     room_hint: ($areamap[$s.entity_id] // ""),
                     online: (
-                        if ($s.entity_id | (startswith("scene.") or startswith("script.") or startswith("button.") or startswith("input_button.")))
+                        if ($s.entity_id | (startswith("scene.") or startswith("script.") or startswith("button.") or startswith("input_button.") or startswith("event.")))
                         then true
                         else ($state_text != "unavailable")
                         end
@@ -756,6 +759,8 @@ sync_alexa_entities() {
                         elif ($s.entity_id | startswith("lawn_mower.")) then "lawn_mower"
                         elif ($s.entity_id | startswith("media_player.")) then "media_player"
                         elif ($s.entity_id | startswith("alarm_control_panel.")) then "alarm_control_panel"
+                        elif ($s.entity_id | startswith("camera.")) then "camera"
+                        elif ($s.entity_id | startswith("event.")) then "event"
                         elif (($dc // "") == "outlet") then "outlet"
                         else "switch"
                         end
@@ -885,6 +890,16 @@ sync_alexa_entities() {
                             arm_state: $state_text,
                             code_format: ($s.attributes.code_format // null),
                             supported_features: $sf
+                        }
+                        elif ($s.entity_id | startswith("camera.")) then {
+                            is_streaming: ($s.state == "streaming"),
+                            supported_features: $sf,
+                            device_class: $dc,
+                            frontend_stream_type: ($s.attributes.frontend_stream_type // "hls")
+                        }
+                        elif ($s.entity_id | startswith("event.")) then {
+                            device_class: $dc,
+                            event_type: ($s.attributes.event_type // null)
                         }
                         else {
                             on: ($s.state == "on")
@@ -1684,6 +1699,63 @@ execute_alexa_command() {
             ha_api_post "/services/alarm_control_panel/alarm_disarm" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
             resulting_state='{"arm_state":"disarmed"}'
         fi
+    elif [ "$action" = "get_camera_stream" ]; then
+        # Fetch the HA HLS stream path + a signed snapshot path (both relative)
+        # over one WS connection, then build PUBLIC absolute URLs via the customer
+        # subdomain (Caddy on-demand TLS → frp → HA). Alexa needs an
+        # internet-reachable HTTPS stream URI plus a snapshot imageUri.
+        local cam_json stream_path image_path
+        cam_json=$(python3 -c "
+import json, os, sys
+try:
+    from websocket import create_connection
+    token = os.environ.get('SUPERVISOR_TOKEN', '')
+    entity_id = sys.argv[1]
+    ws = create_connection('ws://supervisor/core/websocket', timeout=10)
+    msg = json.loads(ws.recv())
+    if msg.get('type') == 'auth_required':
+        ws.send(json.dumps({'type': 'auth', 'access_token': token}))
+    msg = json.loads(ws.recv())
+    if msg.get('type') != 'auth_ok':
+        sys.exit(1)
+    out = {}
+    # 1) HLS stream URL (relative)
+    ws.send(json.dumps({'id': 1, 'type': 'camera/stream', 'entity_id': entity_id}))
+    m1 = json.loads(ws.recv())
+    if m1.get('success') and m1.get('result', {}).get('url'):
+        out['stream'] = m1['result']['url']
+    # 2) Signed, long-lived snapshot path for imageUri (best-effort)
+    ws.send(json.dumps({'id': 2, 'type': 'auth/sign_path',
+                        'path': '/api/camera_proxy/' + entity_id, 'expires': 3600}))
+    m2 = json.loads(ws.recv())
+    if m2.get('success') and m2.get('result', {}).get('path'):
+        out['image'] = m2['result']['path']
+    ws.close()
+    if out.get('stream'):
+        print(json.dumps(out))
+    else:
+        sys.exit(1)
+except Exception:
+    sys.exit(1)
+" "$entity_id" 2>/dev/null)
+        stream_path=$(printf '%s' "$cam_json" | jq -r '.stream // empty' 2>/dev/null)
+        image_path=$(printf '%s' "$cam_json" | jq -r '.image // empty' 2>/dev/null)
+        if [ -n "$stream_path" ]; then
+            local base_url stream_url image_url
+            base_url="https://${SUBDOMAIN}.cloud.apexinfosys.in"
+            stream_url="${base_url}${stream_path}"
+            # Fall back to the unsigned proxy path if signing failed; Alexa just
+            # needs a URL — a stale thumbnail is better than none.
+            if [ -n "$image_path" ]; then
+                image_url="${base_url}${image_path}"
+            else
+                image_url="${base_url}/api/camera_proxy/${entity_id}"
+            fi
+            resulting_state=$(jq -n --arg s "$stream_url" --arg i "$image_url" '{stream_url: $s, image_url: $i}')
+        else
+            success=false
+            error_msg="Unable to start camera stream"
+        fi
     else
         success=false
         error_msg="Unsupported action ${action}"
@@ -1838,6 +1910,98 @@ start_alexa_sync_loop() {
     ) &
 
     ALEXA_SYNC_PID=$!
+}
+
+# Real-time doorbell watcher. The poll loops (5s entity sync) are far too slow
+# and lossy for a doorbell press — an event.<doorbell> entity's state flips to a
+# timestamp for an instant. This runs a PERSISTENT HA WebSocket subscription
+# (the only long-lived WS in the addon) and, the moment a doorbell event fires,
+# POSTs /api/internal/devices/alexa/doorbell so the portal forwards a
+# DoorbellPress to Alexa immediately. Self-reconnecting with backoff; runs in
+# its own subshell so it can never affect the sync loops or heartbeat.
+start_alexa_doorbell_watcher() {
+    if [ "$FLEET_ACTIVE" -ne 1 ] || [ -z "$DEVICE_TOKEN" ]; then
+        return
+    fi
+    if [ -z "${SUPERVISOR_TOKEN:-}" ]; then
+        bashio::log.warning "Doorbell watcher disabled: SUPERVISOR_TOKEN unavailable"
+        return
+    fi
+    # Cheap pre-check: only spin up the watcher if at least one doorbell exists.
+    local states_json doorbell_count
+    states_json=$(ha_api_get "/states")
+    doorbell_count=$(printf '%s' "$states_json" | jq -r '[.[] | select((.entity_id|startswith("event.")) and ((.attributes.device_class // "")=="doorbell"))] | length' 2>/dev/null || printf '0')
+    case "$doorbell_count" in ''|*[!0-9]*) doorbell_count=0 ;; esac
+    if [ "$doorbell_count" -eq 0 ]; then
+        bashio::log.info "Doorbell watcher: no doorbell entities exposed, not starting"
+        return
+    fi
+    bashio::log.info "Doorbell watcher: subscribing to ${doorbell_count} doorbell entity(ies)"
+
+    (
+        set +e
+        CLOUD_API_URL="$CLOUD_API_URL" DEVICE_TOKEN="$DEVICE_TOKEN" SUPERVISOR_TOKEN="$SUPERVISOR_TOKEN" python3 -u -c "
+import json, os, time
+try:
+    from websocket import create_connection
+except Exception:
+    print('Doorbell watcher: websocket lib unavailable', flush=True)
+    raise SystemExit(0)
+import urllib.request
+
+CLOUD = os.environ.get('CLOUD_API_URL','').rstrip('/')
+DEVTOK = os.environ.get('DEVICE_TOKEN','')
+SUPTOK = os.environ.get('SUPERVISOR_TOKEN','')
+
+def post_doorbell(entity_id):
+    try:
+        req = urllib.request.Request(
+            CLOUD + '/api/internal/devices/alexa/doorbell',
+            data=json.dumps({'entity_id': entity_id}).encode(),
+            headers={'Content-Type':'application/json','Authorization':'Bearer '+DEVTOK},
+            method='POST')
+        urllib.request.urlopen(req, timeout=8).read()
+    except Exception as e:
+        print('Doorbell post failed: %s' % e, flush=True)
+
+backoff = 5
+while True:
+    try:
+        ws = create_connection('ws://supervisor/core/websocket', timeout=10)
+        msg = json.loads(ws.recv())
+        if msg.get('type') == 'auth_required':
+            ws.send(json.dumps({'type':'auth','access_token':SUPTOK}))
+        msg = json.loads(ws.recv())
+        if msg.get('type') != 'auth_ok':
+            ws.close(); time.sleep(backoff); backoff=min(backoff*2,30); continue
+        # Subscribe to all state_changed; filter to doorbell event entities client-side.
+        ws.send(json.dumps({'id':1,'type':'subscribe_events','event_type':'state_changed'}))
+        ws.recv()  # subscribe ack
+        backoff = 5  # reset after a clean connect
+        while True:
+            raw = ws.recv()
+            if not raw:
+                break
+            ev = json.loads(raw)
+            data = (ev.get('event') or {}).get('data') or {}
+            eid = data.get('entity_id') or ''
+            if not eid.startswith('event.'):
+                continue
+            new_state = data.get('new_state') or {}
+            attrs = new_state.get('attributes') or {}
+            if attrs.get('device_class') != 'doorbell':
+                continue
+            old_state = data.get('old_state') or {}
+            # A doorbell 'press' = the event entity's state timestamp advanced.
+            if new_state.get('state') and new_state.get('state') != (old_state.get('state') if old_state else None):
+                post_doorbell(eid)
+    except Exception as e:
+        print('Doorbell watcher reconnect (%s) in %ss' % (e, backoff), flush=True)
+        time.sleep(backoff); backoff = min(backoff*2, 30)
+" 2>&1 | while IFS= read -r line; do bashio::log.info "[doorbell] $line"; done
+    ) &
+
+    ALEXA_DOORBELL_PID=$!
 }
 
 save_device_token() {
@@ -2059,6 +2223,11 @@ cleanup() {
         wait "$ALEXA_SYNC_PID" 2>/dev/null || true
     fi
 
+    if [ -n "$ALEXA_DOORBELL_PID" ]; then
+        kill "$ALEXA_DOORBELL_PID" 2>/dev/null || true
+        wait "$ALEXA_DOORBELL_PID" 2>/dev/null || true
+    fi
+
     if [ -n "$HEARTBEAT_PID" ]; then
         kill "$HEARTBEAT_PID" 2>/dev/null || true
         wait "$HEARTBEAT_PID" 2>/dev/null || true
@@ -2199,6 +2368,7 @@ if [ "$FLEET_ACTIVE" -eq 1 ] && [ -n "$DEVICE_TOKEN" ]; then
     start_heartbeat_loop
     start_google_sync_loop
     start_alexa_sync_loop
+    start_alexa_doorbell_watcher
 fi
 
 bashio::log.info "Configuration generated. Connecting to cloud"

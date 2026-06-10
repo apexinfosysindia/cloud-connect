@@ -850,3 +850,56 @@ describe('every advertised retrievable property is always reported', () => {
         check('climate', { mode: 'cool', hvac_modes: ['off', 'cool'], target_temperature: 21, ambient_temperature: 26, supported_features: 1, temperature_unit: 'C' });
     });
 });
+
+// Beyond-parity: doorbell (Alexa.DoorbellEventSource) and camera
+// (Alexa.CameraStreamController). Doorbell is proactive-only; camera advertises
+// stream configs. Both have no retrievable properties.
+describe('doorbell + camera discovery', () => {
+    const mk = (entity_type, state) =>
+        em.buildAlexaEndpoint({ entity_id: `${entity_type}.x`, entity_type, display_name: 'X', online: 1, state_json: JSON.stringify(state) }, {});
+
+    it('doorbell event → DoorbellEventSource, proactive-only, DOORBELL category', () => {
+        const ep = mk('event', { device_class: 'doorbell', event_type: 'press' });
+        assert.ok(ep, 'doorbell should be discoverable');
+        const cap = ep.capabilities.find((c) => c.interface === 'Alexa.DoorbellEventSource');
+        assert.ok(cap, 'has DoorbellEventSource');
+        // proactivelyReported sits at the top level, NOT in a properties block.
+        assert.equal(cap.proactivelyReported, true);
+        assert.equal(cap.properties, undefined);
+        assert.deepEqual(ep.displayCategories, ['DOORBELL']);
+        assert.deepEqual(em.validateAlexaEndpoint(ep), []);
+        // No reportable state (only EndpointHealth connectivity).
+        const props = em.parseAlexaEndpointState({ entity_type: 'event', online: 1, state_json: JSON.stringify({ device_class: 'doorbell' }) });
+        assert.equal(props.length, 1);
+        assert.equal(props[0].name, 'connectivity');
+    });
+
+    it('a non-doorbell event is excluded', () => {
+        assert.equal(mk('event', { device_class: 'motion' }), null);
+        assert.equal(mk('event', { device_class: 'button' }), null);
+    });
+
+    it('camera → CameraStreamController with stream configs, CAMERA category first', () => {
+        const ep = mk('camera', { is_streaming: false, supported_features: 2, frontend_stream_type: 'hls' });
+        assert.ok(ep, 'camera should be discoverable');
+        const cap = ep.capabilities.find((c) => c.interface === 'Alexa.CameraStreamController');
+        assert.ok(cap, 'has CameraStreamController');
+        const cfg = cap.cameraStreamConfigurations[0];
+        assert.deepEqual(cfg.protocols, ['HLS']);
+        assert.deepEqual(cfg.videoCodecs, ['H264']);
+        assert.ok(cfg.resolutions.some((r) => r.width === 1280 && r.height === 720));
+        assert.equal(ep.displayCategories[0], 'CAMERA');
+        assert.deepEqual(em.validateAlexaEndpoint(ep), []);
+    });
+
+    it('validateAlexaEndpoint flags CAMERA not listed first', () => {
+        const bad = {
+            endpointId: 'camera.x', friendlyName: 'Cam', displayCategories: ['OTHER', 'CAMERA'],
+            capabilities: [
+                { type: 'AlexaInterface', interface: 'Alexa', version: '3' },
+                { type: 'AlexaInterface', interface: 'Alexa.CameraStreamController', version: '3' }
+            ]
+        };
+        assert.ok(em.validateAlexaEndpoint(bad).some((e) => /CAMERA must be first/.test(e)));
+    });
+});
