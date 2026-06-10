@@ -2095,38 +2095,59 @@ code {
 .theme-toggle {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    min-height: 40px;
-    padding: 0 12px;
-    border-radius: 999px;
+    justify-content: center;
+    gap: 7px;
+    height: 40px;
+    padding: 0 14px;
+    border-radius: var(--radius-md);
     border: 1px solid var(--line-strong);
     background: var(--surface);
-    color: var(--text);
-    font-size: 0.86rem;
+    color: var(--text-muted);
+    font-size: 0.82rem;
     font-weight: 600;
     line-height: 1;
     white-space: nowrap;
-    transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, transform 0.16s ease;
+    transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
 }
 
 .theme-toggle:hover {
-    background: var(--bg-soft);
-    transform: translateY(-1px);
+    background: var(--surface-tint);
+    border-color: var(--brand);
+    color: var(--text);
+}
+
+.theme-toggle:focus-visible {
+    outline: none;
+    border-color: var(--brand);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
 }
 
 .theme-toggle__icon {
-    font-size: 1rem;
-    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
-/* On very small screens, collapse to just the icon to save masthead space. */
+.theme-toggle__icon svg {
+    width: 17px;
+    height: 17px;
+    display: block;
+}
+
+.theme-toggle__label {
+    letter-spacing: 0.01em;
+}
+
+/* On very small screens, collapse to a square icon-only button. */
 @media (max-width: 560px) {
     .theme-toggle__label {
         display: none;
     }
 
     .theme-toggle {
-        padding: 0 10px;
+        width: 40px;
+        padding: 0;
+        gap: 0;
     }
 }
 
@@ -2285,6 +2306,22 @@ code {
 
 :root[data-theme-effective="dark"] body {
     background: linear-gradient(180deg, var(--bg-soft) 0%, var(--bg) 100%);
+}
+
+/* Brand logos are dark-on-transparent PNGs authored for light backgrounds, so
+   they vanish on a dark masthead. invert(1) flips their lightness (dark navy →
+   light) and hue-rotate(180deg) restores the original hues (so the red bar and
+   blue mark stay on-brand rather than becoming cyan). */
+:root[data-theme-effective="dark"] .brand-suite__group,
+:root[data-theme-effective="dark"] .brand-suite__product-logo {
+    filter: invert(1) hue-rotate(180deg);
+}
+
+/* The product-logo chip has a light tint + border that frames the inverted art
+   awkwardly; drop the frame in dark mode so just the mark shows. */
+:root[data-theme-effective="dark"] .brand-suite__product-logo {
+    background: transparent;
+    border-color: transparent;
 }
 
 :root[data-theme-effective="dark"] .masthead {
