@@ -13,14 +13,6 @@ This repository contains the Cloud Connect control plane:
 - Caddy config
 - FRP server config
 
-## Current Behavior
-
-- New users sign up into `payment_pending`.
-- Remote access is enabled only for users in `active` or `trial`.
-- Paid activation happens after successful Razorpay checkout and verification.
-- Free 12-month trials are no longer automatic.
-- Free trials are intended to be granted manually from the admin dashboard.
-
 ## Architecture
 
 High-level request flow:
@@ -44,38 +36,12 @@ Control plane flow:
 
 ## Portal Features
 
-- Customer signup and login
-- Razorpay subscription checkout and payment verification
-- Razorpay webhook processing
 - Admin dashboard for user management
-- Manual 365-day trial approval
 - Domain verification for Caddy on-demand TLS
 - FRP login authorization using access tokens
 - Admin fleet visibility for registered SSH tunnel devices
 - Device heartbeat tracking (online/offline, local IPs, last seen)
 - Device and admin access logs for auditability
-- Admin-only connect command generation for remote SSH
-
-## Admin Dashboard
-
-Path:
-
-- `/admin.html`
-  Capabilities:
-- View all users
-- Approve a 365-day trial
-- Set user status to `active`
-- Set user status to `suspended`
-- Set user status to `expired`
-- Move a user back to `payment_pending`
-- View live/offline device fleet state
-- Inspect recent device events and admin connect actions
-- Generate short-lived admin SSH connect commands per device
-  Required environment variables:
-- `ADMIN_EMAIL`
-- `ADMIN_PASSWORD`
-- `ADMIN_SESSION_SECRET` (min 32 chars)
-- `PORTAL_SESSION_SECRET` (min 32 chars)
 
 ## Device Fleet API (Internal + Admin)
 
@@ -101,36 +67,6 @@ All admin fleet routes require admin bearer auth.
 - `expired`: remote access disabled
 - `suspended`: remote access disabled
 
-## Environment Variables
-
-Set these in `.env` on the VPS:
-
-```env
-PORT=3000
-RAZORPAY_KEY_ID=
-RAZORPAY_KEY_SECRET=
-RAZORPAY_PLAN_ID=
-RAZORPAY_WEBHOOK_SECRET=
-ADMIN_EMAIL=
-ADMIN_PASSWORD=
-ADMIN_SESSION_SECRET=
-PORTAL_SESSION_SECRET=
-GOOGLE_HOME_CLIENT_ID=
-GOOGLE_HOME_CLIENT_SECRET=
-GOOGLE_HOME_REDIRECT_URI_HOSTS=oauth-redirect.googleusercontent.com
-GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL=
-GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY=
-GOOGLE_HOMEGRAPH_ADMIN_TOKEN=
-GOOGLE_HOMEGRAPH_REPORT_STATE_ENABLED=1
-GOOGLE_HOMEGRAPH_REQUEST_SYNC_DEBOUNCE_MS=2500
-GOOGLE_HOMEGRAPH_REPORT_STATE_DEBOUNCE_MS=1200
-GOOGLE_DEBUG_ENDPOINTS_ENABLED=0
-ALLOWED_CORS_ORIGINS=https://oasis.apexinfosys.in,https://vista.apexinfosys.in
-DEVICE_HEARTBEAT_TIMEOUT_SECONDS=45
-DEVICE_HEARTBEAT_INTERVAL_SECONDS=20
-DEVICE_TUNNEL_HOST=cloud.apexinfosys.in
-DEVICE_TUNNEL_PORT_MIN=22000
-DEVICE_TUNNEL_PORT_MAX=22999
 ```
 
 ## Local Development
@@ -199,29 +135,6 @@ sqlite3 /tmp/restored.sqlite 'PRAGMA integrity_check'
 
 The `backups/` directory is gitignored.
 
-## Live VPS Paths
-
-The repo keeps source copies of the edge configs, but the live services use:
-
-- Caddy: `/etc/caddy/Caddyfile`
-- FRPS: `/etc/frp/frps.toml`
-  The repo copies are:
-- `Caddyfile`
-- `frps.toml`
-
-## Deployment Notes
-
-Typical production restart flow:
-
-```bash
-cd /opt/cloud-connect
-npm ci --omit=dev
-pm2 restart server
-sudo caddy validate --config /etc/caddy/Caddyfile
-sudo systemctl reload caddy
-sudo systemctl restart frps
-```
-
 ## ApexOS Add-on
 
 The separate `apex-cloud-link` add-on repo:
@@ -260,9 +173,9 @@ Production requirements:
 - Open only jump-host SSH port (`22` or `443`) in cloud firewall/NSG
 - Keep FRP assigned port range closed from public internet
 
-## Google Home (MVP)
+## Google Home
 
-Cloud Connect now includes a private Google Home Cloud-to-Cloud MVP:
+Cloud Connect now includes a private Google Home Cloud-to-Cloud Action:
 
 - OAuth authorize endpoint: `GET /api/google/home/oauth`
 - OAuth token endpoint: `POST /api/google/home/token`
@@ -300,7 +213,7 @@ Addon integration:
 - Addon polls queued commands via `POST /api/internal/devices/google-home/commands`
 - Addon posts command results via `POST /api/internal/devices/google-home/commands/:id/result`
 
-MVP entity support:
+Cloud-to-Cloud Action entity support:
 
 - `switch.*`, `input_boolean.*`, `automation.*`, `script.*` -> On/Off
 - `light.*` -> On/Off + Brightness
@@ -312,36 +225,3 @@ MVP entity support:
 - `scene.*` and `button.*` -> Scene activate behavior
 - `vacuum.*` -> Start/Stop + Pause/Resume
 - `sensor.*` (temperature-like) -> ambient temperature state
-
-Automatic addon behavior:
-
-- Fleet reporting is always on
-- Device identity is derived from hostname
-- SSH user is fixed to `root`
-- SSH local port is fixed to `22`
-- Tunnel host is set by Cloud Connect (`DEVICE_TUNNEL_HOST`, defaults to `CLOUD_BASE_DOMAIN`)
-- Tunnel port is auto-assigned by Cloud Connect from `DEVICE_TUNNEL_PORT_MIN..DEVICE_TUNNEL_PORT_MAX`
-
-## Billing Notes
-
-- Checkout is Razorpay subscription-based.
-- Payment activation is verified both from the browser callback and Razorpay webhooks.
-- Pending users do not get their tunnel access token in the portal UI.
-- If you want to grant free access, do it from the admin dashboard instead of signup.
-
-## Suggested Git Strategy
-
-Recommended production flow:
-
-- GitHub as source of truth
-- GitHub Actions deployment to the VPS over SSH
-- Tag stable releases for rollback
-- Keep `.env` and `database.sqlite` only on the VPS
-
-## Security Notes
-
-- Do not commit `.env`
-- Do not commit `database.sqlite`
-- Rotate `webServer.password` in `frps.toml`
-- Replace default secrets before production
-- Restrict admin credentials to trusted operators only
