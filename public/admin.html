@@ -4,12 +4,27 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ApexOS Cloud Connect Admin | Vista</title>
+    <script>
+        // No-flash theme bootstrap: resolve light/dark/auto before CSS paints.
+        (function () {
+            try {
+                var c = localStorage.getItem('apex_theme');
+                if (c !== 'light' && c !== 'dark' && c !== 'auto') c = 'auto';
+                var eff = c === 'dark' || (c === 'auto' && window.matchMedia &&
+                    window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+                var r = document.documentElement;
+                r.setAttribute('data-theme', c);
+                r.setAttribute('data-theme-effective', eff);
+            } catch (e) {}
+        })();
+    </script>
     <link rel="stylesheet" href="/styles.css">
     <link rel="icon" href="/favicon.ico">
+    <script src="/theme.js" defer></script>
 </head>
 <body class="admin-page">
 <div class="page-shell page-shell--admin">
-    <header class="masthead masthead--admin masthead--no-actions">
+    <header class="masthead masthead--admin">
         <div class="brand-suite">
             <img src="/group-logo.png" alt="Apex Infosys" class="brand-suite__group">
             <span class="brand-suite__divider"></span>
@@ -23,6 +38,7 @@
         </div>
 
         <div class="masthead-actions">
+            <button type="button" class="theme-toggle"></button>
             <span id="adminIdentity" class="identity-pill hidden"></span>
             <button id="logoutBtn" class="button button-secondary hidden">Log Out</button>
         </div>
@@ -115,6 +131,7 @@
         </section>
     </main>
 </div>
+<footer class="site-footer">AII IoTech (India) Private Limited, dba APEX. All rights reserved.</footer>
 
 <div id="tokenModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="tokenModalTitle">
     <div class="modal__backdrop" data-close-modal="true"></div>
@@ -253,8 +270,9 @@ let editingFleetNameDraft = '';
 let savingFleetNameDeviceId = null;
 
 function syncAdminMasthead() {
-    const hasVisibleActions = !adminIdentity.classList.contains('hidden') || !logoutBtn.classList.contains('hidden');
-    adminMasthead.classList.toggle('masthead--no-actions', !hasVisibleActions);
+    // The theme toggle always lives in .masthead-actions, so the actions area
+    // is never empty — keep it visible regardless of login state.
+    adminMasthead.classList.remove('masthead--no-actions');
 }
 
 function showAlert(message, isError = true) {
