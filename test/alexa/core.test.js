@@ -147,3 +147,47 @@ describe('alexa crypto', () => {
         assert.equal(alexaCrypto.decryptToken(null), null);
     });
 });
+
+describe('waitForAlexaCommandResult (camera sync bridge)', () => {
+    let core;
+    let helpers;
+
+    before(async () => {
+        helpers = makeDb();
+        await new Promise((res, rej) =>
+            helpers.db.serialize(() =>
+                require('../../lib/migrator')({ db: helpers.db, migrationsDir: path.join(__dirname, '../../migrations') })
+                    .runPending()
+                    .then(res, rej)
+            )
+        );
+        const alexaCrypto = require('../../lib/alexa/crypto')({ config });
+        core = require('../../lib/alexa/core')({ ...helpers, alexaCrypto });
+        await helpers.dbRun("INSERT INTO users (email,password,status,alexa_enabled,alexa_linked) VALUES (?,?,?,1,1)", ['c@x.com', 'pw', 'active']);
+        await helpers.dbRun("INSERT INTO devices (user_id,device_uid,device_token_hash) VALUES (1,?,?)", ['d1', 'h1']);
+    });
+
+    it('resolves with the result when the command completes', async () => {
+        const cmd = await core.queueAlexaCommandForEndpoint(1, 1, 'camera.front', 'get_camera_stream', {});
+        setTimeout(() => {
+            helpers.dbRun('UPDATE alexa_command_queue SET status = ?, result_json = ? WHERE id = ?', [
+                'completed',
+                JSON.stringify({ success: true, state: { stream_url: 'https://x.cloud.apexinfosys.in/api/hls/abc/index.m3u8', image_url: 'https://x.cloud.apexinfosys.in/api/camera_proxy/camera.front' } }),
+                cmd.id
+            ]);
+        }, 300);
+        const out = await core.waitForAlexaCommandResult(cmd.id, 4000);
+        assert.equal(out.status, 'completed');
+        assert.equal(out.result.state.stream_url, 'https://x.cloud.apexinfosys.in/api/hls/abc/index.m3u8');
+    });
+
+    it('returns null on timeout', async () => {
+        const cmd = await core.queueAlexaCommandForEndpoint(1, 1, 'camera.back', 'get_camera_stream', {});
+        const out = await core.waitForAlexaCommandResult(cmd.id, 800);
+        assert.equal(out, null);
+    });
+
+    it('returns null for an unknown command id', async () => {
+        assert.equal(await core.waitForAlexaCommandResult(999999, 500), null);
+    });
+});

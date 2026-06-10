@@ -221,6 +221,56 @@ module.exports = function ({ dbGet, dbRun, config, utils, core, eventGateway, en
                 });
             }
 
+            // ── CameraStreamController (camera) ─────────────────────────
+            // InitializeCameraStreams must return a stream URI SYNCHRONOUSLY
+            // (≤6s). Execution is async (queue → add-on polls → result), so we
+            // queue get_camera_stream then block briefly on the result. The
+            // add-on returns public absolute stream/image URLs (HA HLS via the
+            // customer subdomain). Best-effort: some Echo Show models want RTSP.
+            if (namespace === 'Alexa.CameraStreamController') {
+                const endpointId = directive?.endpoint?.endpointId;
+                const row = await dbGet(`SELECT * FROM alexa_endpoints WHERE user_id = ? AND entity_id = ? LIMIT 1`, [
+                    user.id,
+                    utils.sanitizeEntityId(endpointId)
+                ]);
+                if (!row || !row.exposed) {
+                    return errorResponse(res, 'NO_SUCH_ENDPOINT', 'Unknown endpoint', correlationToken, endpointId);
+                }
+                if (name !== 'InitializeCameraStreams') {
+                    return errorResponse(res, 'INVALID_DIRECTIVE', `Unsupported camera directive ${name}`, correlationToken, endpointId);
+                }
+                const cmd = await core.queueAlexaCommandForEndpoint(user.id, row.device_id, row.entity_id, 'get_camera_stream', {});
+                const outcome = cmd ? await core.waitForAlexaCommandResult(cmd.id, 5000) : null;
+                const camState = outcome?.status === 'completed' ? outcome.result?.state : null;
+                const streamUrl = camState?.stream_url;
+                if (!streamUrl) {
+                    // Timed out, failed, or device offline.
+                    return errorResponse(res, 'ENDPOINT_UNREACHABLE', 'Camera stream unavailable', correlationToken, endpointId);
+                }
+                const expirationTime = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+                return res.status(200).json({
+                    event: {
+                        header: header('Alexa.CameraStreamController', 'Response', correlationToken),
+                        endpoint: { scope: { type: 'BearerToken', token: bearer }, endpointId },
+                        payload: {
+                            cameraStreams: [
+                                {
+                                    uri: streamUrl,
+                                    protocol: 'HLS',
+                                    resolution: { width: 1280, height: 720 },
+                                    authorizationType: 'NONE',
+                                    videoCodec: 'H264',
+                                    audioCodec: 'AAC',
+                                    expirationTime,
+                                    idleTimeoutSeconds: 30
+                                }
+                            ],
+                            imageUri: camState?.image_url || streamUrl
+                        }
+                    }
+                });
+            }
+
             // ── SceneController (scene/script/button/input_button) ──────
             // Stateless activation with a NON-standard response envelope
             // (Alexa.SceneController/ActivationStarted), distinct from the
