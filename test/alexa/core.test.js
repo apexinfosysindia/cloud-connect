@@ -97,6 +97,43 @@ describe('alexa core', () => {
     });
 });
 
+describe('computeAlexaStateHash (structured props)', () => {
+    let core;
+    before(async () => {
+        const alexaCrypto = require('../../lib/alexa/crypto')({ config });
+        core = require('../../lib/alexa/core')({ ...makeDb(), alexaCrypto });
+    });
+
+    it('is order-independent over the property array', () => {
+        const a = [
+            { namespace: 'Alexa.PowerController', name: 'powerState', value: 'ON' },
+            { namespace: 'Alexa.EndpointHealth', name: 'connectivity', value: { value: 'OK' } }
+        ];
+        const b = [a[1], a[0]];
+        assert.equal(core.computeAlexaStateHash(a), core.computeAlexaStateHash(b));
+    });
+
+    it('hashes nested object values stably regardless of key order', () => {
+        const a = [{ namespace: 'Alexa.ColorController', name: 'color', value: { hue: 120, saturation: 0.4, brightness: 1 } }];
+        const b = [{ namespace: 'Alexa.ColorController', name: 'color', value: { brightness: 1, saturation: 0.4, hue: 120 } }];
+        assert.equal(core.computeAlexaStateHash(a), core.computeAlexaStateHash(b));
+    });
+
+    it('distinguishes two controllers that share a property name by instance', () => {
+        // Regression guard for the flat-model collision: climate's fan/preset/
+        // swing ModeControllers all report name:'mode' under different instances.
+        const fanMode = [{ namespace: 'Alexa.ModeController', instance: 'Climate.FanMode', name: 'mode', value: 'auto' }];
+        const swingMode = [{ namespace: 'Alexa.ModeController', instance: 'Climate.SwingMode', name: 'mode', value: 'auto' }];
+        assert.notEqual(core.computeAlexaStateHash(fanMode), core.computeAlexaStateHash(swingMode));
+    });
+
+    it('changes when a value changes', () => {
+        const on = [{ namespace: 'Alexa.PowerController', name: 'powerState', value: 'ON' }];
+        const off = [{ namespace: 'Alexa.PowerController', name: 'powerState', value: 'OFF' }];
+        assert.notEqual(core.computeAlexaStateHash(on), core.computeAlexaStateHash(off));
+    });
+});
+
 describe('alexa crypto', () => {
     it('rejects a tampered ciphertext (GCM auth tag)', () => {
         const alexaCrypto = require('../../lib/alexa/crypto')({ config });

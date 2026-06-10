@@ -700,7 +700,15 @@ sync_alexa_entities() {
 
     local entities_json='[]'
     entities_json=$(printf '%s' "$states_json" | jq -c --argjson devinfo "$device_info_map" --argjson areamap "$area_map" '
-            map(select(.entity_id | test("^(light|fan|switch|input_boolean)\\.")))
+            map(select(.entity_id | test("^(light|fan|switch|input_boolean|automation|group|scene|script|button|input_button|lock|cover|valve|sensor|binary_sensor|select|input_select|humidifier|water_heater|climate|vacuum|lawn_mower|media_player|alarm_control_panel)\\.")))
+            | map(select(
+                if (.entity_id | startswith("sensor."))
+                then (((.attributes.device_class // "") | tostring) | test("^(temperature|humidity)$"))
+                elif (.entity_id | startswith("binary_sensor."))
+                then (((.attributes.device_class // "") | tostring) | test("^(door|window|garage_door|opening|motion|occupancy|presence)$"))
+                else true
+                end
+            ))
             | map(
                 . as $s
                 | (($s.state // "") | tostring | ascii_downcase) as $state_text
@@ -710,11 +718,36 @@ sync_alexa_entities() {
                     entity_id: $s.entity_id,
                     display_name: ($s.attributes.friendly_name // $s.entity_id),
                     room_hint: ($areamap[$s.entity_id] // ""),
-                    online: ($state_text != "unavailable"),
+                    online: (
+                        if ($s.entity_id | (startswith("scene.") or startswith("script.") or startswith("button.") or startswith("input_button.")))
+                        then true
+                        else ($state_text != "unavailable")
+                        end
+                    ),
                     entity_type: (
                         if ($s.entity_id | startswith("light.")) then "light"
                         elif ($s.entity_id | startswith("fan.")) then "fan"
                         elif ($s.entity_id | startswith("input_boolean.")) then "input_boolean"
+                        elif ($s.entity_id | startswith("automation.")) then "automation"
+                        elif ($s.entity_id | startswith("group.")) then "group"
+                        elif ($s.entity_id | startswith("scene.")) then "scene"
+                        elif ($s.entity_id | startswith("script.")) then "script"
+                        elif ($s.entity_id | startswith("button.")) then "button"
+                        elif ($s.entity_id | startswith("input_button.")) then "input_button"
+                        elif ($s.entity_id | startswith("lock.")) then "lock"
+                        elif ($s.entity_id | startswith("cover.")) then "cover"
+                        elif ($s.entity_id | startswith("valve.")) then "valve"
+                        elif ($s.entity_id | startswith("sensor.")) then "sensor"
+                        elif ($s.entity_id | startswith("binary_sensor.")) then "binary_sensor"
+                        elif ($s.entity_id | startswith("select.")) then "select"
+                        elif ($s.entity_id | startswith("input_select.")) then "input_select"
+                        elif ($s.entity_id | startswith("humidifier.")) then "humidifier"
+                        elif ($s.entity_id | startswith("water_heater.")) then "water_heater"
+                        elif ($s.entity_id | startswith("climate.")) then "climate"
+                        elif ($s.entity_id | startswith("vacuum.")) then "vacuum"
+                        elif ($s.entity_id | startswith("lawn_mower.")) then "lawn_mower"
+                        elif ($s.entity_id | startswith("media_player.")) then "media_player"
+                        elif ($s.entity_id | startswith("alarm_control_panel.")) then "alarm_control_panel"
                         elif (($dc // "") == "outlet") then "outlet"
                         else "switch"
                         end
@@ -735,6 +768,114 @@ sync_alexa_entities() {
                         elif ($s.entity_id | startswith("fan.")) then {
                             on: ($s.state == "on"),
                             percentage: (($s.attributes.percentage | tonumber?) // 0),
+                            preset_mode: ($s.attributes.preset_mode // null),
+                            preset_modes: ($s.attributes.preset_modes // []),
+                            oscillating: (($s.attributes.oscillating // false) == true),
+                            direction: ($s.attributes.direction // null),
+                            percentage_step: ($s.attributes.percentage_step // null),
+                            supported_features: $sf
+                        }
+                        elif ($s.entity_id | startswith("lock.")) then {
+                            isLocked: ($s.state == "locked"),
+                            jammed: ($s.state == "jammed"),
+                            supported_features: $sf
+                        }
+                        elif ($s.entity_id | startswith("cover.")) then {
+                            openPercent: (($s.attributes.current_position | tonumber?) // (if $state_text == "open" then 100 elif $state_text == "closed" then 0 else 50 end)),
+                            tilt_position: ($s.attributes.current_tilt_position // null),
+                            supported_features: $sf,
+                            device_class: $dc
+                        }
+                        elif ($s.entity_id | startswith("valve.")) then {
+                            openPercent: (($s.attributes.current_position | tonumber?) // (if $state_text == "open" then 100 elif $state_text == "closed" then 0 else 50 end)),
+                            supported_features: $sf,
+                            device_class: $dc
+                        }
+                        elif ($s.entity_id | startswith("sensor.")) then {
+                            value: (($s.state | tonumber?) // null),
+                            device_class: $dc,
+                            unit_of_measurement: ($s.attributes.unit_of_measurement // null),
+                            temperature: (if (($dc // "") == "temperature") then (($s.state | tonumber?) // 0) else null end)
+                        }
+                        elif ($s.entity_id | startswith("binary_sensor.")) then {
+                            is_on: ($s.state == "on"),
+                            device_class: $dc
+                        }
+                        elif (($s.entity_id | startswith("select.")) or ($s.entity_id | startswith("input_select."))) then {
+                            current_option: ($s.state // ""),
+                            options: ($s.attributes.options // []),
+                            supported_features: $sf
+                        }
+                        elif ($s.entity_id | startswith("humidifier.")) then {
+                            on: ($s.state == "on"),
+                            mode: ($s.attributes.mode // null),
+                            available_modes: ($s.attributes.available_modes // []),
+                            target_humidity: (($s.attributes.humidity | tonumber?) // null),
+                            current_humidity: (($s.attributes.current_humidity | tonumber?) // null),
+                            min_humidity: (($s.attributes.min_humidity | tonumber?) // null),
+                            max_humidity: (($s.attributes.max_humidity | tonumber?) // null),
+                            supported_features: $sf,
+                            device_class: $dc
+                        }
+                        elif ($s.entity_id | startswith("water_heater.")) then {
+                            on: (($s.state != "off") and ($state_text != "off")),
+                            current_temperature: (($s.attributes.current_temperature | tonumber?) // null),
+                            target_temperature: (($s.attributes.temperature | tonumber?) // null),
+                            min_temp: (($s.attributes.min_temp | tonumber?) // null),
+                            max_temp: (($s.attributes.max_temp | tonumber?) // null),
+                            operation_mode: ($s.state // "off"),
+                            operation_list: ($s.attributes.operation_list // []),
+                            supported_features: $sf,
+                            temperature_unit: (if (($s.attributes.temperature_unit // "°C") | tostring | test("F")) then "F" else "C" end)
+                        }
+                        elif ($s.entity_id | startswith("climate.")) then {
+                            mode: ($s.state // "off"),
+                            hvac_modes: ($s.attributes.hvac_modes // []),
+                            preset_mode: ($s.attributes.preset_mode // null),
+                            preset_modes: ($s.attributes.preset_modes // []),
+                            fan_mode: ($s.attributes.fan_mode // null),
+                            fan_modes: ($s.attributes.fan_modes // []),
+                            swing_mode: ($s.attributes.swing_mode // null),
+                            swing_modes: ($s.attributes.swing_modes // []),
+                            target_temperature: (($s.attributes.temperature | tonumber?) // null),
+                            target_temp_low: (($s.attributes.target_temp_low | tonumber?) // null),
+                            target_temp_high: (($s.attributes.target_temp_high | tonumber?) // null),
+                            ambient_temperature: (($s.attributes.current_temperature | tonumber?) // null),
+                            min_temp: (($s.attributes.min_temp | tonumber?) // null),
+                            max_temp: (($s.attributes.max_temp | tonumber?) // null),
+                            supported_features: $sf,
+                            temperature_unit: (if (($s.attributes.temperature_unit // "°C") | tostring | test("F")) then "F" else "C" end)
+                        }
+                        elif ($s.entity_id | startswith("vacuum.")) then {
+                            on: ($s.state != "docked"),
+                            isRunning: (($s.state == "cleaning") or ($s.state == "returning")),
+                            isPaused: ($s.state == "paused"),
+                            isDocked: ($s.state == "docked"),
+                            fan_speed: ($s.attributes.fan_speed // null),
+                            fan_speed_list: ($s.attributes.fan_speed_list // []),
+                            supported_features: $sf,
+                            status: ($s.state // "unknown")
+                        }
+                        elif ($s.entity_id | startswith("lawn_mower.")) then {
+                            isRunning: ($s.state == "mowing"),
+                            isPaused: ($s.state == "paused"),
+                            isDocked: ($s.state == "docked"),
+                            supported_features: $sf
+                        }
+                        elif ($s.entity_id | startswith("media_player.")) then {
+                            on: (($s.state != "off") and ($s.state != "standby")),
+                            volume: (((($s.attributes.volume_level | tonumber?) // 0) * 100) | floor),
+                            muted: (($s.attributes.is_volume_muted // false) == true),
+                            source: ($s.attributes.source // null),
+                            source_list: ($s.attributes.source_list // []),
+                            supported_features: $sf,
+                            device_class: $dc,
+                            is_playing: ($s.state == "playing"),
+                            is_paused: ($s.state == "paused")
+                        }
+                        elif ($s.entity_id | startswith("alarm_control_panel.")) then {
+                            arm_state: $state_text,
+                            code_format: ($s.attributes.code_format // null),
                             supported_features: $sf
                         }
                         else {
@@ -1273,10 +1414,18 @@ execute_alexa_command() {
     domain=${entity_id%%.*}
 
     if [ "$action" = "turn_on" ]; then
-        ha_api_post "/services/${domain}/turn_on" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        if [ "$domain" = "group" ]; then
+            ha_api_post "/services/homeassistant/turn_on" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        else
+            ha_api_post "/services/${domain}/turn_on" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        fi
         resulting_state='{"on":true}'
     elif [ "$action" = "turn_off" ]; then
-        ha_api_post "/services/${domain}/turn_off" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        if [ "$domain" = "group" ]; then
+            ha_api_post "/services/homeassistant/turn_off" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        else
+            ha_api_post "/services/${domain}/turn_off" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        fi
         resulting_state='{"on":false}'
     elif [ "$action" = "set_brightness" ]; then
         local brightness_percent brightness_255
@@ -1295,6 +1444,236 @@ execute_alexa_command() {
         color_temp_kelvin=$(printf '%s' "$payload_json" | jq -r '.color_temp_kelvin // 3000')
         ha_api_post "/services/light/turn_on" "$(jq -n --arg entity_id "$entity_id" --argjson kelvin "$color_temp_kelvin" '{entity_id: $entity_id, color_temp_kelvin: $kelvin}')" >/dev/null || success=false
         resulting_state=$(jq -n --argjson kelvin "$color_temp_kelvin" '{on: true, color_temp_kelvin: $kelvin}')
+    elif [ "$action" = "activate_scene" ]; then
+        if [ "$domain" = "button" ]; then
+            ha_api_post "/services/button/press" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        elif [ "$domain" = "input_button" ]; then
+            ha_api_post "/services/input_button/press" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        elif [ "$domain" = "script" ]; then
+            ha_api_post "/services/script/turn_on" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        else
+            ha_api_post "/services/scene/turn_on" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        fi
+        resulting_state='{}'
+    elif [ "$action" = "deactivate_scene" ]; then
+        # HA scenes/scripts/buttons cannot be deactivated; accept as a no-op so
+        # Alexa's DeactivationStarted reply is honoured without an HA call.
+        if [ "$domain" = "script" ]; then
+            ha_api_post "/services/script/turn_off" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        fi
+        resulting_state='{}'
+    elif [ "$action" = "set_lock" ]; then
+        local lock_state
+        lock_state=$(printf '%s' "$payload_json" | jq -r '.lock // true')
+        if [ "$lock_state" = "true" ]; then
+            ha_api_post "/services/lock/lock" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            resulting_state='{"isLocked":true}'
+        else
+            ha_api_post "/services/lock/unlock" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            resulting_state='{"isLocked":false}'
+        fi
+    elif [ "$action" = "set_fan_speed_percent" ]; then
+        local fan_percentage
+        fan_percentage=$(printf '%s' "$payload_json" | jq -r '.percentage // 0')
+        if [ "$fan_percentage" -eq 0 ] 2>/dev/null; then
+            ha_api_post "/services/fan/turn_off" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            resulting_state='{"on":false,"percentage":0}'
+        else
+            ha_api_post "/services/fan/set_percentage" "$(jq -n --arg entity_id "$entity_id" --argjson percentage "$fan_percentage" '{entity_id: $entity_id, percentage: $percentage}')" >/dev/null || success=false
+            resulting_state=$(jq -n --argjson pct "$fan_percentage" '{on: true, percentage: $pct}')
+        fi
+    elif [ "$action" = "set_fan_preset" ]; then
+        local preset_mode
+        preset_mode=$(printf '%s' "$payload_json" | jq -r '.preset_mode // ""')
+        ha_api_post "/services/fan/set_preset_mode" "$(jq -n --arg entity_id "$entity_id" --arg preset_mode "$preset_mode" '{entity_id: $entity_id, preset_mode: $preset_mode}')" >/dev/null || success=false
+        resulting_state=$(jq -n --arg pm "$preset_mode" '{on: true, preset_mode: $pm}')
+    elif [ "$action" = "set_fan_oscillate" ]; then
+        local oscillate
+        oscillate=$(printf '%s' "$payload_json" | jq -r '.on // false')
+        ha_api_post "/services/fan/oscillate" "$(jq -n --arg entity_id "$entity_id" --argjson oscillating "$oscillate" '{entity_id: $entity_id, oscillating: $oscillating}')" >/dev/null || success=false
+        resulting_state=$(jq -n --argjson osc "$oscillate" '{oscillating: $osc}')
+    elif [ "$action" = "set_fan_direction" ]; then
+        local fan_direction
+        fan_direction=$(printf '%s' "$payload_json" | jq -r '.direction // "forward"')
+        ha_api_post "/services/fan/set_direction" "$(jq -n --arg entity_id "$entity_id" --arg direction "$fan_direction" '{entity_id: $entity_id, direction: $direction}')" >/dev/null || success=false
+        resulting_state=$(jq -n --arg dir "$fan_direction" '{direction: $dir}')
+    elif [ "$action" = "set_open_percent" ]; then
+        local open_percent
+        open_percent=$(printf '%s' "$payload_json" | jq -r '.openPercent // 0')
+        ha_api_post "/services/cover/set_cover_position" "$(jq -n --arg entity_id "$entity_id" --argjson position "$open_percent" '{entity_id: $entity_id, position: $position}')" >/dev/null || success=false
+        resulting_state=$(jq -n --argjson percent "$open_percent" '{openPercent: $percent}')
+    elif [ "$action" = "set_open_close" ]; then
+        local open_direction
+        open_direction=$(printf '%s' "$payload_json" | jq -r '.open // true')
+        if [ "$open_direction" = "true" ]; then
+            ha_api_post "/services/cover/open_cover" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            resulting_state='{"openPercent":100}'
+        else
+            ha_api_post "/services/cover/close_cover" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            resulting_state='{"openPercent":0}'
+        fi
+    elif [ "$action" = "set_tilt" ]; then
+        local tilt_percent
+        tilt_percent=$(printf '%s' "$payload_json" | jq -r '.tilt // 0')
+        ha_api_post "/services/cover/set_cover_tilt_position" "$(jq -n --arg entity_id "$entity_id" --argjson tilt_position "$tilt_percent" '{entity_id: $entity_id, tilt_position: $tilt_position}')" >/dev/null || success=false
+        resulting_state=$(jq -n --argjson tilt "$tilt_percent" '{tilt_position: $tilt}')
+    elif [ "$action" = "set_valve_position" ]; then
+        local valve_percent
+        valve_percent=$(printf '%s' "$payload_json" | jq -r '.openPercent // 0')
+        ha_api_post "/services/valve/set_valve_position" "$(jq -n --arg entity_id "$entity_id" --argjson position "$valve_percent" '{entity_id: $entity_id, position: $position}')" >/dev/null || success=false
+        resulting_state=$(jq -n --argjson percent "$valve_percent" '{openPercent: $percent}')
+    elif [ "$action" = "set_valve_open_close" ]; then
+        local valve_direction
+        valve_direction=$(printf '%s' "$payload_json" | jq -r '.open // true')
+        if [ "$valve_direction" = "true" ]; then
+            ha_api_post "/services/valve/open_valve" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            resulting_state='{"openPercent":100}'
+        else
+            ha_api_post "/services/valve/close_valve" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            resulting_state='{"openPercent":0}'
+        fi
+    elif [ "$action" = "set_select_option" ]; then
+        local selected_option
+        selected_option=$(printf '%s' "$payload_json" | jq -r '.option // ""')
+        if [ "$domain" = "input_select" ]; then
+            ha_api_post "/services/input_select/select_option" "$(jq -n --arg entity_id "$entity_id" --arg option "$selected_option" '{entity_id: $entity_id, option: $option}')" >/dev/null || success=false
+        else
+            ha_api_post "/services/select/select_option" "$(jq -n --arg entity_id "$entity_id" --arg option "$selected_option" '{entity_id: $entity_id, option: $option}')" >/dev/null || success=false
+        fi
+        resulting_state=$(jq -n --arg opt "$selected_option" '{current_option: $opt}')
+    elif [ "$action" = "set_humidity" ]; then
+        local target_humidity
+        target_humidity=$(printf '%s' "$payload_json" | jq -r '.humidity // 50')
+        ha_api_post "/services/humidifier/set_humidity" "$(jq -n --arg entity_id "$entity_id" --argjson humidity "$target_humidity" '{entity_id: $entity_id, humidity: $humidity}')" >/dev/null || success=false
+        resulting_state=$(jq -n --argjson h "$target_humidity" '{target_humidity: $h}')
+    elif [ "$action" = "set_humidifier_mode" ]; then
+        local hum_mode
+        hum_mode=$(printf '%s' "$payload_json" | jq -r '.mode // ""')
+        ha_api_post "/services/humidifier/set_mode" "$(jq -n --arg entity_id "$entity_id" --arg mode "$hum_mode" '{entity_id: $entity_id, mode: $mode}')" >/dev/null || success=false
+        resulting_state=$(jq -n --arg m "$hum_mode" '{mode: $m}')
+    elif [ "$action" = "set_water_heater_temperature" ]; then
+        local wh_temp
+        wh_temp=$(printf '%s' "$payload_json" | jq -r '.temperature // 50')
+        ha_api_post "/services/water_heater/set_temperature" "$(jq -n --arg entity_id "$entity_id" --argjson temperature "$wh_temp" '{entity_id: $entity_id, temperature: $temperature}')" >/dev/null || success=false
+        resulting_state=$(jq -n --argjson t "$wh_temp" '{target_temperature: $t}')
+    elif [ "$action" = "set_thermostat_mode" ]; then
+        local hvac_mode
+        hvac_mode=$(printf '%s' "$payload_json" | jq -r '.mode // "off"')
+        ha_api_post "/services/climate/set_hvac_mode" "$(jq -n --arg entity_id "$entity_id" --arg hvac_mode "$hvac_mode" '{entity_id: $entity_id, hvac_mode: $hvac_mode}')" >/dev/null || success=false
+        resulting_state=$(jq -n --arg mode "$hvac_mode" '{mode: $mode}')
+    elif [ "$action" = "set_thermostat_setpoint" ]; then
+        local setpoint
+        setpoint=$(printf '%s' "$payload_json" | jq -r '.temperature // 22')
+        ha_api_post "/services/climate/set_temperature" "$(jq -n --arg entity_id "$entity_id" --argjson temperature "$setpoint" '{entity_id: $entity_id, temperature: $temperature}')" >/dev/null || success=false
+        resulting_state=$(jq -n --argjson target "$setpoint" '{target_temperature: $target}')
+    elif [ "$action" = "set_thermostat_setpoint_range" ]; then
+        local heat_setpoint cool_setpoint
+        heat_setpoint=$(printf '%s' "$payload_json" | jq -r '.target_temp_low // 20')
+        cool_setpoint=$(printf '%s' "$payload_json" | jq -r '.target_temp_high // 24')
+        ha_api_post "/services/climate/set_temperature" "$(jq -n --arg entity_id "$entity_id" --argjson target_temp_low "$heat_setpoint" --argjson target_temp_high "$cool_setpoint" '{entity_id: $entity_id, target_temp_low: $target_temp_low, target_temp_high: $target_temp_high}')" >/dev/null || success=false
+        resulting_state=$(jq -n --argjson low "$heat_setpoint" --argjson high "$cool_setpoint" '{target_temp_low: $low, target_temp_high: $high}')
+    elif [ "$action" = "set_climate_fan_mode" ]; then
+        local fan_mode
+        fan_mode=$(printf '%s' "$payload_json" | jq -r '.fan_mode // ""')
+        ha_api_post "/services/climate/set_fan_mode" "$(jq -n --arg entity_id "$entity_id" --arg fan_mode "$fan_mode" '{entity_id: $entity_id, fan_mode: $fan_mode}')" >/dev/null || success=false
+        resulting_state=$(jq -n --arg fm "$fan_mode" '{fan_mode: $fm}')
+    elif [ "$action" = "set_climate_preset_mode" ]; then
+        local preset_mode
+        preset_mode=$(printf '%s' "$payload_json" | jq -r '.preset_mode // ""')
+        ha_api_post "/services/climate/set_preset_mode" "$(jq -n --arg entity_id "$entity_id" --arg preset_mode "$preset_mode" '{entity_id: $entity_id, preset_mode: $preset_mode}')" >/dev/null || success=false
+        resulting_state=$(jq -n --arg pm "$preset_mode" '{preset_mode: $pm}')
+    elif [ "$action" = "set_climate_swing_mode" ]; then
+        local swing_mode
+        swing_mode=$(printf '%s' "$payload_json" | jq -r '.swing_mode // ""')
+        ha_api_post "/services/climate/set_swing_mode" "$(jq -n --arg entity_id "$entity_id" --arg swing_mode "$swing_mode" '{entity_id: $entity_id, swing_mode: $swing_mode}')" >/dev/null || success=false
+        resulting_state=$(jq -n --arg sm "$swing_mode" '{swing_mode: $sm}')
+    elif [ "$action" = "set_start_stop" ]; then
+        local should_start
+        should_start=$(printf '%s' "$payload_json" | jq -r '.start // true')
+        if [ "$should_start" = "true" ]; then
+            ha_api_post "/services/vacuum/start" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            resulting_state='{"on":true,"isRunning":true,"isPaused":false,"isDocked":false}'
+        else
+            ha_api_post "/services/vacuum/stop" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            resulting_state='{"on":false,"isRunning":false}'
+        fi
+    elif [ "$action" = "set_pause" ]; then
+        ha_api_post "/services/vacuum/pause" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        resulting_state='{"isPaused":true,"isRunning":false}'
+    elif [ "$action" = "dock" ]; then
+        ha_api_post "/services/vacuum/return_to_base" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        resulting_state='{"isDocked":true,"isRunning":false,"on":false}'
+    elif [ "$action" = "locate" ]; then
+        ha_api_post "/services/vacuum/locate" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        resulting_state='{}'
+    elif [ "$action" = "set_vacuum_fan_speed" ]; then
+        local vac_fan_speed
+        vac_fan_speed=$(printf '%s' "$payload_json" | jq -r '.fan_speed // ""')
+        ha_api_post "/services/vacuum/set_fan_speed" "$(jq -n --arg entity_id "$entity_id" --arg fan_speed "$vac_fan_speed" '{entity_id: $entity_id, fan_speed: $fan_speed}')" >/dev/null || success=false
+        resulting_state=$(jq -n --arg fs "$vac_fan_speed" '{fan_speed: $fs}')
+    elif [ "$action" = "lawn_mower_start" ]; then
+        ha_api_post "/services/lawn_mower/start_mowing" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        resulting_state='{"isRunning":true,"isPaused":false,"isDocked":false}'
+    elif [ "$action" = "lawn_mower_pause" ]; then
+        ha_api_post "/services/lawn_mower/pause" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        resulting_state='{"isRunning":false,"isPaused":true}'
+    elif [ "$action" = "lawn_mower_dock" ]; then
+        ha_api_post "/services/lawn_mower/dock" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        resulting_state='{"isRunning":false,"isPaused":false,"isDocked":true}'
+    elif [ "$action" = "set_volume" ]; then
+        local volume_percent volume_level
+        volume_percent=$(printf '%s' "$payload_json" | jq -r '.volume // 0')
+        volume_level=$(printf '%s' "$volume_percent" | awk '{v=$1/100; if (v<0) v=0; if (v>1) v=1; print v}')
+        ha_api_post "/services/media_player/volume_set" "$(jq -n --arg entity_id "$entity_id" --argjson volume_level "$volume_level" '{entity_id: $entity_id, volume_level: $volume_level}')" >/dev/null || success=false
+        resulting_state=$(jq -n --argjson v "$volume_percent" '{volume: $v}')
+    elif [ "$action" = "set_mute" ]; then
+        local muted
+        muted=$(printf '%s' "$payload_json" | jq -r '.muted // false')
+        ha_api_post "/services/media_player/volume_mute" "$(jq -n --arg entity_id "$entity_id" --argjson is_volume_muted "$muted" '{entity_id: $entity_id, is_volume_muted: $is_volume_muted}')" >/dev/null || success=false
+        resulting_state=$(jq -n --argjson m "$muted" '{muted: $m}')
+    elif [ "$action" = "media_resume" ]; then
+        ha_api_post "/services/media_player/media_play" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        resulting_state='{"is_playing":true,"is_paused":false,"on":true}'
+    elif [ "$action" = "media_pause" ]; then
+        ha_api_post "/services/media_player/media_pause" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        resulting_state='{"is_playing":false,"is_paused":true}'
+    elif [ "$action" = "media_stop" ]; then
+        ha_api_post "/services/media_player/media_stop" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        resulting_state='{"is_playing":false,"is_paused":false}'
+    elif [ "$action" = "media_next" ]; then
+        ha_api_post "/services/media_player/media_next_track" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        resulting_state='{}'
+    elif [ "$action" = "media_previous" ]; then
+        ha_api_post "/services/media_player/media_previous_track" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+        resulting_state='{}'
+    elif [ "$action" = "set_input" ]; then
+        local source_name
+        source_name=$(printf '%s' "$payload_json" | jq -r '.source // ""')
+        ha_api_post "/services/media_player/select_source" "$(jq -n --arg entity_id "$entity_id" --arg source "$source_name" '{entity_id: $entity_id, source: $source}')" >/dev/null || success=false
+        resulting_state=$(jq -n --arg src "$source_name" '{source: $src}')
+    elif [ "$action" = "arm_disarm" ]; then
+        local arm_requested arm_level
+        arm_requested=$(printf '%s' "$payload_json" | jq -r '.arm // false')
+        arm_level=$(printf '%s' "$payload_json" | jq -r '.arm_level // ""')
+        if [ "$arm_requested" = "true" ]; then
+            case "$arm_level" in
+                arm_away|away)
+                    ha_api_post "/services/alarm_control_panel/alarm_arm_away" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+                    resulting_state='{"arm_state":"armed_away"}'
+                    ;;
+                arm_night|night)
+                    ha_api_post "/services/alarm_control_panel/alarm_arm_night" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+                    resulting_state='{"arm_state":"armed_night"}'
+                    ;;
+                *)
+                    ha_api_post "/services/alarm_control_panel/alarm_arm_home" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+                    resulting_state='{"arm_state":"armed_home"}'
+                    ;;
+            esac
+        else
+            ha_api_post "/services/alarm_control_panel/alarm_disarm" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            resulting_state='{"arm_state":"disarmed"}'
+        fi
     else
         success=false
         error_msg="Unsupported action ${action}"

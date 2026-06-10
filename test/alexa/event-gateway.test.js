@@ -50,7 +50,8 @@ describe('alexa event-gateway report collection', () => {
         const { reports } = await eventGateway.collectAlexaChangeReportsForUser(1, { force: true });
         assert.equal(reports.length, 1);
         assert.equal(reports[0].entityId, 'light.k');
-        assert.equal(reports[0].props.powerState, 'ON');
+        const power = reports[0].props.find((p) => p.name === 'powerState');
+        assert.equal(power.value, 'ON');
     });
 
     it('skips endpoints whose hash is unchanged', async () => {
@@ -69,7 +70,8 @@ describe('alexa event-gateway report collection', () => {
         });
         const { reports } = await eventGateway.collectAlexaChangeReportsForUser(1, { force: false });
         assert.equal(reports.length, 1);
-        assert.equal(reports[0].props.powerState, 'OFF');
+        const power = reports[0].props.find((p) => p.name === 'powerState');
+        assert.equal(power.value, 'OFF');
     });
 
     it('suppresses an endpoint with an in-flight command', async () => {
@@ -80,12 +82,28 @@ describe('alexa event-gateway report collection', () => {
         assert.equal(reports.length, 0);
     });
 
-    it('buildProperties wraps values in the Alexa context envelope', () => {
-        const props = eventGateway.buildProperties({ powerState: 'ON', connectivity: 'OK' });
+    it('buildProperties stamps structured AlexaProp tuples (with instance)', () => {
+        const props = eventGateway.buildProperties([
+            { namespace: 'Alexa.PowerController', name: 'powerState', value: 'ON' },
+            { namespace: 'Alexa.RangeController', instance: 'Fan.Speed', name: 'rangeValue', value: 50 },
+            { namespace: 'Alexa.EndpointHealth', name: 'connectivity', value: { value: 'OK' } }
+        ]);
         const power = props.find((p) => p.name === 'powerState');
         assert.equal(power.namespace, 'Alexa.PowerController');
         assert.equal(power.value, 'ON');
         assert.ok(power.timeOfSample);
+        const speed = props.find((p) => p.name === 'rangeValue');
+        assert.equal(speed.instance, 'Fan.Speed');
+        assert.equal(speed.value, 50);
+        const health = props.find((p) => p.name === 'connectivity');
+        assert.deepEqual(health.value, { value: 'OK' });
+    });
+
+    it('buildProperties still accepts a legacy flat object (back-compat)', () => {
+        const props = eventGateway.buildProperties({ powerState: 'ON', connectivity: 'OK' });
+        const power = props.find((p) => p.name === 'powerState');
+        assert.equal(power.namespace, 'Alexa.PowerController');
+        assert.equal(power.value, 'ON');
         const health = props.find((p) => p.name === 'connectivity');
         assert.deepEqual(health.value, { value: 'OK' });
     });

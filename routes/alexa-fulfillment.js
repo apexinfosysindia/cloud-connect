@@ -1,4 +1,5 @@
 const express = require('express');
+const { translateControlDirective, CONTROL_NAMESPACES } = require('../lib/alexa/directives');
 
 /**
  * Alexa Smart Home directive dispatcher.
@@ -190,7 +191,8 @@ module.exports = function ({ dbGet, dbRun, config, utils, core, eventGateway, en
             // ── Discovery ───────────────────────────────────────────────
             if (namespace === 'Alexa.Discovery' && name === 'Discover') {
                 const rows = await core.getAlexaEndpointsForUser(user.id);
-                const endpoints = (rows || []).map((r) => entityMapping.buildAlexaEndpoint(r)).filter(Boolean);
+                const discoverOptions = { userHasSecurityPin: Boolean(user.alexa_security_pin) };
+                const endpoints = (rows || []).map((r) => entityMapping.buildAlexaEndpoint(r, discoverOptions)).filter(Boolean);
                 return res.status(200).json({
                     event: {
                         header: header('Alexa.Discovery', 'Discover.Response'),
@@ -219,14 +221,114 @@ module.exports = function ({ dbGet, dbRun, config, utils, core, eventGateway, en
                 });
             }
 
+            // ── SceneController (scene/script/button/input_button) ──────
+            // Stateless activation with a NON-standard response envelope
+            // (Alexa.SceneController/ActivationStarted), distinct from the
+            // generic Alexa/Response used by stateful controllers.
+            if (namespace === 'Alexa.SceneController') {
+                const endpointId = directive?.endpoint?.endpointId;
+                const row = await dbGet(`SELECT * FROM alexa_endpoints WHERE user_id = ? AND entity_id = ? LIMIT 1`, [
+                    user.id,
+                    utils.sanitizeEntityId(endpointId)
+                ]);
+                if (!row || !row.exposed) {
+                    return errorResponse(res, 'NO_SUCH_ENDPOINT', 'Unknown endpoint', correlationToken, endpointId);
+                }
+                if (name !== 'Activate' && name !== 'Deactivate') {
+                    return errorResponse(res, 'INVALID_DIRECTIVE', `Unsupported scene directive ${name}`, correlationToken, endpointId);
+                }
+                const activate = name === 'Activate';
+                await core.queueAlexaCommandForEndpoint(
+                    user.id,
+                    row.device_id,
+                    row.entity_id,
+                    activate ? 'activate_scene' : 'deactivate_scene',
+                    {}
+                );
+                return res.status(200).json({
+                    event: {
+                        header: header('Alexa.SceneController', activate ? 'ActivationStarted' : 'DeactivationStarted', correlationToken),
+                        endpoint: { scope: { type: 'BearerToken', token: bearer }, endpointId },
+                        payload: {
+                            cause: { type: 'VOICE_INTERACTION' },
+                            timestamp: new Date().toISOString()
+                        }
+                    }
+                });
+            }
+
+            // ── SecurityPanelController (alarm_control_panel) ───────────
+            // Arm needs no PIN; Disarm requires the user's 4-digit PIN when one
+            // is configured. Uses bespoke Arm.Response / ErrorResponse envelopes.
+            if (namespace === 'Alexa.SecurityPanelController') {
+                const endpointId = directive?.endpoint?.endpointId;
+                const row = await dbGet(`SELECT * FROM alexa_endpoints WHERE user_id = ? AND entity_id = ? LIMIT 1`, [
+                    user.id,
+                    utils.sanitizeEntityId(endpointId)
+                ]);
+                if (!row || !row.exposed) {
+                    return errorResponse(res, 'NO_SUCH_ENDPOINT', 'Unknown endpoint', correlationToken, endpointId);
+                }
+
+                if (name === 'Disarm') {
+                    const pin = user.alexa_security_pin ? String(user.alexa_security_pin) : '';
+                    if (pin) {
+                        const auth = directive?.payload?.authorization;
+                        const provided = auth && auth.type === 'FOUR_DIGIT_PIN' ? String(auth.value || '') : '';
+                        if (!provided || provided !== pin) {
+                            // UNAUTHORIZED → Alexa prompts the user for the PIN and re-sends.
+                            return res.status(200).json({
+                                event: {
+                                    header: header('Alexa.SecurityPanelController', 'ErrorResponse', correlationToken),
+                                    endpoint: { endpointId },
+                                    payload: { type: 'UNAUTHORIZED', message: 'PIN required or incorrect' }
+                                }
+                            });
+                        }
+                    }
+                    await core.queueAlexaCommandForEndpoint(user.id, row.device_id, row.entity_id, 'arm_disarm', { arm: false });
+                    return res.status(200).json({
+                        event: {
+                            header: header('Alexa', 'Response', correlationToken),
+                            endpoint: { scope: { type: 'BearerToken', token: bearer }, endpointId },
+                            payload: {}
+                        },
+                        context: {
+                            properties: [
+                                {
+                                    namespace: 'Alexa.SecurityPanelController',
+                                    name: 'armState',
+                                    value: 'DISARMED',
+                                    timeOfSample: new Date().toISOString(),
+                                    uncertaintyInMilliseconds: 0
+                                }
+                            ]
+                        }
+                    });
+                }
+
+                if (name === 'Arm') {
+                    const armState = directive?.payload?.armState || 'ARMED_STAY';
+                    const armLevel =
+                        armState === 'ARMED_AWAY' ? 'arm_away' : armState === 'ARMED_NIGHT' ? 'arm_night' : 'arm_home';
+                    await core.queueAlexaCommandForEndpoint(user.id, row.device_id, row.entity_id, 'arm_disarm', {
+                        arm: true,
+                        arm_level: armLevel
+                    });
+                    return res.status(200).json({
+                        event: {
+                            header: header('Alexa.SecurityPanelController', 'Arm.Response', correlationToken),
+                            endpoint: { scope: { type: 'BearerToken', token: bearer }, endpointId },
+                            payload: { armState }
+                        }
+                    });
+                }
+
+                return errorResponse(res, 'INVALID_DIRECTIVE', `Unsupported alarm directive ${name}`, correlationToken, endpointId);
+            }
+
             // ── Control directives ──────────────────────────────────────
-            const controlNamespaces = [
-                'Alexa.PowerController',
-                'Alexa.BrightnessController',
-                'Alexa.ColorController',
-                'Alexa.ColorTemperatureController'
-            ];
-            if (controlNamespaces.includes(namespace)) {
+            if (CONTROL_NAMESPACES.includes(namespace)) {
                 const endpointId = directive?.endpoint?.endpointId;
                 const row = await dbGet(`SELECT * FROM alexa_endpoints WHERE user_id = ? AND entity_id = ? LIMIT 1`, [
                     user.id,
@@ -262,45 +364,6 @@ module.exports = function ({ dbGet, dbRun, config, utils, core, eventGateway, en
             return errorResponse(res, 'INVALID_DIRECTIVE', `Unhandled namespace ${namespace}`, correlationToken);
         })
     );
-
-    function translateControlDirective(namespace, name, directive, row) {
-        const payload = directive?.payload || {};
-        if (namespace === 'Alexa.PowerController') {
-            const on = name === 'TurnOn';
-            return { action: on ? 'turn_on' : 'turn_off', payload: { on }, optimisticState: { on } };
-        }
-        if (namespace === 'Alexa.BrightnessController') {
-            if (name === 'SetBrightness') {
-                const brightness = Math.max(0, Math.min(100, Math.round(Number(payload.brightness) || 0)));
-                return { action: 'set_brightness', payload: { brightness }, optimisticState: { on: brightness > 0, brightness } };
-            }
-            if (name === 'AdjustBrightness') {
-                const current = Number(utils.parseJsonSafe(row.state_json, {}).brightness) || 0;
-                const delta = Number(payload.brightnessDelta) || 0;
-                const brightness = Math.max(0, Math.min(100, Math.round(current + delta)));
-                return { action: 'set_brightness', payload: { brightness }, optimisticState: { on: brightness > 0, brightness } };
-            }
-        }
-        if (namespace === 'Alexa.ColorController' && name === 'SetColor') {
-            const color = payload.color || {};
-            const hue = Number(color.hue) || 0;
-            const saturation = Number(color.saturation) || 0;
-            return {
-                action: 'set_color',
-                payload: { hs_color: [hue, Math.round(saturation * 100)] },
-                optimisticState: { on: true, hs_color: [hue, Math.round(saturation * 100)] }
-            };
-        }
-        if (namespace === 'Alexa.ColorTemperatureController' && name === 'SetColorTemperature') {
-            const kelvin = Number(payload.colorTemperatureInKelvin) || 3000;
-            return {
-                action: 'set_color_temp',
-                payload: { color_temp_kelvin: kelvin },
-                optimisticState: { on: true, color_temp_kelvin: kelvin }
-            };
-        }
-        return { action: null };
-    }
 
     return router;
 };

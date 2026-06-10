@@ -9,7 +9,7 @@ const express = require('express');
  *   POST /api/internal/devices/alexa/commands            atomic poll
  *   POST /api/internal/devices/alexa/commands/:id/result record result + state
  */
-module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, core, eventGateway }) {
+module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, core, eventGateway, entityMapping }) {
     const router = express.Router();
     const { asyncHandler } = utils;
 
@@ -193,13 +193,21 @@ module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, co
             if (success && req.body?.state) {
                 const normalizedState = req.body.state || {};
                 const existing = await dbGet(
-                    `SELECT state_json FROM alexa_endpoints WHERE user_id = ? AND device_id = ? AND entity_id = ? LIMIT 1`,
+                    `SELECT entity_type, state_json FROM alexa_endpoints WHERE user_id = ? AND device_id = ? AND entity_id = ? LIMIT 1`,
                     [command.user_id, command.device_id, command.entity_id]
                 );
                 const existingState = utils.parseJsonSafe(existing?.state_json, {}) || {};
                 const mergedState = { ...existingState, ...normalizedState };
                 const stateJson = JSON.stringify(mergedState).slice(0, 8000);
-                const stateHash = core.computeAlexaStateHash({ online: true, ...mergedState });
+                // Hash the structured property projection (consistent with the
+                // change-report path), not the raw merged HA state.
+                const stateHash = core.computeAlexaStateHash(
+                    entityMapping.parseAlexaEndpointState({
+                        entity_type: existing?.entity_type,
+                        online: 1,
+                        state_json: stateJson
+                    })
+                );
                 await dbRun(
                     `UPDATE alexa_endpoints SET state_json = ?, online = 1, entity_last_seen_at = ?, state_hash = ?, updated_at = ?
                      WHERE user_id = ? AND device_id = ? AND entity_id = ?`,
