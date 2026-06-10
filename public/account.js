@@ -489,11 +489,21 @@
         return entityCards[vendor];
     }
 
+    // Pluralize a domain label using the common English rules so the filter
+    // reads naturally: "Switch" → "Switches", "Cover" → "Covers". Operates on
+    // the trailing characters, so multi-word labels pluralize their last word
+    // ("Media player" → "Media players").
+    function pluralizeLabel(word) {
+        if (/(?:s|x|z|ch|sh)$/i.test(word)) return `${word}es`;
+        if (/[^aeiou]y$/i.test(word)) return `${word.slice(0, -1)}ies`;
+        return `${word}s`;
+    }
+
     function friendlyDomainLabel(type) {
         const base =
             ENTITY_DOMAIN_LABELS[type] ||
             (type ? type.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : 'Other');
-        return base.endsWith('s') ? base : `${base}s`;
+        return pluralizeLabel(base);
     }
 
     function entityDomainOf(entity) {
@@ -511,7 +521,7 @@
         const st = entity.state || {};
         if (st._ha_device_name) return st._ha_device_name;
         if (st._ha_device_id) return 'Unnamed device';
-        return 'Other (no device)';
+        return 'Internal (APEX Native)';
     }
 
     function getFilteredEntities(vendor) {

@@ -14,11 +14,18 @@
 (function themeController() {
     const STORAGE_KEY = 'apex_theme';
     const ORDER = ['light', 'dark', 'auto'];
-    const META = {
-        light: { icon: '☀️', label: 'Light' },
-        dark: { icon: '🌙', label: 'Dark' },
-        auto: { icon: '◐', label: 'Auto' }
+    // Crisp inline SVGs (stroke = currentColor so they adopt the button color
+    // and theme). Far more consistent across platforms than emoji glyphs.
+    const ICONS = {
+        light:
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>',
+        dark:
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
+        // Half-filled circle = the conventional "auto / follow system" mark.
+        auto:
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/></svg>'
     };
+    const LABELS = { light: 'Light', dark: 'Dark', auto: 'Auto' };
 
     function readChoice() {
         try {
@@ -59,16 +66,17 @@
     function renderToggle(choice) {
         const btns = document.querySelectorAll('.theme-toggle');
         if (!btns.length) return;
-        const meta = META[choice] || META.auto;
+        const icon = ICONS[choice] || ICONS.auto;
+        const label = LABELS[choice] || LABELS.auto;
         btns.forEach((btn) => {
             btn.innerHTML =
-                '<span class="theme-toggle__icon" aria-hidden="true">' +
-                meta.icon +
+                '<span class="theme-toggle__icon">' +
+                icon +
                 '</span><span class="theme-toggle__label">' +
-                meta.label +
+                label +
                 '</span>';
-            btn.setAttribute('aria-label', 'Theme: ' + meta.label + '. Click to change.');
-            btn.setAttribute('title', 'Theme: ' + meta.label);
+            btn.setAttribute('aria-label', 'Theme: ' + label + '. Click to change.');
+            btn.setAttribute('title', 'Theme: ' + label + ' (click to change)');
         });
     }
 
