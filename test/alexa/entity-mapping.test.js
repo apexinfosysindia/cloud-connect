@@ -553,6 +553,26 @@ describe('displayCategories are always valid (Amazon Discovery)', () => {
         }
     });
 
+    it('every emitted catalog assetId is in Amazon global catalog', () => {
+        // Walk all capabilityResources/modeResources friendlyNames; any @type:"asset"
+        // must reference a real catalog id or Amazon rejects the whole batch.
+        const collectAssets = (obj, out) => {
+            if (Array.isArray(obj)) { obj.forEach((o) => collectAssets(o, out)); return out; }
+            if (obj && typeof obj === 'object') {
+                if (obj['@type'] === 'asset') out.push(obj.value && obj.value.assetId);
+                for (const k of Object.keys(obj)) collectAssets(obj[k], out);
+            }
+            return out;
+        };
+        for (const row of cases) {
+            const ep = em.buildAlexaEndpoint(row, {});
+            const assets = collectAssets(ep.capabilities, []);
+            for (const a of assets) {
+                assert.ok(em.VALID_ASSET_IDS.has(a), `${row.entity_id} emitted INVALID assetId: ${a}`);
+            }
+        }
+    });
+
     it('humidity sensor and AV receiver no longer emit invalid categories', () => {
         const hum = em.buildAlexaEndpoint(sample('sensor', { value: 55, device_class: 'humidity' }), {});
         assert.ok(!hum.displayCategories.includes('HUMIDITY_SENSOR'));
@@ -567,5 +587,50 @@ describe('displayCategories are always valid (Amazon Discovery)', () => {
         // sanitizer contract: VALID set never contains a made-up value, and OTHER is valid.
         assert.ok(!em.VALID_DISPLAY_CATEGORIES.has('NOT_A_REAL_CATEGORY'));
         assert.ok(em.VALID_DISPLAY_CATEGORIES.has('OTHER'));
+    });
+});
+
+// Amazon requires friendlyName: "Up to 256 alphanumeric characters and spaces.
+// Don't include special characters or punctuation." A single non-conforming name
+// makes the endpoint invalid and causes Amazon to reject the WHOLE Discovery /
+// AddOrUpdateReport batch (HTTP 400 → 0 devices). HA names routinely contain
+// apostrophes/hyphens/accents/parentheses/emoji, so every name must be coerced.
+describe('friendlyName is always Amazon-valid (alphanumeric + spaces)', () => {
+    const VALID = /^[a-zA-Z0-9 ]+$/;
+    const build = (display_name, entity_id = 'light.kids_lamp') =>
+        em.buildAlexaEndpoint({ entity_id, display_name, entity_type: 'light', online: 1, state_json: JSON.stringify({ on: true, supported_color_modes: ['onoff'] }) }, {});
+
+    it('strips punctuation, accents, symbols, and emoji', () => {
+        const cases = {
+            "Kid's Lamp": 'Kid s Lamp',
+            'Café Bulb': 'Caf Bulb',
+            'Light #1': 'Light 1',
+            'Garage (Left)': 'Garage Left',
+            'Salon - Plafond': 'Salon Plafond',
+            'TV 📺': 'TV'
+        };
+        for (const [input, expected] of Object.entries(cases)) {
+            const fn = build(input).friendlyName;
+            assert.ok(VALID.test(fn), `"${input}" → "${fn}" should be alphanumeric+spaces`);
+            assert.equal(fn, expected);
+        }
+    });
+
+    it('falls back to the entity_id when the name has nothing usable', () => {
+        assert.equal(build('   ').friendlyName, 'kids lamp');
+        assert.equal(build('!!!@#$').friendlyName, 'kids lamp');
+    });
+
+    it('never emits an empty friendlyName and caps length', () => {
+        const long = build('A'.repeat(400)).friendlyName;
+        assert.ok(long.length > 0 && long.length <= 256);
+        assert.ok(VALID.test(long));
+        // Even with an unusable name AND a symbol-only entity_id, a default remains.
+        const ep = em.buildAlexaEndpoint({ entity_id: 'light.___', display_name: '###', entity_type: 'light', online: 1, state_json: JSON.stringify({ on: true, supported_color_modes: ['onoff'] }) }, {});
+        assert.ok(ep.friendlyName.length > 0 && VALID.test(ep.friendlyName));
+    });
+
+    it('leaves a clean name unchanged', () => {
+        assert.equal(build('Living Room Light').friendlyName, 'Living Room Light');
     });
 });
