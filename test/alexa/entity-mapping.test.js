@@ -429,7 +429,8 @@ describe('buildAlexaEndpoint', () => {
         const sp = noPin.capabilities.find((c) => c.interface === 'Alexa.SecurityPanelController');
         assert.ok(sp);
         assert.deepEqual(noPin.displayCategories, ['SECURITY_PANEL']);
-        assert.deepEqual(sp.configuration.supportedAuthorizationTypes, []);
+        // No PIN → field omitted entirely (an empty array fails Amazon's schema).
+        assert.ok(!('supportedAuthorizationTypes' in sp.configuration));
 
         const withPin = em.buildAlexaEndpoint(row({ arm_state: 'disarmed' }), { userHasSecurityPin: true });
         const spPin = withPin.capabilities.find((c) => c.interface === 'Alexa.SecurityPanelController');
@@ -632,5 +633,47 @@ describe('friendlyName is always Amazon-valid (alphanumeric + spaces)', () => {
 
     it('leaves a clean name unchanged', () => {
         assert.equal(build('Living Room Light').friendlyName, 'Living Room Light');
+    });
+});
+
+// Structural schema rules Amazon enforces (violations → "Payload does not match
+// required Schema" → entire Discovery batch rejected, 0 devices). These are
+// data-dependent, which is why clean fixtures passed but real devices failed.
+describe('capabilities satisfy Amazon structural schema rules', () => {
+    const mk = (entity_type, state, opts = {}) =>
+        em.buildAlexaEndpoint({ entity_id: `${entity_type}.x`, display_name: 'X', entity_type, online: 1, state_json: JSON.stringify(state) }, opts);
+
+    it('never emits a ModeController with fewer than 2 modes', () => {
+        const rows = [
+            mk('fan', { on: true, percentage: 50, supported_features: 15, preset_modes: ['eco'], preset_mode: 'eco', direction: 'forward' }),
+            mk('select', { current_option: 'a', options: ['a'] }),
+            mk('input_select', { current_option: 'a', options: ['only'] }),
+            mk('climate', { mode: 'cool', hvac_modes: ['off', 'cool'], fan_mode: 'auto', fan_modes: ['auto'], preset_mode: 'x', preset_modes: ['x'], ambient_temperature: 21, temperature_unit: 'C', supported_features: 24 }),
+            mk('humidifier', { on: true, target_humidity: 45, min_humidity: 30, max_humidity: 70, available_modes: ['auto'], mode: 'auto' }),
+            mk('vacuum', { on: true, isRunning: true, fan_speed: 'max', fan_speed_list: ['max'], supported_features: 32 })
+        ].filter(Boolean);
+        for (const ep of rows) {
+            for (const c of ep.capabilities) {
+                if (c.interface === 'Alexa.ModeController') {
+                    assert.ok(
+                        c.configuration && Array.isArray(c.configuration.supportedModes) && c.configuration.supportedModes.length >= 2,
+                        `${ep.endpointId} ${c.instance} has <2 modes`
+                    );
+                }
+            }
+        }
+    });
+
+    it('a 1-option select is excluded (no controllable capability left)', () => {
+        assert.equal(mk('select', { current_option: 'a', options: ['a'] }), null);
+    });
+
+    it('SecurityPanelController omits supportedAuthorizationTypes when no PIN', () => {
+        const noPin = mk('alarm_control_panel', { arm_state: 'disarmed' });
+        const sp = noPin.capabilities.find((c) => c.interface === 'Alexa.SecurityPanelController');
+        assert.ok(!('supportedAuthorizationTypes' in sp.configuration), 'empty array must be omitted, not []');
+        const withPin = mk('alarm_control_panel', { arm_state: 'disarmed' }, { userHasSecurityPin: true });
+        const spPin = withPin.capabilities.find((c) => c.interface === 'Alexa.SecurityPanelController');
+        assert.deepEqual(spPin.configuration.supportedAuthorizationTypes, [{ type: 'FOUR_DIGIT_PIN' }]);
     });
 });
