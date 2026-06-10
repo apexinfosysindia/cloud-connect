@@ -802,3 +802,38 @@ describe('climate variants are universally valid', () => {
         assert.ok(em.validateAlexaEndpoint(bad).some((e) => /HEAT\/COOL/.test(e)));
     });
 });
+
+// Spinner-bug class: Alexa's ReportState response must include EVERY advertised
+// retrievable property, or the device card spins forever and can't be controlled.
+// This was hit by a thermostat whose AC reports no ambient temperature, but the
+// same gap existed on fan/cover/humidifier/vacuum when a sub-value was null.
+describe('every advertised retrievable property is always reported', () => {
+    const check = (entity_type, state, opts = {}) => {
+        const r = { entity_id: `${entity_type}.x`, entity_type, display_name: 'X', online: 1, state_json: JSON.stringify(state) };
+        const ep = em.buildAlexaEndpoint(r, opts);
+        if (!ep) return;
+        const reported = new Set(em.parseAlexaEndpointState(r).map((p) => `${p.namespace}|${p.instance || ''}|${p.name}`));
+        for (const c of ep.capabilities) {
+            if (!(c.properties && c.properties.retrievable)) continue;
+            for (const sp of c.properties.supported) {
+                const key = `${c.interface}|${c.instance || ''}|${sp.name}`;
+                assert.ok(reported.has(key), `${entity_type}: advertised ${c.interface}/${c.instance || ''}.${sp.name} not reported`);
+            }
+        }
+    };
+
+    it('climate with no ambient temp does not advertise an empty TemperatureSensor', () => {
+        const ep = em.buildAlexaEndpoint({ entity_id: 'climate.ac', entity_type: 'climate', display_name: 'AC', online: 1, state_json: JSON.stringify({ mode: 'cool', hvac_modes: ['off', 'cool'], target_temperature: 21, ambient_temperature: null, supported_features: 393, temperature_unit: 'C' }) }, {});
+        assert.ok(!ep.capabilities.some((c) => c.interface === 'Alexa.TemperatureSensor'));
+        check('climate', { mode: 'cool', hvac_modes: ['off', 'cool'], target_temperature: 21, ambient_temperature: null, supported_features: 393, temperature_unit: 'C' });
+    });
+
+    it('reports defaults for null sub-values across domains', () => {
+        check('fan', { on: true, percentage: 50, supported_features: 15, preset_modes: ['a', 'b'], preset_mode: null, oscillating: true, direction: null });
+        check('cover', { openPercent: 40, supported_features: 132, device_class: 'blind', tilt_position: null });
+        check('humidifier', { on: true, target_humidity: null, min_humidity: 30, max_humidity: 70, available_modes: ['a', 'b'], mode: null });
+        check('vacuum', { on: true, isRunning: true, fan_speed: null, fan_speed_list: ['a', 'b'], supported_features: 32 });
+        check('light', { on: true, supported_color_modes: ['color_temp'] });
+        check('climate', { mode: 'cool', hvac_modes: ['off', 'cool'], target_temperature: 21, ambient_temperature: 26, supported_features: 1, temperature_unit: 'C' });
+    });
+});
