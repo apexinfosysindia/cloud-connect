@@ -822,10 +822,23 @@ describe('every advertised retrievable property is always reported', () => {
         }
     };
 
-    it('climate with no ambient temp does not advertise an empty TemperatureSensor', () => {
+    it('a real thermostat with no ambient temp still reports temperature (setpoint fallback)', () => {
+        // The Alexa app dial needs a current temperature to render — a bare AC
+        // with no room sensor must report the setpoint as a stand-in so the card
+        // does not spin. TemperatureSensor is present and reports a value.
         const ep = em.buildAlexaEndpoint({ entity_id: 'climate.ac', entity_type: 'climate', display_name: 'AC', online: 1, state_json: JSON.stringify({ mode: 'cool', hvac_modes: ['off', 'cool'], target_temperature: 21, ambient_temperature: null, supported_features: 393, temperature_unit: 'C' }) }, {});
-        assert.ok(!ep.capabilities.some((c) => c.interface === 'Alexa.TemperatureSensor'));
+        assert.ok(ep.capabilities.some((c) => c.interface === 'Alexa.TemperatureSensor'));
+        const r = { entity_id: 'climate.ac', entity_type: 'climate', online: 1, state_json: JSON.stringify({ mode: 'cool', hvac_modes: ['off', 'cool'], target_temperature: 21, ambient_temperature: null, supported_features: 393, temperature_unit: 'C' }) };
+        const temp = em.parseAlexaEndpointState(r).find((p) => p.name === 'temperature');
+        assert.deepEqual(temp.value, { value: 21, scale: 'CELSIUS' });
         check('climate', { mode: 'cool', hvac_modes: ['off', 'cool'], target_temperature: 21, ambient_temperature: null, supported_features: 393, temperature_unit: 'C' });
+    });
+
+    it('a non-thermostat climate (dehumidifier-only) with no temp gets no TemperatureSensor', () => {
+        const ep = em.buildAlexaEndpoint({ entity_id: 'climate.dh', entity_type: 'climate', display_name: 'DH', online: 1, state_json: JSON.stringify({ mode: 'dry', hvac_modes: ['off', 'dry'], ambient_temperature: null, fan_modes: ['low', 'high'], supported_features: 9, temperature_unit: 'C' }) }, {});
+        // Not a thermostat (no HEAT/COOL) and no ambient → no TemperatureSensor,
+        // but the endpoint is still valid via its mode controllers.
+        if (ep) assert.ok(!ep.capabilities.some((c) => c.interface === 'Alexa.TemperatureSensor'));
     });
 
     it('reports defaults for null sub-values across domains', () => {
