@@ -278,6 +278,52 @@ function formatPasskeyDate(value) {
     return ts.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+// "<Browser> on <OS> · <method>" so multiple admin keys are distinguishable.
+function describePasskeyDevice(attestation) {
+    let os = '';
+    let browser = '';
+    const uaData = navigator.userAgentData;
+    if (uaData && Array.isArray(uaData.brands)) {
+        os = uaData.platform || '';
+        const brand = uaData.brands.find((b) => !/Not.?A.?Brand/i.test(b.brand));
+        browser = brand ? brand.brand : '';
+    }
+    const ua = navigator.userAgent || '';
+    if (!os) {
+        if (/Windows/i.test(ua)) os = 'Windows';
+        else if (/iPhone|iPad|iPod/i.test(ua)) os = 'iOS';
+        else if (/Mac/i.test(ua)) os = 'macOS';
+        else if (/Android/i.test(ua)) os = 'Android';
+        else if (/Linux/i.test(ua)) os = 'Linux';
+    }
+    if (!browser) {
+        if (/Edg\//i.test(ua)) browser = 'Edge';
+        else if (/Chrome\//i.test(ua) && !/Edg\//i.test(ua)) browser = 'Chrome';
+        else if (/Firefox\//i.test(ua)) browser = 'Firefox';
+        else if (/Safari\//i.test(ua) && !/Chrome\//i.test(ua)) browser = 'Safari';
+    }
+    let transports = [];
+    try {
+        const fromGetter = attestation && attestation.response && attestation.response.getTransports
+            ? attestation.response.getTransports()
+            : null;
+        transports = Array.isArray(fromGetter)
+            ? fromGetter
+            : (attestation && attestation.response && Array.isArray(attestation.response.transports)
+                ? attestation.response.transports
+                : []);
+    } catch (_e) {
+        transports = [];
+    }
+    let method = '';
+    if (transports.includes('internal')) method = 'This device';
+    else if (transports.includes('hybrid')) method = 'Phone';
+    else if (transports.some((t) => ['usb', 'nfc', 'ble'].includes(t))) method = 'Security key';
+
+    const where = [browser, os].filter(Boolean).join(' on ');
+    return 'Admin · ' + ([where || 'Passkey', method].filter(Boolean).join(' · '));
+}
+
 function setPasskeyStatus(message, isError) {
     if (!passkeyStatus) return;
     passkeyStatus.textContent = message || '';
@@ -337,7 +383,7 @@ if (addPasskeyBtn) {
         try {
             const optData = await api('/api/admin/passkeys/register/options', { method: 'POST', body: {} });
             const attestation = await window.SimpleWebAuthnBrowser.startRegistration(optData.options);
-            const nickname = 'Admin ' + (navigator.platform || '').split(' ')[0] + ' · ' + formatPasskeyDate(null);
+            const nickname = describePasskeyDevice(attestation);
             await api('/api/admin/passkeys/register/verify', {
                 method: 'POST',
                 body: { response: attestation, nickname }

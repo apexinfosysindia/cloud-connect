@@ -50,7 +50,8 @@ module.exports = function ({ webauthn, auth, utils }) {
             const principal = customerPrincipal(req);
             const result = await webauthn.finishRegistration(principal, req.body?.response);
             if (!result.verified) {
-                return res.status(400).json({ error: 'Could not verify passkey. Please try again.' });
+                console.error('[webauthn] customer registration verify failed:', result.error);
+                return res.status(400).json({ error: result.error || 'Could not verify passkey. Please try again.' });
             }
             await webauthn.insertCredential(principal, result.credential, req.body?.nickname);
             await webauthn.setCustomerPasskeyEnabled(req.portalUser.id, true);
@@ -123,7 +124,8 @@ module.exports = function ({ webauthn, auth, utils }) {
             const principal = adminPrincipal();
             const result = await webauthn.finishRegistration(principal, req.body?.response);
             if (!result.verified) {
-                return res.status(400).json({ error: 'Could not verify passkey. Please try again.' });
+                console.error('[webauthn] admin registration verify failed:', result.error);
+                return res.status(400).json({ error: result.error || 'Could not verify passkey. Please try again.' });
             }
             await webauthn.insertCredential(principal, result.credential, req.body?.nickname);
             res.status(201).json({ message: 'Passkey registered' });
