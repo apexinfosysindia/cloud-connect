@@ -2050,17 +2050,19 @@ code {
     }
 }
 
-@media (max-width: 720px) {
-    /* Below 720px there isn't room for the full brand-suite AND proper square
-       icon buttons without the buttons squishing, so drop the entire header
-       action cluster (toggle, Overview, Sign In, Create Account, Log Out,
-       identity/email pill — including admin Log Out) on every page; only the
-       brand-suite remains. 721-820px keeps proper icon-only squares; >=821px
-       shows full text buttons. In-body controls still cover every action. */
+@media (max-width: 460px) {
+    /* Below ~460px the brand-suite plus two 44px icon squares can no longer
+       share one line without wrapping, so drop the entire header action
+       cluster (toggle, Overview, Sign In, Create Account, Log Out,
+       identity/email pill — including admin Log Out); only the brand-suite
+       remains. 461-820px keeps proper icon-only squares; >=821px shows full
+       text buttons. In-body controls still cover every action. */
     .masthead-actions {
         display: none !important;
     }
+}
 
+@media (max-width: 720px) {
     body.portal-page,
     body.admin-page {
         padding: 10px 0 18px;
