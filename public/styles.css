@@ -618,6 +618,40 @@ code {
     color: #0f172a;
 }
 
+/* Live breakdown bar: fill width = this bucket's share of the total. The
+   width transition animates it growing in on each data update. */
+.admin-page .stat-card__bar {
+    margin-top: 12px;
+    height: 6px;
+    border-radius: 999px;
+    background: #eef2f7;
+    overflow: hidden;
+}
+
+.admin-page .stat-card__bar-fill {
+    width: 0;
+    height: 100%;
+    border-radius: 999px;
+    background: #94a3b8;
+    transition: width 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.admin-page .stat-card--pending .stat-card__bar-fill {
+    background: #d97706;
+}
+
+.admin-page .stat-card--trial .stat-card__bar-fill {
+    background: #1d4ed8;
+}
+
+.admin-page .stat-card--active .stat-card__bar-fill {
+    background: #0f766e;
+}
+
+.admin-page .stat-card--suspended .stat-card__bar-fill {
+    background: #b91c1c;
+}
+
 .admin-page .user-list {
     gap: 14px;
 }
@@ -1957,7 +1991,7 @@ code {
     }
 
     .admin-page .stats-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: 1fr 1fr;
     }
 
     .admin-page .user-card__summary {
@@ -2245,7 +2279,7 @@ code {
 
 @media (max-width: 560px) {
     .admin-page .stats-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: 1fr 1fr;
     }
 
     .auth-page .status-meta {
@@ -2552,6 +2586,11 @@ code {
 :root[data-theme-effective="dark"] .fleet-log-title,
 :root[data-theme-effective="dark"] .fleet-log-item__event {
     color: var(--text);
+}
+
+/* Darken the stat breakdown-bar track so it doesn't glare on dark cards. */
+:root[data-theme-effective="dark"] .admin-page .stat-card__bar {
+    background: rgba(255, 255, 255, 0.08);
 }
 
 :root[data-theme-effective="dark"] .admin-page .user-card__name--placeholder {
