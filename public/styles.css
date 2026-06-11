@@ -1722,7 +1722,7 @@ code {
     margin-bottom: 0;
 }
 
-@media (max-width: 560px) {
+@media (max-width: 720px) {
     .google-pin-controls {
         flex-wrap: wrap;
     }
