@@ -301,6 +301,24 @@
     </div>
 </div>
 
+<div id="passkeyInterstitial" class="passkey-interstitial hidden" role="dialog" aria-modal="true" aria-labelledby="passkeyInterstitialTitle">
+    <div class="passkey-interstitial__panel">
+        <div class="passkey-interstitial__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5z"></path>
+                <circle cx="12" cy="15" r="1.6"></circle>
+            </svg>
+        </div>
+        <h2 id="passkeyInterstitialTitle" class="passkey-interstitial__title">Secure your account with a passkey</h2>
+        <p class="passkey-interstitial__desc">Use Face ID, Touch ID, Windows Hello, a password manager, or a security key to sign in faster and protect your account with two-factor security. You can set it up right now in a couple of seconds.</p>
+        <p id="passkeyInterstitialStatus" class="passkey-interstitial__status" style="min-height:1.2em"></p>
+        <div class="passkey-interstitial__actions">
+            <button type="button" id="passkeyInterstitialSetup" class="button button-primary button-full">Set up passkey</button>
+            <button type="button" id="passkeyInterstitialLater" class="button button-ghost button-full">Maybe later</button>
+        </div>
+    </div>
+</div>
+
 <script src="/vendor/simplewebauthn-browser.umd.min.js"></script>
 <script src="/account.js"></script>
 </body>
