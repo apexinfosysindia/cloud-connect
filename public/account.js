@@ -1290,7 +1290,26 @@
             dashSubdomain.value = subdomainConfigured ? userData.subdomain : '';
         }
 
-        document.getElementById('dashToken').textContent = userData.access_token || 'Issued when service is enabled';
+        const dashTokenEl = document.getElementById('dashToken');
+        const dashTokenCopyEl = document.getElementById('dashTokenCopy');
+        const issuedToken = userData.access_token || '';
+        if (dashTokenEl) {
+            // Stash the real token; the box stays masked with a placeholder
+            // until the user clicks to copy (which also reveals it). Preserve an
+            // already-revealed state across the silent 5s refresh.
+            dashTokenEl.dataset.token = issuedToken;
+            const alreadyRevealed = dashTokenCopyEl && dashTokenCopyEl.classList.contains('is-revealed');
+            if (!issuedToken) {
+                dashTokenEl.textContent = 'Issued when service is enabled';
+                if (dashTokenCopyEl) {
+                    dashTokenCopyEl.classList.remove('is-revealed');
+                    dashTokenCopyEl.classList.add('is-empty');
+                }
+            } else {
+                if (dashTokenCopyEl) dashTokenCopyEl.classList.remove('is-empty');
+                dashTokenEl.textContent = alreadyRevealed ? issuedToken : 'Click to copy access token';
+            }
+        }
 
         if (googleHomeCard) {
             const linked = Boolean(userData.google_home_linked);
@@ -1333,9 +1352,18 @@
 
         const dashUrl = document.getElementById('dashUrl');
         const dashUrlLabel = document.getElementById('dashUrlLabel');
+        // The address text lives in a child span so it can ellipsis-truncate
+        // independently of the trailing open/add icon (the anchor is a flex row).
+        const setDashUrlText = (text) => {
+            dashUrl.textContent = '';
+            const span = document.createElement('span');
+            span.className = 'domain-link__text';
+            span.textContent = text;
+            dashUrl.appendChild(span);
+        };
         if (!subdomainConfigured) {
             dashUrlLabel.textContent = 'Cloud Address';
-            dashUrl.textContent = 'Set your cloud address';
+            setDashUrlText('Set your cloud address');
             dashUrl.href = '#';
             dashUrl.removeAttribute('target');
             dashUrl.className = 'domain-link domain-link--setup';
@@ -1343,7 +1371,7 @@
                 dashUrlHelp.textContent = 'Set your desired cloud address to continue account activation.';
             }
         } else {
-            dashUrl.textContent = `https://${userData.domain}`;
+            setDashUrlText(`https://${userData.domain}`);
             if (accessEnabled) {
                 dashUrlLabel.textContent = 'Live Cloud Address';
                 dashUrl.href = `https://${userData.domain}`;
@@ -2459,25 +2487,30 @@
         });
     }
 
-    // Click-to-copy on the access-token container.
+    // Click-to-copy on the access-token container. The token is masked with a
+    // placeholder until clicked; clicking copies it to the clipboard and
+    // reveals the real value (which then stays shown).
     const dashTokenCopy = document.getElementById('dashTokenCopy');
     if (dashTokenCopy) {
         dashTokenCopy.addEventListener('click', async () => {
-            const token = (document.getElementById('dashToken')?.textContent || '').trim();
-            if (!token || token === 'Issued when service is enabled') {
+            const tokenEl = document.getElementById('dashToken');
+            const token = (tokenEl?.dataset.token || '').trim();
+            if (!token) {
                 return;
             }
 
             try {
                 await copyToClipboard(token);
-                dashTokenCopy.classList.add('is-copied');
+                // Reveal the real token in place of the placeholder.
+                if (tokenEl) tokenEl.textContent = token;
+                dashTokenCopy.classList.add('is-revealed', 'is-copied');
                 window.clearTimeout(dashTokenCopy.copiedTimer);
                 dashTokenCopy.copiedTimer = window.setTimeout(() => {
                     dashTokenCopy.classList.remove('is-copied');
                 }, 1800);
                 showAlert('Access token copied to clipboard.', false);
             } catch (err) {
-                showAlert('Could not copy token. Select and copy it manually.');
+                showAlert('Could not copy token. Click again or copy it manually.');
             }
         });
     }
