@@ -667,6 +667,18 @@ code {
     color: #0b1220;
 }
 
+/* In the collapsed summary header, the identity lines (email / cloud URL /
+   UID) must stay on a single line and ellipsis-truncate rather than wrap.
+   Scoped to __identity so the expanded-details metas (created/heartbeat
+   timestamps) can still wrap freely. */
+.admin-page .user-card__identity .user-card__name,
+.admin-page .user-card__identity .user-card__meta {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: normal;
+}
+
 .admin-page .user-card__name--placeholder {
     color: #94a3b8;
     font-style: italic;
@@ -2072,10 +2084,10 @@ code {
 @media (max-width: 460px) {
     /* Below ~460px the brand-suite plus two 44px icon squares can no longer
        share one line without wrapping, so drop the entire header action
-       cluster (toggle, Overview, Sign In, Create Account, Log Out,
-       identity/email pill — including admin Log Out); only the brand-suite
-       remains. 461-820px keeps proper icon-only squares; >=821px shows full
-       text buttons. In-body controls still cover every action. */
+       cluster (theme toggle, Overview, Sign In, Create Account, Log Out) on
+       every page; only the brand-suite remains. 461-820px keeps proper
+       icon-only squares; >=821px shows full text buttons. In-body controls
+       still cover every action. */
     .masthead-actions {
         display: none !important;
     }
