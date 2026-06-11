@@ -12,7 +12,6 @@
     const accountShell = document.getElementById('account-shell');
     const logoutBtn = document.getElementById('logoutBtn');
     const headerLogoutBtn = document.getElementById('headerLogoutBtn');
-    const headerUserEmail = document.getElementById('headerUserEmail');
     const guestNavActions = document.getElementById('guestNavActions');
     const signedInNavActions = document.getElementById('signedInNavActions');
     const subdomainCard = document.getElementById('subdomainCard');
@@ -178,10 +177,6 @@
 
         if (signedInNavActions) {
             signedInNavActions.classList.toggle('hidden', !isSignedIn);
-        }
-
-        if (headerUserEmail) {
-            headerUserEmail.textContent = isSignedIn ? userData.email : '';
         }
     }
 
