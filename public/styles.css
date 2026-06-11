@@ -2130,6 +2130,14 @@ code {
         grid-template-columns: 1fr;
     }
 
+    /* On phones, drop the entire header action cluster (theme toggle, Overview,
+       Sign In, Create Account, Log Out, identity/email pill — including the
+       admin Log Out) on every page, leaving just the brand-suite. Tablets
+       (561-820px) keep the compact icon buttons from the <=820px block. */
+    .masthead-actions {
+        display: none !important;
+    }
+
     .auth-page .status-meta {
         flex-direction: row;
         align-items: flex-start;
