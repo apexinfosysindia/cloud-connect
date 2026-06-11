@@ -610,6 +610,12 @@ code {
     letter-spacing: 0.06em;
 }
 
+/* Long stat labels carry a full + short variant; the short one only shows on
+   phones (<=560px) so labels like "Suspended / Expired" don't wrap. */
+.admin-page .stat-label__short {
+    display: none;
+}
+
 .admin-page .stat-value {
     margin-top: 8px;
     font-size: 1.6rem;
@@ -2280,6 +2286,16 @@ code {
 @media (max-width: 560px) {
     .admin-page .stats-grid {
         grid-template-columns: 1fr 1fr;
+    }
+
+    /* On phones the 2x2 cells are narrow; use the short label variants so
+       "Suspended / Expired" and "Connect Blocked" stay on one line. */
+    .admin-page .stat-label__full {
+        display: none;
+    }
+
+    .admin-page .stat-label__short {
+        display: inline;
     }
 
     .auth-page .status-meta {
