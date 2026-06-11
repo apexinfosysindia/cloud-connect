@@ -610,7 +610,7 @@ function renderFleet(devices, stats, heartbeatWindowSeconds) {
             <div class="user-card__summary" data-fleet-card-toggle role="button" tabindex="0" aria-expanded="false">
                 <div class="user-card__identity">
                     ${titleRow}
-                    <div class="user-card__meta">${escapeHtml(ownerEmail)}</div>
+                    <div class="user-card__meta">Last seen ${escapeHtml(formatSince(device.last_seen_at))}</div>
                 </div>
                 <div class="user-card__summary-right">
                     ${deviceOnlineBadge(device)}
@@ -621,6 +621,11 @@ function renderFleet(devices, stats, heartbeatWindowSeconds) {
                 <div class="user-card__meta">Last heartbeat ${formatSince(device.last_seen_at)} (${formatDate(device.last_seen_at)})</div>
 
                 <div class="user-card__sections">
+                    <section class="user-card__section">
+                        <span class="user-card__section-label">Owner</span>
+                        <div class="user-card__section-text">${escapeHtml(ownerEmail)}</div>
+                    </section>
+
                     <section class="user-card__section">
                         <span class="user-card__section-label">Connectivity</span>
                         <div class="user-card__section-text">SSH endpoint: ${escapeHtml(endpoint)}</div>
