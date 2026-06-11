@@ -1856,6 +1856,34 @@ code {
     }
 }
 
+@media (max-width: 820px) {
+    /* Tablet & below: keep the masthead a clean single row. The brand area
+       shows logos only (text hidden) and yields space first; the action
+       cluster never shrinks or overlaps. Covers iPad-portrait (768px), which
+       sits just above the 720px layout breakpoint below. */
+    .masthead {
+        flex-wrap: nowrap;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .brand-suite {
+        flex: 0 1 auto;
+        min-width: 0;
+        overflow: hidden;
+    }
+
+    .brand-suite__product > div {
+        display: none;
+    }
+
+    .masthead-actions {
+        flex: 0 0 auto;
+        flex-wrap: nowrap;
+        margin-left: auto;
+    }
+}
+
 @media (max-width: 720px) {
     body.portal-page,
     body.admin-page {
@@ -1914,8 +1942,9 @@ code {
 
     .brand-suite {
         width: auto;
-        flex: 1 1 auto;
+        flex: 0 1 auto;
         min-width: 0;
+        overflow: hidden;
         gap: 10px;
     }
 
@@ -1972,6 +2001,30 @@ code {
         max-width: none;
     }
 
+    /* Card header (Google/Alexa): once the dashboard cards go full-width
+       single-column, stack the action controls (filter / Expose-all / Unlink)
+       into a full-width column beneath the title so they span edge-to-edge
+       instead of an awkward half-width wrap, and never overflow. */
+    .google-home-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+
+    .card-header-actions {
+        width: 100%;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+
+    .card-header-actions > .button,
+    .card-header-actions > .button-small,
+    .card-header-actions > .entity-domain-filter {
+        width: 100%;
+        max-width: none;
+    }
+
     .button,
     .button-small {
         width: 100%;
@@ -2023,17 +2076,12 @@ code {
     .masthead {
         align-items: center;
         flex-wrap: nowrap;
+        gap: 10px;
     }
 
-    /* Keep the brand and the action buttons on a single row at all widths
-       (the toggle collapses to an icon-only square below, so three items
-       still fit). brand-suite shrinks (min-width:0 from base) to make room. */
-    .brand-suite {
-        width: auto;
-        flex: 1 1 auto;
-        min-width: 0;
-    }
-
+    /* Actions take priority and never shrink/overlap; the brand area gives up
+       space. Logos themselves never shrink (flex-shrink:0 below) so they stay
+       crisp — it's the hidden brand TEXT that frees the room. */
     .masthead-actions {
         width: auto;
         margin-left: auto;
@@ -2043,6 +2091,25 @@ code {
         justify-content: flex-end;
         gap: 8px;
         flex: 0 0 auto;
+    }
+
+    .brand-suite {
+        width: auto;
+        flex: 0 1 auto;
+        min-width: 0;
+    }
+
+    .brand-suite__group,
+    .brand-suite__product {
+        flex-shrink: 0;
+    }
+
+    /* On phones, keep only the primary group logo. The secondary square product
+       logo + divider are dropped so the single brand mark always shows fully
+       (never clipped) alongside the action row. */
+    .brand-suite__product,
+    .brand-suite__divider {
+        display: none;
     }
 
     .masthead-actions .button,
@@ -2063,17 +2130,19 @@ code {
         width: auto;
     }
 
-    /* On very small screens, keep just the logos in the brand area so the
-       single-line action row (toggle + 2 buttons) has room without the brand
-       title wrapping to multiple lines and looking cramped. */
-    .brand-suite__product > div {
+    /* On phones the guest masthead can't fit logo + toggle + Overview +
+       Create Account on one line. Drop the secondary "Overview" link (the same
+       page is reachable from the body) so the logo stays visible and the row
+       never wraps or crowds. */
+    #guestNavActions a[href="/index.html"] {
         display: none;
     }
 
-    .masthead-actions .identity-pill {
-        flex: 0 1 auto;
-        min-width: 0;
-        max-width: 40vw;
+    /* Free up masthead space on mobile by hiding the (often long) signed-in
+       identity pill — the email isn't essential on small screens. */
+    #headerUserEmail,
+    #adminIdentity {
+        display: none !important;
     }
 
     .admin-page .user-card__summary {
