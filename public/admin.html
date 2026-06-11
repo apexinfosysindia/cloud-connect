@@ -24,7 +24,7 @@
 </head>
 <body class="admin-page">
 <div class="page-shell page-shell--admin">
-    <header class="masthead masthead--admin">
+    <header class="masthead masthead--admin masthead--no-actions">
         <div class="brand-suite">
             <img src="/group-logo.png" alt="Apex Infosys" class="brand-suite__group">
             <span class="brand-suite__divider"></span>
@@ -270,9 +270,12 @@ let editingFleetNameDraft = '';
 let savingFleetNameDeviceId = null;
 
 function syncAdminMasthead() {
-    // The theme toggle always lives in .masthead-actions, so the actions area
-    // is never empty — keep it visible regardless of login state.
-    adminMasthead.classList.remove('masthead--no-actions');
+    // The theme toggle lives alongside identity + logout, which are only shown
+    // once authenticated. When logged out, hide the whole actions cluster (and
+    // thus the toggle) so the masthead stays clean — matching the original
+    // admin layout.
+    const hasVisibleActions = !adminIdentity.classList.contains('hidden') || !logoutBtn.classList.contains('hidden');
+    adminMasthead.classList.toggle('masthead--no-actions', !hasVisibleActions);
 }
 
 function showAlert(message, isError = true) {
