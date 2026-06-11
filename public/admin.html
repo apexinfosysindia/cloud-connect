@@ -587,7 +587,6 @@ function renderFleet(devices, stats, heartbeatWindowSeconds) {
 
     fleetList.innerHTML = devices.map((device) => {
         const cloudUrl = getFleetCloudUrl(device);
-        const ownerEmail = device.owner?.email || 'Unknown owner';
         const localIps = (device.local_ips && device.local_ips.length > 0) ? device.local_ips.join(', ') : 'Not reported';
         const endpoint = (device.tunnel_host && device.tunnel_port) ? `${device.tunnel_host}:${device.tunnel_port}` : 'Waiting for tunnel endpoint';
         const canConnect = Boolean(device.online && device.connect_ready);
@@ -610,7 +609,7 @@ function renderFleet(devices, stats, heartbeatWindowSeconds) {
             <div class="user-card__summary" data-fleet-card-toggle role="button" tabindex="0" aria-expanded="false">
                 <div class="user-card__identity">
                     ${titleRow}
-                    <div class="user-card__meta">Last seen ${escapeHtml(formatSince(device.last_seen_at))}</div>
+                    <div class="user-card__meta">UID: ${escapeHtml(device.device_uid || '-')}</div>
                 </div>
                 <div class="user-card__summary-right">
                     ${deviceOnlineBadge(device)}
@@ -621,11 +620,6 @@ function renderFleet(devices, stats, heartbeatWindowSeconds) {
                 <div class="user-card__meta">Last heartbeat ${formatSince(device.last_seen_at)} (${formatDate(device.last_seen_at)})</div>
 
                 <div class="user-card__sections">
-                    <section class="user-card__section">
-                        <span class="user-card__section-label">Owner</span>
-                        <div class="user-card__section-text">${escapeHtml(ownerEmail)}</div>
-                    </section>
-
                     <section class="user-card__section">
                         <span class="user-card__section-label">Connectivity</span>
                         <div class="user-card__section-text">SSH endpoint: ${escapeHtml(endpoint)}</div>

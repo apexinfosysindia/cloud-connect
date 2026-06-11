@@ -145,6 +145,13 @@ code {
     gap: 10px;
 }
 
+/* The product text column must be allowed to shrink, otherwise the title
+   (which has no wrap budget) forces the whole masthead wider than the
+   viewport on narrow screens. */
+.brand-suite__product > div {
+    min-width: 0;
+}
+
 .brand-suite__product-logo {
     width: 46px;
     height: 46px;
@@ -165,6 +172,9 @@ code {
     font-weight: 700;
     line-height: 1.2;
     color: #0b1220;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .brand-suite__subtitle {
@@ -1959,9 +1969,18 @@ code {
         min-width: 0;
     }
 
+    /* Keep the logos crisp (never shrink), but let the product cluster — and
+       thus its text column — shrink so the title/subtitle ellipsis-truncate
+       instead of pushing the masthead past the viewport. */
     .brand-suite__group,
-    .brand-suite__product {
+    .brand-suite__product-logo,
+    .brand-suite__product-logo--compact {
         flex-shrink: 0;
+    }
+
+    .brand-suite__product {
+        min-width: 0;
+        flex: 1 1 auto;
     }
 
     .masthead-actions {
