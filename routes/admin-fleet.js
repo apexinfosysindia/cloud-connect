@@ -1,6 +1,6 @@
 const express = require('express');
 
-module.exports = function ({ dbRun, dbAll, utils, auth, device }) {
+module.exports = function ({ dbAll, utils, auth, device }) {
     const router = express.Router();
     const { asyncHandler } = utils;
 
@@ -145,67 +145,6 @@ module.exports = function ({ dbRun, dbAll, utils, auth, device }) {
                     details: utils.parseJsonSafe(entry.details, entry.details),
                     created_at: entry.created_at
                 }))
-            });
-        })
-    );
-
-    router.post(
-        '/api/admin/fleet/:id/name',
-        auth.requireAdmin,
-        asyncHandler(async (req, res) => {
-            const deviceId = utils.parsePositiveInt(req.params.id);
-            if (!deviceId) {
-                return res.status(400).json({ error: 'Invalid device id' });
-            }
-
-            const rawName = utils.sanitizeString(req.body?.device_name, 120);
-            if (!rawName) {
-                return res.status(400).json({ error: 'device_name is required' });
-            }
-
-            const deviceName = utils.sanitizeDeviceName(rawName);
-            if (!deviceName) {
-                return res.status(400).json({ error: 'device_name is invalid' });
-            }
-
-            const deviceRow = await device.getDeviceWithOwnerById(deviceId);
-            if (!deviceRow) {
-                return res.status(404).json({ error: 'Device not found' });
-            }
-
-            const nowIso = new Date().toISOString();
-            await dbRun(
-                `
-                UPDATE devices
-                SET device_name = ?,
-                    admin_name_override = 1,
-                    updated_at = ?
-                WHERE id = ?
-            `,
-                [deviceName, nowIso, deviceId]
-            );
-
-            await device.insertAdminAccessLog(deviceId, req.admin.email, 'device_rename', {
-                previous_name: deviceRow.device_name || null,
-                next_name: deviceName,
-                device_uid: deviceRow.device_uid
-            });
-
-            await device.insertDeviceLog(
-                deviceId,
-                'info',
-                'admin.rename',
-                `Admin ${req.admin.email} renamed device to ${deviceName}`,
-                {
-                    previous_name: deviceRow.device_name || null,
-                    next_name: deviceName
-                }
-            );
-
-            const updated = await device.getDeviceWithOwnerById(deviceId);
-            return res.status(200).json({
-                message: 'Device name updated',
-                device: device.serializeDevice(updated)
             });
         })
     );
