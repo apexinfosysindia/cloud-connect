@@ -82,6 +82,7 @@ module.exports = function ({ auth, webauthn, utils }) {
 
             const result = await webauthn.finishAuthentication(adminPrincipal(), assertion);
             if (!result.verified) {
+                console.error('[webauthn] admin sudo passkey verify failed:', result.error);
                 return res.status(401).json({ error: 'Passkey verification failed. Please try again.' });
             }
 

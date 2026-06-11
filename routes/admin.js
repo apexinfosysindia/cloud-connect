@@ -79,6 +79,7 @@ module.exports = function ({ dbAll, dbGet, utils, auth, webauthn, billing }) {
             const principal = { kind: 'admin', subject: email, adminEmail: email, displayName: email };
             const result = await webauthn.finishAuthentication(principal, assertion);
             if (!result.verified) {
+                console.error('[webauthn] admin login passkey verify failed:', result.error);
                 return res.status(401).json({ error: 'Passkey verification failed. Please sign in again.' });
             }
 

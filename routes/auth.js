@@ -174,6 +174,7 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, w
             const principal = { kind: 'customer', subject: user.email, userId: user.id, displayName: user.email };
             const result = await webauthn.finishAuthentication(principal, assertion);
             if (!result.verified) {
+                console.error('[webauthn] customer login passkey verify failed:', result.error);
                 return res.status(401).json({ error: 'Passkey verification failed. Please sign in again.' });
             }
 

@@ -2354,6 +2354,55 @@
         passkeyStatus.classList.toggle('danger-label', Boolean(isError));
     }
 
+    // Build a human, distinguishable default passkey name from signals available
+    // at enroll time: "<Browser> on <OS> · <method>". The method comes from the
+    // new credential's transports (internal = platform / Touch ID / Windows
+    // Hello, hybrid = phone, usb/nfc/ble = security key), so multiple keys
+    // enrolled from one device via different authenticators don't collide.
+    function describePasskeyDevice(attestation) {
+        let os = '';
+        let browser = '';
+        const uaData = navigator.userAgentData;
+        if (uaData && Array.isArray(uaData.brands)) {
+            os = uaData.platform || '';
+            const brand = uaData.brands.find((b) => !/Not.?A.?Brand/i.test(b.brand));
+            browser = brand ? brand.brand : '';
+        }
+        const ua = navigator.userAgent || '';
+        if (!os) {
+            if (/Windows/i.test(ua)) os = 'Windows';
+            else if (/iPhone|iPad|iPod/i.test(ua)) os = 'iOS';
+            else if (/Mac/i.test(ua)) os = 'macOS';
+            else if (/Android/i.test(ua)) os = 'Android';
+            else if (/Linux/i.test(ua)) os = 'Linux';
+        }
+        if (!browser) {
+            if (/Edg\//i.test(ua)) browser = 'Edge';
+            else if (/Chrome\//i.test(ua) && !/Edg\//i.test(ua)) browser = 'Chrome';
+            else if (/Firefox\//i.test(ua)) browser = 'Firefox';
+            else if (/Safari\//i.test(ua) && !/Chrome\//i.test(ua)) browser = 'Safari';
+        }
+
+        let transports = [];
+        try {
+            const fromGetter = attestation?.response?.getTransports?.();
+            transports = Array.isArray(fromGetter)
+                ? fromGetter
+                : Array.isArray(attestation?.response?.transports)
+                    ? attestation.response.transports
+                    : [];
+        } catch (_e) {
+            transports = [];
+        }
+        let method = '';
+        if (transports.includes('internal')) method = 'This device';
+        else if (transports.includes('hybrid')) method = 'Phone';
+        else if (transports.some((t) => ['usb', 'nfc', 'ble'].includes(t))) method = 'Security key';
+
+        const where = [browser, os].filter(Boolean).join(' on ');
+        return [where || 'Passkey', method].filter(Boolean).join(' · ');
+    }
+
     // Shared passkey enrollment: register options -> WebAuthn attestation ->
     // verify. Returns { ok: true } or { ok: false, cancelled, message }. Reused
     // by the Manage Account "Add a passkey" button and the welcome interstitial.
@@ -2375,7 +2424,7 @@
 
             const attestation = await window.SimpleWebAuthnBrowser.startRegistration(optData.options);
 
-            const nickname = (navigator.platform || 'Passkey').split(' ')[0] + ' · ' + formatPasskeyDate(null);
+            const nickname = describePasskeyDevice(attestation);
             const verifyRes = await fetch('/api/account/passkeys/register/verify', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
@@ -2514,6 +2563,7 @@
     const passkeyInterstitialStatus = document.getElementById('passkeyInterstitialStatus');
     let passkeyPromptDismissed = false;
     let passkeyInterstitialSeen = false;
+    let passkeyBannerShownThisSession = false;
 
     function updatePasskeyPromptBanner(userData) {
         const enrolled = Boolean(userData && userData.passkey_2fa_enabled);
@@ -2530,10 +2580,19 @@
             }
         }
 
-        // Minimal banner: persistent nudge for non-enrolled, non-dismissed users.
+        // Minimal banner: reveal ONCE per login. renderDashboard runs on every
+        // 5s poll + visibilitychange, so we must not re-show it each time — the
+        // latch separates "eligible" from the one-time reveal. Once enrolled or
+        // dismissed it stays hidden; it only returns on a fresh page load/login.
         if (passkeyPromptBanner) {
-            const showBanner = !enrolled && !passkeyPromptDismissed;
-            passkeyPromptBanner.classList.toggle('hidden', !showBanner);
+            if (enrolled || passkeyPromptDismissed) {
+                passkeyPromptBanner.classList.add('hidden');
+            } else if (!passkeyBannerShownThisSession) {
+                passkeyBannerShownThisSession = true;
+                passkeyPromptBanner.classList.remove('hidden');
+            }
+            // else: already shown this session — leave its current state alone
+            // so a poll never re-reveals a banner the user manually dismissed.
         }
     }
 
