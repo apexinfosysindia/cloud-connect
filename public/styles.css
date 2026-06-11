@@ -1311,7 +1311,17 @@ code {
 .copyable-token .token-value {
     margin: 0;
     padding-right: 84px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     transition: border-color 0.15s, background 0.15s;
+}
+
+/* Masked (placeholder) state: muted, not monospace, so it reads as a prompt. */
+.copyable-token:not(.is-revealed) .token-value {
+    color: var(--text-soft);
+    font-family: inherit;
+    font-weight: 600;
 }
 
 .copyable-token:hover .token-value,
@@ -1357,6 +1367,25 @@ code {
 
 .copyable-token:not(.is-copied) .copyable-token__hint::after {
     content: "Copy";
+}
+
+/* No token issued yet: don't invite a click, hide the Copy badge. */
+.copyable-token.is-empty {
+    cursor: default;
+}
+
+.copyable-token.is-empty .copyable-token__hint {
+    display: none;
+}
+
+.copyable-token.is-empty .token-value {
+    padding-right: 14px;
+}
+
+.copyable-token.is-empty:hover .token-value,
+.copyable-token.is-empty:focus-visible .token-value {
+    border-color: var(--line);
+    background: var(--surface);
 }
 
 /* Plan picker */
@@ -1465,11 +1494,20 @@ code {
     border: 1px solid var(--line);
     border-radius: var(--radius-md);
     background: var(--surface);
-    font-size: 1rem;
+    font-size: clamp(0.72rem, 3.4vw, 1rem);
     font-weight: 700;
     text-decoration: none;
-    word-break: break-word;
     transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+
+/* URL text shrinks/ellipsis-truncates so it never wraps to a second line;
+   the trailing icon (::after) keeps its place. */
+.domain-link__text {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .domain-link--live,
@@ -1483,7 +1521,7 @@ code {
 
 .domain-link--live::after {
     content: "↗";
-    margin-left: auto;
+    flex: 0 0 auto;
     font-size: 1.05rem;
     opacity: 0.75;
 }
@@ -1503,7 +1541,7 @@ code {
 
 .domain-link--setup::after {
     content: "+";
-    margin-left: auto;
+    flex: 0 0 auto;
     font-size: 1.15rem;
     font-weight: 700;
     opacity: 0.8;
