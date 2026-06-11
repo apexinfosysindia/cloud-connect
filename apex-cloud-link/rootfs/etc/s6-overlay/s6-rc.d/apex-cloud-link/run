@@ -1724,12 +1724,27 @@ try:
     m1 = json.loads(ws.recv())
     if m1.get('success') and m1.get('result', {}).get('url'):
         out['stream'] = m1['result']['url']
-    # 2) Signed, long-lived snapshot path for imageUri (best-effort)
+    # 2) imageUri: prefer a signed, long-lived proxy path (1h authSig). If
+    #    signing fails, fall back to the camera's LIVE entity_picture, which HA
+    #    publishes with a valid (rotating) ?token= already baked in. Never emit a
+    #    tokenless /api/camera_proxy URL — HA returns 401 for it, so Alexa would
+    #    show a broken thumbnail.
     ws.send(json.dumps({'id': 2, 'type': 'auth/sign_path',
                         'path': '/api/camera_proxy/' + entity_id, 'expires': 3600}))
     m2 = json.loads(ws.recv())
     if m2.get('success') and m2.get('result', {}).get('path'):
         out['image'] = m2['result']['path']
+    else:
+        # Fall back to the live entity_picture (already tokened by HA).
+        ws.send(json.dumps({'id': 3, 'type': 'get_states'}))
+        m3 = json.loads(ws.recv())
+        if m3.get('success'):
+            for st in m3.get('result', []):
+                if st.get('entity_id') == entity_id:
+                    ep = (st.get('attributes') or {}).get('entity_picture')
+                    if ep:
+                        out['image'] = ep
+                    break
     ws.close()
     if out.get('stream'):
         print(json.dumps(out))
@@ -1744,12 +1759,18 @@ except Exception:
             local base_url stream_url image_url
             base_url="https://${SUBDOMAIN}.cloud.apexinfosys.in"
             stream_url="${base_url}${stream_path}"
-            # Fall back to the unsigned proxy path if signing failed; Alexa just
-            # needs a URL — a stale thumbnail is better than none.
+            # image_path is either a signed proxy path (?authSig=) or the live
+            # entity_picture (?token=) — BOTH carry credentials HA accepts on an
+            # unauthenticated fetch, so both render in Alexa. If neither was
+            # available, leave image_url empty: the portal falls back to a valid
+            # (well-formed) URL rather than emitting a tokenless 401.
             if [ -n "$image_path" ]; then
-                image_url="${base_url}${image_path}"
+                case "$image_path" in
+                    http://*|https://*) image_url="$image_path" ;;
+                    *) image_url="${base_url}${image_path}" ;;
+                esac
             else
-                image_url="${base_url}/api/camera_proxy/${entity_id}"
+                image_url=""
             fi
             resulting_state=$(jq -n --arg s "$stream_url" --arg i "$image_url" '{stream_url: $s, image_url: $i}')
         else
