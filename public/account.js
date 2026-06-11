@@ -2021,7 +2021,7 @@
     const changePasswordMsg = document.getElementById('changePasswordMsg');
     const changePasswordBtn = document.getElementById('changePasswordBtn');
 
-    function showManageView() {
+    function showManageView(options = {}) {
         if (!manageAccountView || !dashboardSection) return;
         if (changePasswordMsg) changePasswordMsg.textContent = '';
         if (currentPasswordInput) currentPasswordInput.value = '';
@@ -2030,8 +2030,15 @@
         manageViewActive = true;
         dashboardSection.classList.add('hidden');
         manageAccountView.classList.remove('hidden');
-        manageAccountView.scrollIntoView({ behavior: 'smooth', block: 'start' });
         loadPasskeys();
+
+        // Scroll to a specific section when requested (e.g. the passkey nudge
+        // jumps straight to "Add a passkey"), otherwise to the top of the view.
+        const scrollTarget =
+            options.scrollTo === 'passkey'
+                ? document.getElementById('passkeySection') || manageAccountView
+                : manageAccountView;
+        scrollTarget.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     function hideManageView() {
@@ -2047,7 +2054,7 @@
     }
 
     if (manageAccountBtn) {
-        manageAccountBtn.addEventListener('click', showManageView);
+        manageAccountBtn.addEventListener('click', () => showManageView());
     }
 
     if (manageBackBtn) {
@@ -2347,51 +2354,75 @@
         passkeyStatus.classList.toggle('danger-label', Boolean(isError));
     }
 
+    // Shared passkey enrollment: register options -> WebAuthn attestation ->
+    // verify. Returns { ok: true } or { ok: false, cancelled, message }. Reused
+    // by the Manage Account "Add a passkey" button and the welcome interstitial.
+    async function enrollPasskey() {
+        const token = getStoredToken();
+        if (!token) {
+            return { ok: false, message: 'Please log in again to continue.' };
+        }
+        if (!window.SimpleWebAuthnBrowser) {
+            return { ok: false, message: 'Passkeys are not supported in this browser.' };
+        }
+        try {
+            const optRes = await fetch('/api/account/passkeys/register/options', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }
+            });
+            const optData = await optRes.json();
+            if (!optRes.ok) throw new Error(optData.error);
+
+            const attestation = await window.SimpleWebAuthnBrowser.startRegistration(optData.options);
+
+            const nickname = (navigator.platform || 'Passkey').split(' ')[0] + ' · ' + formatPasskeyDate(null);
+            const verifyRes = await fetch('/api/account/passkeys/register/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+                body: JSON.stringify({ response: attestation, nickname })
+            });
+            const verifyData = await verifyRes.json();
+            if (!verifyRes.ok) throw new Error(verifyData.error);
+            return { ok: true };
+        } catch (err) {
+            const cancelled = /cancel|timed out|not allowed|abort/i.test(err.message || '');
+            return {
+                ok: false,
+                cancelled,
+                message: cancelled ? 'Passkey setup was cancelled.' : err.message || 'Could not add passkey.'
+            };
+        }
+    }
+
+    // Refresh the cached user so passkey_2fa_enabled flips on without a reload
+    // (hides the banner/interstitial after a successful enrollment).
+    function markPasskeyEnrolledLocally() {
+        try {
+            const stored = JSON.parse(localStorage.getItem('apex_user') || 'null');
+            if (stored) {
+                stored.passkey_2fa_enabled = true;
+                localStorage.setItem('apex_user', JSON.stringify(stored));
+            }
+        } catch (_e) {
+            // best-effort; the next /me poll will correct it anyway
+        }
+    }
+
     if (addPasskeyBtn) {
         addPasskeyBtn.addEventListener('click', async () => {
-            const token = getStoredToken();
-            if (!token) {
-                showAlert('Please log in again to continue.');
-                return;
-            }
-            if (!window.SimpleWebAuthnBrowser) {
-                setPasskeyStatus('Passkeys are not supported in this browser.', true);
-                return;
-            }
             addPasskeyBtn.disabled = true;
             addPasskeyBtn.textContent = 'Waiting for passkey...';
             setPasskeyStatus('');
-            try {
-                const optRes = await fetch('/api/account/passkeys/register/options', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }
-                });
-                const optData = await optRes.json();
-                if (!optRes.ok) throw new Error(optData.error);
-
-                const attestation = await window.SimpleWebAuthnBrowser.startRegistration(optData.options);
-
-                const nickname =
-                    (navigator.platform || 'Passkey').split(' ')[0] + ' · ' + formatPasskeyDate(null);
-                const verifyRes = await fetch('/api/account/passkeys/register/verify', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-                    body: JSON.stringify({ response: attestation, nickname })
-                });
-                const verifyData = await verifyRes.json();
-                if (!verifyRes.ok) throw new Error(verifyData.error);
-
+            const result = await enrollPasskey();
+            if (result.ok) {
+                markPasskeyEnrolledLocally();
                 setPasskeyStatus('Passkey added. Two-factor sign-in is now on.', false);
                 await loadPasskeys();
-            } catch (err) {
-                const msg = /cancel|timed out|not allowed|abort/i.test(err.message || '')
-                    ? 'Passkey setup was cancelled.'
-                    : err.message || 'Could not add passkey.';
-                setPasskeyStatus(msg, true);
-            } finally {
-                addPasskeyBtn.disabled = false;
-                addPasskeyBtn.textContent = 'Add a Passkey';
+            } else {
+                setPasskeyStatus(result.message, true);
             }
+            addPasskeyBtn.disabled = false;
+            addPasskeyBtn.textContent = 'Add a Passkey';
         });
     }
 
@@ -2468,32 +2499,94 @@
         });
     }
 
-    // ── Passkey enrollment prompt banner ────────────────────────────────────
-    // Educates users to enrol a passkey: shown on the dashboard after every
-    // login until they have one. Dismiss hides it for THIS session only (a
-    // module variable, no storage) so it reappears next login — matching the
-    // "nudge every login until enrolled" intent.
+    // ── Passkey enrollment prompts ──────────────────────────────────────────
+    // Two nudges for users who haven't enrolled a passkey, shown each login
+    // until they do (dismiss state is per-session — a module variable, no
+    // storage — so it returns next login):
+    //   1. A full-screen welcome interstitial that can enrol inline.
+    //   2. A minimal dismissible dashboard banner (kept as a persistent nudge).
     const passkeyPromptBanner = document.getElementById('passkeyPromptBanner');
     const passkeyPromptAddBtn = document.getElementById('passkeyPromptAddBtn');
     const passkeyPromptDismiss = document.getElementById('passkeyPromptDismiss');
+    const passkeyInterstitial = document.getElementById('passkeyInterstitial');
+    const passkeyInterstitialSetup = document.getElementById('passkeyInterstitialSetup');
+    const passkeyInterstitialLater = document.getElementById('passkeyInterstitialLater');
+    const passkeyInterstitialStatus = document.getElementById('passkeyInterstitialStatus');
     let passkeyPromptDismissed = false;
+    let passkeyInterstitialSeen = false;
 
     function updatePasskeyPromptBanner(userData) {
-        if (!passkeyPromptBanner) return;
         const enrolled = Boolean(userData && userData.passkey_2fa_enabled);
-        const show = !enrolled && !passkeyPromptDismissed;
-        passkeyPromptBanner.classList.toggle('hidden', !show);
+
+        // Full-screen interstitial: show once per session for non-enrolled users.
+        if (passkeyInterstitial) {
+            const showInterstitial = !enrolled && !passkeyInterstitialSeen && !passkeyPromptDismissed;
+            if (showInterstitial) {
+                passkeyInterstitialSeen = true;
+                if (passkeyInterstitialStatus) passkeyInterstitialStatus.textContent = '';
+                passkeyInterstitial.classList.remove('hidden');
+            } else if (enrolled) {
+                passkeyInterstitial.classList.add('hidden');
+            }
+        }
+
+        // Minimal banner: persistent nudge for non-enrolled, non-dismissed users.
+        if (passkeyPromptBanner) {
+            const showBanner = !enrolled && !passkeyPromptDismissed;
+            passkeyPromptBanner.classList.toggle('hidden', !showBanner);
+        }
     }
 
+    function closeInterstitial() {
+        if (passkeyInterstitial) passkeyInterstitial.classList.add('hidden');
+    }
+
+    // Banner "Add a passkey": jump to Manage Account and scroll to the passkey
+    // section (previously only opened the view at the top).
     if (passkeyPromptAddBtn) {
         passkeyPromptAddBtn.addEventListener('click', () => {
-            showManageView();
+            closeInterstitial();
+            showManageView({ scrollTo: 'passkey' });
         });
     }
     if (passkeyPromptDismiss) {
         passkeyPromptDismiss.addEventListener('click', () => {
             passkeyPromptDismissed = true;
             if (passkeyPromptBanner) passkeyPromptBanner.classList.add('hidden');
+        });
+    }
+
+    // Interstitial "Set up passkey": enrol right here, no navigation needed.
+    if (passkeyInterstitialSetup) {
+        passkeyInterstitialSetup.addEventListener('click', async () => {
+            passkeyInterstitialSetup.disabled = true;
+            passkeyInterstitialSetup.textContent = 'Waiting for passkey...';
+            if (passkeyInterstitialStatus) {
+                passkeyInterstitialStatus.textContent = '';
+                passkeyInterstitialStatus.classList.remove('danger-label');
+            }
+            const result = await enrollPasskey();
+            if (result.ok) {
+                markPasskeyEnrolledLocally();
+                closeInterstitial();
+                if (passkeyPromptBanner) passkeyPromptBanner.classList.add('hidden');
+                showAlert('Passkey added. Two-factor sign-in is now on.', false);
+                loadPasskeys();
+            } else {
+                if (passkeyInterstitialStatus) {
+                    passkeyInterstitialStatus.textContent = result.message;
+                    passkeyInterstitialStatus.classList.add('danger-label');
+                }
+            }
+            passkeyInterstitialSetup.disabled = false;
+            passkeyInterstitialSetup.textContent = 'Set up passkey';
+        });
+    }
+
+    // Interstitial "Maybe later": dismiss to the dashboard (banner stays).
+    if (passkeyInterstitialLater) {
+        passkeyInterstitialLater.addEventListener('click', () => {
+            closeInterstitial();
         });
     }
 

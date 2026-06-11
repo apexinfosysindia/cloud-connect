@@ -69,24 +69,11 @@
 
         <!-- Revealed only after a successful sudo unlock -->
         <section id="securityContent" class="admin-dashboard hidden">
-            <section class="section-card user-section">
-                <div class="section-header">
-                    <div>
-                        <h2 class="section-title section-title--small">Admin credentials</h2>
-                        <p class="section-text">How this admin account signs in.</p>
-                    </div>
-                </div>
-                <article class="detail-card">
-                    <span class="detail-label">Password</span>
-                    <p class="detail-copy">The admin password is managed through server configuration (the <code>ADMIN_PASSWORD_HASH</code> environment variable) and cannot be changed from this page. To rotate it, update the server configuration and restart the service.</p>
-                </article>
-            </section>
-
             <section class="section-card user-section" id="passkeySection">
                 <div class="section-header">
                     <div>
                         <h2 class="section-title section-title--small">Passkeys &middot; two-factor sign-in</h2>
-                        <p class="section-text">Add a passkey (Face ID, Touch ID, Windows Hello, a password manager, or a security key) for two-factor admin sign-in. Once a passkey is enrolled, admin login requires the password <strong>and</strong> a passkey. The only bypass is the server break-glass flag.</p>
+                        <p class="section-text">Add a passkey (Face ID, Touch ID, Windows Hello, a password manager, or a security key) for two-factor admin sign-in. Once a passkey is enrolled, admin login requires the password <strong>and</strong> a passkey.</p>
                     </div>
                     <button id="addPasskeyBtn" class="button button-primary">Add a Passkey</button>
                 </div>
