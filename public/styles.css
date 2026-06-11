@@ -1899,6 +1899,8 @@ code {
 
     .theme-toggle {
         width: 44px;
+        min-width: 44px;
+        flex-shrink: 0;
         padding: 0;
         gap: 0;
     }
@@ -1920,6 +1922,8 @@ code {
        The glyph is a currentColor mask so it works in light + dark. */
     .masthead-actions .button {
         width: 44px;
+        min-width: 44px;
+        flex-shrink: 0;
         padding: 0;
         font-size: 0;
         gap: 0;
@@ -1966,6 +1970,16 @@ code {
 }
 
 @media (max-width: 720px) {
+    /* Below 720px there isn't room for the full brand-suite AND proper square
+       icon buttons without the buttons squishing, so drop the entire header
+       action cluster (toggle, Overview, Sign In, Create Account, Log Out,
+       identity/email pill — including admin Log Out) on every page; only the
+       brand-suite remains. 721-820px keeps proper icon-only squares; >=821px
+       shows full text buttons. In-body controls still cover every action. */
+    .masthead-actions {
+        display: none !important;
+    }
+
     body.portal-page,
     body.admin-page {
         padding: 10px 0 18px;
@@ -2049,16 +2063,6 @@ code {
         white-space: normal;
     }
 
-    .masthead-actions {
-        width: auto;
-        display: flex;
-        flex-wrap: nowrap;
-        gap: 8px;
-        margin-left: auto;
-        justify-content: flex-end;
-        flex: 0 0 auto;
-    }
-
     .brand-suite {
         gap: 10px;
     }
@@ -2128,14 +2132,6 @@ code {
 @media (max-width: 560px) {
     .admin-page .stats-grid {
         grid-template-columns: 1fr;
-    }
-
-    /* On phones, drop the entire header action cluster (theme toggle, Overview,
-       Sign In, Create Account, Log Out, identity/email pill — including the
-       admin Log Out) on every page, leaving just the brand-suite. Tablets
-       (561-820px) keep the compact icon buttons from the <=820px block. */
-    .masthead-actions {
-        display: none !important;
     }
 
     .auth-page .status-meta {
@@ -2254,6 +2250,8 @@ code {
 
     .theme-toggle {
         width: 44px;
+        min-width: 44px;
+        flex-shrink: 0;
         padding: 0;
         gap: 0;
     }
