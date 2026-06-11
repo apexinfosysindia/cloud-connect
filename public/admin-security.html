@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Security | Vista</title>
+    <script>
+        // No-flash theme bootstrap: resolve light/dark/auto before CSS paints.
+        (function () {
+            try {
+                var c = localStorage.getItem('apex_theme');
+                if (c !== 'light' && c !== 'dark' && c !== 'auto') c = 'auto';
+                var eff = c === 'dark' || (c === 'auto' && window.matchMedia &&
+                    window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+                var r = document.documentElement;
+                r.setAttribute('data-theme', c);
+                r.setAttribute('data-theme-effective', eff);
+            } catch (e) {}
+        })();
+    </script>
+    <link rel="stylesheet" href="/styles.css">
+    <link rel="icon" href="/favicon.ico">
+    <script src="/theme.js" defer></script>
+</head>
+<body class="admin-page">
+<div class="page-shell page-shell--admin">
+    <header class="masthead masthead--admin">
+        <div class="brand-suite">
+            <img src="/group-logo.png" alt="Apex Infosys" class="brand-suite__group">
+            <span class="brand-suite__divider"></span>
+            <div class="brand-suite__product brand-suite__product--compact">
+                <img src="/logo.png" alt="Cloud Connect" class="brand-suite__product-logo brand-suite__product-logo--compact">
+                <div>
+                    <div class="brand-suite__title">Admin Security</div>
+                    <div class="brand-suite__subtitle">Account protection &amp; passkeys</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="masthead-actions">
+            <button type="button" class="theme-toggle"></button>
+            <a href="/" class="button button-secondary">&larr; Dashboard</a>
+        </div>
+    </header>
+
+    <main class="admin-main">
+        <div id="alertBox" class="alert"></div>
+
+        <!-- Shown when there is no admin session at all -->
+        <section id="noSessionPanel" class="section-card admin-login-card hidden">
+            <h2 class="section-title section-title--small">Sign in required</h2>
+            <p class="section-text">You need to sign in to the admin dashboard before opening the security page.</p>
+            <a href="/" class="button button-primary button-full">Go to Admin Login</a>
+        </section>
+
+        <!-- Sudo gate: shown until the admin re-authenticates -->
+        <section id="sudoPanel" class="section-card admin-login-card hidden">
+            <h2 class="section-title section-title--small">Confirm it's you</h2>
+            <p class="section-text">For your security, re-enter your admin password to manage security settings. This is required even though you're already signed in.</p>
+            <form id="sudoForm" class="stack" autocomplete="off">
+                <div class="field">
+                    <label class="field-label" for="sudoPassword">Admin password</label>
+                    <input id="sudoPassword" class="input" type="password" autocomplete="current-password" required>
+                </div>
+                <p id="sudoStatus" class="section-text danger-label" style="min-height:1.2em"></p>
+                <button id="sudoSubmitBtn" type="submit" class="button button-primary button-full">Continue</button>
+            </form>
+        </section>
+
+        <!-- Revealed only after a successful sudo unlock -->
+        <section id="securityContent" class="admin-dashboard hidden">
+            <section class="section-card user-section">
+                <div class="section-header">
+                    <div>
+                        <h2 class="section-title section-title--small">Admin credentials</h2>
+                        <p class="section-text">How this admin account signs in.</p>
+                    </div>
+                </div>
+                <article class="detail-card">
+                    <span class="detail-label">Password</span>
+                    <p class="detail-copy">The admin password is managed through server configuration (the <code>ADMIN_PASSWORD_HASH</code> environment variable) and cannot be changed from this page. To rotate it, update the server configuration and restart the service.</p>
+                </article>
+            </section>
+
+            <section class="section-card user-section" id="passkeySection">
+                <div class="section-header">
+                    <div>
+                        <h2 class="section-title section-title--small">Passkeys &middot; two-factor sign-in</h2>
+                        <p class="section-text">Add a passkey (Face ID, Touch ID, Windows Hello, a password manager, or a security key) for two-factor admin sign-in. Once a passkey is enrolled, admin login requires the password <strong>and</strong> a passkey. The only bypass is the server break-glass flag.</p>
+                    </div>
+                    <button id="addPasskeyBtn" class="button button-primary">Add a Passkey</button>
+                </div>
+                <p id="passkeyBreakGlassNotice" class="section-text danger-label hidden">Break-glass mode is ON — passkey verification is currently bypassed at admin login.</p>
+                <div id="passkeyList" class="passkey-list"></div>
+                <p id="passkeyStatus" class="section-text"></p>
+            </section>
+        </section>
+    </main>
+</div>
+<footer class="site-footer">&copy; 2026 AII IoTech (India) Private Limited, dba APEX. All rights reserved.</footer>
+
+<div id="removePasskeyModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="removePasskeyModalTitle">
+    <div class="modal__backdrop" data-close-remove-passkey-modal="true"></div>
+    <div class="modal__panel">
+        <div class="modal__header">
+            <div>
+                <h2 id="removePasskeyModalTitle" class="section-title section-title--small danger-label">Remove Passkey</h2>
+                <p class="section-text">Enter the admin password to remove this passkey.</p>
+            </div>
+            <button id="removePasskeyModalClose" class="button button-secondary button-small" type="button" data-close-remove-passkey-modal="true">Cancel</button>
+        </div>
+        <form id="removePasskeyForm" autocomplete="off">
+            <label class="field-label" for="removePasskeyPassword">Admin password</label>
+            <input class="input" type="password" id="removePasskeyPassword" placeholder="Admin password" required autocomplete="current-password">
+            <p id="removePasskeyError" class="section-text danger-label" style="min-height:1.2em"></p>
+            <button type="submit" id="removePasskeyConfirmBtn" class="button button-danger button-full">Remove Passkey</button>
+        </form>
+    </div>
+</div>
+
+<script src="/vendor/simplewebauthn-browser.umd.min.js"></script>
+<script>
+const ADMIN_TOKEN_KEY = 'apex_admin_token';
+const alertBox = document.getElementById('alertBox');
+const noSessionPanel = document.getElementById('noSessionPanel');
+const sudoPanel = document.getElementById('sudoPanel');
+const securityContent = document.getElementById('securityContent');
+const sudoForm = document.getElementById('sudoForm');
+const sudoPassword = document.getElementById('sudoPassword');
+const sudoStatus = document.getElementById('sudoStatus');
+const sudoSubmitBtn = document.getElementById('sudoSubmitBtn');
+
+// The short-lived sudo grant lives ONLY in this module-scoped variable — never
+// localStorage/sessionStorage. A reload re-prompts; XSS cannot harvest it.
+let sudoToken = null;
+
+function getAdminToken() {
+    try {
+        return localStorage.getItem(ADMIN_TOKEN_KEY) || '';
+    } catch (e) {
+        return '';
+    }
+}
+
+function showAlert(message, isError = true) {
+    if (!alertBox) return;
+    alertBox.textContent = message;
+    alertBox.className = 'alert is-visible' + (isError ? ' is-error' : '');
+    if (!isError) {
+        setTimeout(() => hideAlert(), 3500);
+    }
+}
+
+function hideAlert() {
+    if (!alertBox) return;
+    alertBox.className = 'alert';
+    alertBox.textContent = '';
+}
+
+function normalizeErrorMessage(error, fallback) {
+    if (error && typeof error.message === 'string' && error.message) return error.message;
+    return fallback;
+}
+
+function escapeHtml(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+// api() always sends the 8h admin bearer, and the sudo grant when present.
+// On 401 sudo_required it drops the grant and forces a re-unlock.
+async function api(path, options = {}) {
+    const token = getAdminToken();
+    const headers = {
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(options.headers || {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(sudoToken ? { 'X-Sudo-Token': sudoToken } : {})
+    };
+    const response = await fetch(path, {
+        ...options,
+        headers,
+        body: options.body ? JSON.stringify(options.body) : undefined
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        if (response.status === 401 && data.error === 'sudo_required') {
+            sudoToken = null;
+            requireSudo();
+            const err = new Error('Your security session expired. Please confirm your password again.');
+            err.sudoExpired = true;
+            throw err;
+        }
+        throw new Error(data.error || 'Request failed');
+    }
+    return data;
+}
+
+function requireSudo() {
+    securityContent.classList.add('hidden');
+    noSessionPanel.classList.add('hidden');
+    sudoPanel.classList.remove('hidden');
+    if (sudoStatus) sudoStatus.textContent = '';
+    if (sudoPassword) {
+        sudoPassword.value = '';
+        sudoPassword.focus();
+    }
+}
+
+function showNoSession() {
+    sudoPanel.classList.add('hidden');
+    securityContent.classList.add('hidden');
+    noSessionPanel.classList.remove('hidden');
+}
+
+async function unlockSecurity() {
+    sudoPanel.classList.add('hidden');
+    securityContent.classList.remove('hidden');
+    await loadPasskeys();
+}
+
+// ── Sudo re-auth flow ──────────────────────────────────────────────────────
+if (sudoForm) {
+    sudoForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!getAdminToken()) {
+            showNoSession();
+            return;
+        }
+        sudoSubmitBtn.disabled = true;
+        sudoSubmitBtn.textContent = 'Verifying...';
+        if (sudoStatus) sudoStatus.textContent = '';
+        try {
+            const optData = await api('/api/admin/sudo/options', {
+                method: 'POST',
+                body: { password: sudoPassword.value }
+            });
+
+            if (optData && optData.mfa_required) {
+                if (!window.SimpleWebAuthnBrowser) {
+                    throw new Error('Passkeys are not supported in this browser.');
+                }
+                sudoSubmitBtn.textContent = 'Waiting for passkey...';
+                let assertion;
+                try {
+                    assertion = await window.SimpleWebAuthnBrowser.startAuthentication(optData.options);
+                } catch (_authErr) {
+                    throw new Error('Passkey verification was cancelled. Please try again.');
+                }
+                const verified = await api('/api/admin/sudo/verify', {
+                    method: 'POST',
+                    body: { assertion }
+                });
+                sudoToken = verified.sudo_token;
+            } else {
+                sudoToken = optData.sudo_token;
+            }
+
+            await unlockSecurity();
+        } catch (error) {
+            if (sudoStatus) sudoStatus.textContent = normalizeErrorMessage(error, 'Verification failed.');
+        } finally {
+            sudoSubmitBtn.disabled = false;
+            sudoSubmitBtn.textContent = 'Continue';
+            if (sudoPassword) sudoPassword.value = '';
+        }
+    });
+}
+
+// ── Passkey management ──────────────────────────────────────────────────────
+const addPasskeyBtn = document.getElementById('addPasskeyBtn');
+const passkeyList = document.getElementById('passkeyList');
+const passkeyStatus = document.getElementById('passkeyStatus');
+const passkeyBreakGlassNotice = document.getElementById('passkeyBreakGlassNotice');
+const removePasskeyModal = document.getElementById('removePasskeyModal');
+const removePasskeyForm = document.getElementById('removePasskeyForm');
+const removePasskeyPassword = document.getElementById('removePasskeyPassword');
+const removePasskeyError = document.getElementById('removePasskeyError');
+const removePasskeyClose = document.getElementById('removePasskeyModalClose');
+const removePasskeyConfirmBtn = document.getElementById('removePasskeyConfirmBtn');
+let passkeyPendingRemovalId = null;
+
+function formatPasskeyDate(value) {
+    if (!value) return 'just now';
+    const ts = new Date(value.includes('Z') || value.includes('T') ? value : value.replace(' ', 'T') + 'Z');
+    if (Number.isNaN(ts.getTime())) return 'recently';
+    return ts.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function setPasskeyStatus(message, isError) {
+    if (!passkeyStatus) return;
+    passkeyStatus.textContent = message || '';
+    passkeyStatus.classList.toggle('danger-label', Boolean(isError));
+}
+
+function renderPasskeys(passkeys) {
+    if (!passkeyList) return;
+    passkeyList.innerHTML = '';
+    if (!passkeys || !passkeys.length) {
+        passkeyList.innerHTML = '<p class="section-text passkey-empty">No passkeys yet. Add one to require two-factor admin sign-in.</p>';
+        return;
+    }
+    passkeys.forEach((pk) => {
+        const item = document.createElement('div');
+        item.className = 'passkey-item';
+        const meta = pk.last_used_at ? ' &middot; Last used ' + escapeHtml(formatPasskeyDate(pk.last_used_at)) : '';
+        item.innerHTML =
+            '<div class="passkey-item__info">' +
+            '<span class="passkey-item__name">' + escapeHtml(pk.nickname || 'Passkey') + '</span>' +
+            '<span class="passkey-item__meta">Added ' + escapeHtml(formatPasskeyDate(pk.created_at)) + meta + '</span>' +
+            '</div>';
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'button button-secondary button-small';
+        removeBtn.textContent = 'Remove';
+        removeBtn.addEventListener('click', () => openRemovePasskeyModal(pk.id));
+        item.appendChild(removeBtn);
+        passkeyList.appendChild(item);
+    });
+}
+
+async function loadPasskeys() {
+    if (!passkeyList) return;
+    try {
+        const data = await api('/api/admin/passkeys');
+        renderPasskeys(data.passkeys);
+        if (passkeyBreakGlassNotice) {
+            passkeyBreakGlassNotice.classList.toggle('hidden', !data.break_glass);
+        }
+    } catch (error) {
+        if (!error.sudoExpired) {
+            renderPasskeys([]);
+        }
+    }
+}
+
+if (addPasskeyBtn) {
+    addPasskeyBtn.addEventListener('click', async () => {
+        if (!window.SimpleWebAuthnBrowser) {
+            setPasskeyStatus('Passkeys are not supported in this browser.', true);
+            return;
+        }
+        addPasskeyBtn.disabled = true;
+        addPasskeyBtn.textContent = 'Waiting for passkey...';
+        setPasskeyStatus('');
+        try {
+            const optData = await api('/api/admin/passkeys/register/options', { method: 'POST', body: {} });
+            const attestation = await window.SimpleWebAuthnBrowser.startRegistration(optData.options);
+            const nickname = 'Admin ' + (navigator.platform || '').split(' ')[0] + ' · ' + formatPasskeyDate(null);
+            await api('/api/admin/passkeys/register/verify', {
+                method: 'POST',
+                body: { response: attestation, nickname }
+            });
+            setPasskeyStatus('Passkey added. Two-factor admin sign-in is now required.', false);
+            await loadPasskeys();
+        } catch (error) {
+            if (error.sudoExpired) return;
+            const msg = /cancel|timed out|not allowed|abort/i.test(error.message || '')
+                ? 'Passkey setup was cancelled.'
+                : normalizeErrorMessage(error, 'Could not add passkey.');
+            setPasskeyStatus(msg, true);
+        } finally {
+            addPasskeyBtn.disabled = false;
+            addPasskeyBtn.textContent = 'Add a Passkey';
+        }
+    });
+}
+
+function openRemovePasskeyModal(id) {
+    passkeyPendingRemovalId = id;
+    if (removePasskeyPassword) removePasskeyPassword.value = '';
+    if (removePasskeyError) removePasskeyError.textContent = '';
+    if (removePasskeyConfirmBtn) {
+        removePasskeyConfirmBtn.textContent = 'Remove Passkey';
+        removePasskeyConfirmBtn.disabled = false;
+    }
+    if (removePasskeyModal) removePasskeyModal.classList.remove('hidden');
+    if (removePasskeyPassword) removePasskeyPassword.focus();
+}
+
+function closeRemovePasskeyModal() {
+    passkeyPendingRemovalId = null;
+    if (removePasskeyModal) removePasskeyModal.classList.add('hidden');
+    if (removePasskeyPassword) removePasskeyPassword.value = '';
+    if (removePasskeyError) removePasskeyError.textContent = '';
+}
+
+if (removePasskeyClose) {
+    removePasskeyClose.addEventListener('click', closeRemovePasskeyModal);
+}
+if (removePasskeyModal) {
+    removePasskeyModal.addEventListener('click', (event) => {
+        if (event.target.closest('[data-close-remove-passkey-modal]')) {
+            closeRemovePasskeyModal();
+        }
+    });
+}
+if (removePasskeyForm) {
+    removePasskeyForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!passkeyPendingRemovalId) {
+            closeRemovePasskeyModal();
+            return;
+        }
+        const password = (removePasskeyPassword && removePasskeyPassword.value ? removePasskeyPassword.value : '').trim();
+        if (!password) {
+            if (removePasskeyError) removePasskeyError.textContent = 'Password is required.';
+            return;
+        }
+        if (removePasskeyConfirmBtn) {
+            removePasskeyConfirmBtn.disabled = true;
+            removePasskeyConfirmBtn.textContent = 'Removing...';
+        }
+        try {
+            const data = await api('/api/admin/passkeys/delete', {
+                method: 'POST',
+                body: { id: passkeyPendingRemovalId, password }
+            });
+            closeRemovePasskeyModal();
+            setPasskeyStatus(
+                data.remaining === 0
+                    ? 'Passkey removed. Two-factor admin sign-in is now off.'
+                    : 'Passkey removed.',
+                false
+            );
+            await loadPasskeys();
+        } catch (error) {
+            if (error.sudoExpired) {
+                closeRemovePasskeyModal();
+                return;
+            }
+            if (removePasskeyError) removePasskeyError.textContent = normalizeErrorMessage(error, 'Could not remove passkey.');
+            if (removePasskeyConfirmBtn) {
+                removePasskeyConfirmBtn.textContent = 'Remove Passkey';
+                removePasskeyConfirmBtn.disabled = false;
+            }
+        }
+    });
+}
+
+// ── Init ────────────────────────────────────────────────────────────────────
+(function init() {
+    if (!getAdminToken()) {
+        showNoSession();
+        return;
+    }
+    requireSudo();
+})();
+</script>
+</body>
+</html>

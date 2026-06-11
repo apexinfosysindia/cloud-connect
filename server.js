@@ -226,6 +226,7 @@ app.use(require('./routes/device-api')(deps));
 app.use(require('./routes/admin-fleet')(deps));
 app.use(require('./routes/auth')(deps));
 app.use(require('./routes/webauthn')(deps));
+app.use(require('./routes/admin-sudo')(deps));
 app.use(require('./routes/billing')(deps));
 app.use(require('./routes/admin')(deps));
 app.use(require('./routes/internal')(deps));

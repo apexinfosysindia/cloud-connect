@@ -136,17 +136,14 @@
                 <div id="fleetList" class="fleet-list"></div>
             </section>
 
-            <section class="section-card user-section" id="passkeySection">
+            <section class="section-card user-section">
                 <div class="section-header">
                     <div>
-                        <h2 class="section-title section-title--small">Admin security &middot; Passkeys</h2>
-                        <p class="section-text">Add a passkey (Face ID, Touch ID, Windows Hello or a security key) for two-factor admin sign-in. Once a passkey is enrolled, admin login requires the password <strong>and</strong> a passkey. The only bypass is the server break-glass flag.</p>
+                        <h2 class="section-title section-title--small">Security settings</h2>
+                        <p class="section-text">Manage admin passkeys (two-factor sign-in) and account protection. Re-authentication is required.</p>
                     </div>
-                    <button id="addPasskeyBtn" class="button button-primary">Add a Passkey</button>
+                    <a href="/admin-security" class="button button-primary">Open Security</a>
                 </div>
-                <p id="passkeyBreakGlassNotice" class="section-text danger-label hidden">Break-glass mode is ON — passkey verification is currently bypassed at admin login.</p>
-                <div id="passkeyList" class="passkey-list"></div>
-                <p id="passkeyStatus" class="section-text"></p>
             </section>
         </section>
     </main>
@@ -205,25 +202,6 @@
             <button id="confirmModalCancel" class="button button-secondary button-small" type="button">Cancel</button>
             <button id="confirmModalConfirm" class="button button-danger button-small" type="button">Confirm</button>
         </div>
-    </div>
-</div>
-
-<div id="removePasskeyModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="removePasskeyModalTitle">
-    <div class="modal__backdrop" data-close-remove-passkey-modal="true"></div>
-    <div class="modal__panel">
-        <div class="modal__header">
-            <div>
-                <h2 id="removePasskeyModalTitle" class="section-title section-title--small danger-label">Remove Passkey</h2>
-                <p class="section-text">Enter the admin password to remove this passkey.</p>
-            </div>
-            <button id="removePasskeyModalClose" class="button button-secondary button-small" type="button" data-close-remove-passkey-modal="true">Cancel</button>
-        </div>
-        <form id="removePasskeyForm" autocomplete="off">
-            <label class="field-label" for="removePasskeyPassword">Admin password</label>
-            <input class="input" type="password" id="removePasskeyPassword" placeholder="Admin password" required autocomplete="current-password">
-            <p id="removePasskeyError" class="section-text danger-label" style="min-height:1.2em"></p>
-            <button type="submit" id="removePasskeyConfirmBtn" class="button button-danger button-full">Remove Passkey</button>
-        </form>
     </div>
 </div>
 
@@ -943,7 +921,6 @@ function stopFleetAutoRefresh() {
 async function loadDashboardData() {
     await loadUsers();
     await loadFleet();
-    await loadPasskeys();
 }
 
 async function restoreAdminSession() {
@@ -1051,8 +1028,6 @@ logoutBtn.addEventListener('click', () => {
     loginPanel.classList.remove('hidden');
     usersTableBody.innerHTML = '';
     fleetList.innerHTML = '';
-    if (passkeyList) passkeyList.innerHTML = '';
-    closeRemovePasskeyModal();
     updateFleetCounts({ total: 0, online: 0, offline: 0, blocked: 0 });
     closeTokenModal();
     closeFleetLogsModal();
@@ -1188,170 +1163,6 @@ fleetList.addEventListener('keydown', (event) => {
 });
 
 window.addEventListener('beforeunload', stopFleetAutoRefresh);
-
-// ── Admin passkeys (two-factor security) ───────────────────────────────────
-const addPasskeyBtn = document.getElementById('addPasskeyBtn');
-const passkeyList = document.getElementById('passkeyList');
-const passkeyStatus = document.getElementById('passkeyStatus');
-const passkeyBreakGlassNotice = document.getElementById('passkeyBreakGlassNotice');
-const removePasskeyModal = document.getElementById('removePasskeyModal');
-const removePasskeyForm = document.getElementById('removePasskeyForm');
-const removePasskeyPassword = document.getElementById('removePasskeyPassword');
-const removePasskeyError = document.getElementById('removePasskeyError');
-const removePasskeyClose = document.getElementById('removePasskeyModalClose');
-const removePasskeyConfirmBtn = document.getElementById('removePasskeyConfirmBtn');
-let passkeyPendingRemovalId = null;
-
-function formatPasskeyDate(value) {
-    if (!value) return 'just now';
-    const ts = new Date(value.includes('Z') || value.includes('T') ? value : value.replace(' ', 'T') + 'Z');
-    if (Number.isNaN(ts.getTime())) return 'recently';
-    return ts.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-}
-
-function setPasskeyStatus(message, isError) {
-    if (!passkeyStatus) return;
-    passkeyStatus.textContent = message || '';
-    passkeyStatus.classList.toggle('danger-label', Boolean(isError));
-}
-
-function renderPasskeys(passkeys) {
-    if (!passkeyList) return;
-    passkeyList.innerHTML = '';
-    if (!passkeys || !passkeys.length) {
-        passkeyList.innerHTML = '<p class="section-text passkey-empty">No passkeys yet. Add one to require two-factor admin sign-in.</p>';
-        return;
-    }
-    passkeys.forEach((pk) => {
-        const item = document.createElement('div');
-        item.className = 'passkey-item';
-        const meta = pk.last_used_at ? ' &middot; Last used ' + escapeHtml(formatPasskeyDate(pk.last_used_at)) : '';
-        item.innerHTML =
-            '<div class="passkey-item__info">' +
-            '<span class="passkey-item__name">' + escapeHtml(pk.nickname || 'Passkey') + '</span>' +
-            '<span class="passkey-item__meta">Added ' + escapeHtml(formatPasskeyDate(pk.created_at)) + meta + '</span>' +
-            '</div>';
-        const removeBtn = document.createElement('button');
-        removeBtn.type = 'button';
-        removeBtn.className = 'button button-secondary button-small';
-        removeBtn.textContent = 'Remove';
-        removeBtn.addEventListener('click', () => openRemovePasskeyModal(pk.id));
-        item.appendChild(removeBtn);
-        passkeyList.appendChild(item);
-    });
-}
-
-async function loadPasskeys() {
-    if (!passkeyList) return;
-    try {
-        const data = await api('/api/admin/passkeys');
-        renderPasskeys(data.passkeys);
-        if (passkeyBreakGlassNotice) {
-            passkeyBreakGlassNotice.classList.toggle('hidden', !data.break_glass);
-        }
-    } catch (_err) {
-        renderPasskeys([]);
-    }
-}
-
-if (addPasskeyBtn) {
-    addPasskeyBtn.addEventListener('click', async () => {
-        if (!window.SimpleWebAuthnBrowser) {
-            setPasskeyStatus('Passkeys are not supported in this browser.', true);
-            return;
-        }
-        addPasskeyBtn.disabled = true;
-        addPasskeyBtn.textContent = 'Waiting for passkey...';
-        setPasskeyStatus('');
-        try {
-            const optData = await api('/api/admin/passkeys/register/options', { method: 'POST', body: {} });
-            const attestation = await window.SimpleWebAuthnBrowser.startRegistration(optData.options);
-            const nickname = 'Admin ' + (navigator.platform || '').split(' ')[0] + ' · ' + formatPasskeyDate(null);
-            await api('/api/admin/passkeys/register/verify', {
-                method: 'POST',
-                body: { response: attestation, nickname }
-            });
-            setPasskeyStatus('Passkey added. Two-factor admin sign-in is now required.', false);
-            await loadPasskeys();
-        } catch (error) {
-            const msg = /cancel|timed out|not allowed|abort/i.test(error.message || '')
-                ? 'Passkey setup was cancelled.'
-                : normalizeErrorMessage(error, 'Could not add passkey.');
-            setPasskeyStatus(msg, true);
-        } finally {
-            addPasskeyBtn.disabled = false;
-            addPasskeyBtn.textContent = 'Add a Passkey';
-        }
-    });
-}
-
-function openRemovePasskeyModal(id) {
-    passkeyPendingRemovalId = id;
-    if (removePasskeyPassword) removePasskeyPassword.value = '';
-    if (removePasskeyError) removePasskeyError.textContent = '';
-    if (removePasskeyConfirmBtn) {
-        removePasskeyConfirmBtn.textContent = 'Remove Passkey';
-        removePasskeyConfirmBtn.disabled = false;
-    }
-    if (removePasskeyModal) removePasskeyModal.classList.remove('hidden');
-    if (removePasskeyPassword) removePasskeyPassword.focus();
-}
-
-function closeRemovePasskeyModal() {
-    passkeyPendingRemovalId = null;
-    if (removePasskeyModal) removePasskeyModal.classList.add('hidden');
-    if (removePasskeyPassword) removePasskeyPassword.value = '';
-    if (removePasskeyError) removePasskeyError.textContent = '';
-}
-
-if (removePasskeyClose) {
-    removePasskeyClose.addEventListener('click', closeRemovePasskeyModal);
-}
-if (removePasskeyModal) {
-    removePasskeyModal.addEventListener('click', (event) => {
-        if (event.target.closest('[data-close-remove-passkey-modal]')) {
-            closeRemovePasskeyModal();
-        }
-    });
-}
-if (removePasskeyForm) {
-    removePasskeyForm.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        if (!passkeyPendingRemovalId) {
-            closeRemovePasskeyModal();
-            return;
-        }
-        const password = (removePasskeyPassword && removePasskeyPassword.value ? removePasskeyPassword.value : '').trim();
-        if (!password) {
-            if (removePasskeyError) removePasskeyError.textContent = 'Password is required.';
-            return;
-        }
-        if (removePasskeyConfirmBtn) {
-            removePasskeyConfirmBtn.disabled = true;
-            removePasskeyConfirmBtn.textContent = 'Removing...';
-        }
-        try {
-            const data = await api('/api/admin/passkeys/delete', {
-                method: 'POST',
-                body: { id: passkeyPendingRemovalId, password }
-            });
-            closeRemovePasskeyModal();
-            setPasskeyStatus(
-                data.remaining === 0
-                    ? 'Passkey removed. Two-factor admin sign-in is now off.'
-                    : 'Passkey removed.',
-                false
-            );
-            await loadPasskeys();
-        } catch (error) {
-            if (removePasskeyError) removePasskeyError.textContent = normalizeErrorMessage(error, 'Could not remove passkey.');
-            if (removePasskeyConfirmBtn) {
-                removePasskeyConfirmBtn.textContent = 'Remove Passkey';
-                removePasskeyConfirmBtn.disabled = false;
-            }
-        }
-    });
-}
 
 syncAdminMasthead();
 restoreAdminSession();

@@ -1234,6 +1234,8 @@
             emailVerificationCard.classList.toggle('hidden', emailVerified);
         }
 
+        updatePasskeyPromptBanner(userData);
+
         const statusCard = document.getElementById('statusCard');
         const statusBadge = document.getElementById('dashStatus');
         statusCard.className = tone.card;
@@ -2463,6 +2465,35 @@
                     removePasskeyConfirmBtn.disabled = false;
                 }
             }
+        });
+    }
+
+    // ── Passkey enrollment prompt banner ────────────────────────────────────
+    // Educates users to enrol a passkey: shown on the dashboard after every
+    // login until they have one. Dismiss hides it for THIS session only (a
+    // module variable, no storage) so it reappears next login — matching the
+    // "nudge every login until enrolled" intent.
+    const passkeyPromptBanner = document.getElementById('passkeyPromptBanner');
+    const passkeyPromptAddBtn = document.getElementById('passkeyPromptAddBtn');
+    const passkeyPromptDismiss = document.getElementById('passkeyPromptDismiss');
+    let passkeyPromptDismissed = false;
+
+    function updatePasskeyPromptBanner(userData) {
+        if (!passkeyPromptBanner) return;
+        const enrolled = Boolean(userData && userData.passkey_2fa_enabled);
+        const show = !enrolled && !passkeyPromptDismissed;
+        passkeyPromptBanner.classList.toggle('hidden', !show);
+    }
+
+    if (passkeyPromptAddBtn) {
+        passkeyPromptAddBtn.addEventListener('click', () => {
+            showManageView();
+        });
+    }
+    if (passkeyPromptDismiss) {
+        passkeyPromptDismiss.addEventListener('click', () => {
+            passkeyPromptDismissed = true;
+            if (passkeyPromptBanner) passkeyPromptBanner.classList.add('hidden');
         });
     }
 

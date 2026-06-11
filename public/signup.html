@@ -87,6 +87,16 @@
             </form>
 
             <section id="dashboard" class="dashboard-grid hidden">
+                <div id="passkeyPromptBanner" class="passkey-prompt-banner hidden" role="status">
+                    <div class="passkey-prompt-banner__text">
+                        <span class="passkey-prompt-banner__title">Secure your account with a passkey</span>
+                        <span class="passkey-prompt-banner__desc">Add Face ID, Touch ID, or a security key for stronger two-factor sign-in.</span>
+                    </div>
+                    <div class="passkey-prompt-banner__actions">
+                        <button type="button" id="passkeyPromptAddBtn" class="button button-primary button-small">Add a passkey</button>
+                        <button type="button" id="passkeyPromptDismiss" class="passkey-prompt-banner__dismiss" aria-label="Dismiss">&times;</button>
+                    </div>
+                </div>
                 <article id="emailVerificationCard" class="status-card status-card--pending hidden">
                     <div class="status-meta">
                         <div>
