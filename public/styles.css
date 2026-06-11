@@ -2522,15 +2522,15 @@ code {
 
 :root[data-theme-effective="dark"] .admin-page .status-badge--pending,
 :root[data-theme-effective="dark"] .admin-page .fleet-card .status-badge--pending {
-    color: var(--warning);
-    background: var(--warning-soft);
-    border-color: var(--warning-soft);
+    color: #f5e4bf;
+    background: linear-gradient(160deg, #8a6a20 0%, #614a16 100%);
+    border-color: #b98f38;
 }
 
 :root[data-theme-effective="dark"] .admin-page .status-badge--trial {
-    color: var(--brand-dark);
-    background: var(--brand-soft);
-    border-color: var(--brand-soft);
+    color: #cfe6f7;
+    background: linear-gradient(160deg, #1f5285 0%, #163d61 100%);
+    border-color: #3a7fb0;
 }
 
 :root[data-theme-effective="dark"] .admin-page .status-badge--active,
@@ -2541,9 +2541,9 @@ code {
 }
 
 :root[data-theme-effective="dark"] .admin-page .status-badge--attention {
-    color: var(--danger);
-    background: var(--danger-soft);
-    border-color: var(--danger-soft);
+    color: #f7d3d6;
+    background: linear-gradient(160deg, #8a363b 0%, #62262a 100%);
+    border-color: #b8525a;
 }
 
 :root[data-theme-effective="dark"] .admin-page .admin-action {
@@ -2579,8 +2579,16 @@ code {
 
 /* Status cards (customer dashboard) — light variant uses pale tints */
 :root[data-theme-effective="dark"] .status-card--pending {
-    background: var(--warning-soft);
-    border-color: var(--warning-soft);
+    background: linear-gradient(160deg, #8a6a20 0%, #614a16 100%);
+    border-color: #b98f38;
+}
+
+:root[data-theme-effective="dark"] .status-card--pending .status-label {
+    color: #ead9b3;
+}
+
+:root[data-theme-effective="dark"] .status-card--pending .status-text {
+    color: #f3e7cd;
 }
 
 :root[data-theme-effective="dark"] .status-card--active {
@@ -2598,8 +2606,16 @@ code {
 }
 
 :root[data-theme-effective="dark"] .status-card--attention {
-    background: var(--danger-soft);
-    border-color: var(--danger-soft);
+    background: linear-gradient(160deg, #8a363b 0%, #62262a 100%);
+    border-color: #b8525a;
+}
+
+:root[data-theme-effective="dark"] .status-card--attention .status-label {
+    color: #eec4c7;
+}
+
+:root[data-theme-effective="dark"] .status-card--attention .status-text {
+    color: #f6dde0;
 }
 
 :root[data-theme-effective="dark"] .manage-section--danger {
