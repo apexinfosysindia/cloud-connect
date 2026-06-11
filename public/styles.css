@@ -43,6 +43,9 @@ body {
     background: linear-gradient(180deg, #f8fafc 0%, var(--bg) 100%);
     color: var(--text);
     font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    /* Safety net: never allow a stray wide child to force a horizontal scroll
+       of the whole page. Individual scrollable regions opt back in locally. */
+    overflow-x: hidden;
 }
 
 body.portal-page,
@@ -1501,6 +1504,9 @@ code {
 .google-entity-name {
     font-weight: 600;
     color: var(--text);
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .google-entity-meta {
@@ -1557,10 +1563,13 @@ code {
     justify-content: space-between;
     gap: 12px;
     margin-bottom: 4px;
+    flex-wrap: wrap;
 }
 
 .google-home-header .detail-label {
     margin: 0;
+    min-width: 0;
+    flex: 1 1 auto;
 }
 
 .card-header-actions {
@@ -1568,6 +1577,8 @@ code {
     align-items: center;
     gap: 8px;
     flex-shrink: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
 }
 
 .google-pin-section .detail-label {
@@ -1894,7 +1905,7 @@ code {
     }
 
     .masthead {
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
         align-items: center;
         justify-content: space-between;
         gap: 14px;
@@ -1903,7 +1914,8 @@ code {
 
     .brand-suite {
         width: auto;
-        flex: 1 1 260px;
+        flex: 1 1 auto;
+        min-width: 0;
         gap: 10px;
     }
 
@@ -1931,10 +1943,11 @@ code {
     .masthead-actions {
         width: auto;
         display: flex;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
         gap: 8px;
         margin-left: auto;
         justify-content: flex-end;
+        flex: 0 0 auto;
     }
 
     .masthead-actions .button,
@@ -2008,23 +2021,28 @@ code {
     }
 
     .masthead {
-        align-items: flex-start;
+        align-items: center;
+        flex-wrap: nowrap;
     }
 
+    /* Keep the brand and the action buttons on a single row at all widths
+       (the toggle collapses to an icon-only square below, so three items
+       still fit). brand-suite shrinks (min-width:0 from base) to make room. */
     .brand-suite {
-        width: 100%;
-        flex: 1 1 100%;
+        width: auto;
+        flex: 1 1 auto;
+        min-width: 0;
     }
 
     .masthead-actions {
-        width: 100%;
-        margin-left: 0;
-        justify-content: flex-start;
+        width: auto;
+        margin-left: auto;
         display: flex;
         flex-wrap: nowrap;
         align-items: center;
-        justify-content: flex-start;
+        justify-content: flex-end;
         gap: 8px;
+        flex: 0 0 auto;
     }
 
     .masthead-actions .button,
@@ -2034,21 +2052,28 @@ code {
     }
 
     #guestNavActions {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        width: 100%;
+        display: flex;
+        flex-wrap: nowrap;
+        width: auto;
         gap: 8px;
     }
 
     #guestNavActions .button,
     #guestNavActions .button-small {
-        width: 100%;
+        width: auto;
+    }
+
+    /* On very small screens, keep just the logos in the brand area so the
+       single-line action row (toggle + 2 buttons) has room without the brand
+       title wrapping to multiple lines and looking cramped. */
+    .brand-suite__product > div {
+        display: none;
     }
 
     .masthead-actions .identity-pill {
-        flex: 1 1 auto;
+        flex: 0 1 auto;
         min-width: 0;
-        max-width: none;
+        max-width: 40vw;
     }
 
     .admin-page .user-card__summary {
@@ -2172,6 +2197,7 @@ code {
     font-size: 0.82rem;
     font-weight: 600;
     cursor: pointer;
+    min-width: 0;
     max-width: 150px;
     /* Custom caret so the control matches in both themes */
     -webkit-appearance: none;
@@ -2309,19 +2335,24 @@ code {
 }
 
 /* Brand logos are dark-on-transparent PNGs authored for light backgrounds, so
-   they vanish on a dark masthead. invert(1) flips their lightness (dark navy →
-   light) and hue-rotate(180deg) restores the original hues (so the red bar and
-   blue mark stay on-brand rather than becoming cyan). */
-:root[data-theme-effective="dark"] .brand-suite__group,
-:root[data-theme-effective="dark"] .brand-suite__product-logo {
-    filter: invert(1) hue-rotate(180deg);
+   they vanish on a dark masthead. */
+
+/* Main group logo → render pure white (brightness(0) crushes all art to black,
+   then invert(1) flips it to white) for a clean monochrome mark on dark. */
+:root[data-theme-effective="dark"] .brand-suite__group {
+    filter: brightness(0) invert(1);
 }
 
-/* The product-logo chip has a light tint + border that frames the inverted art
-   awkwardly; drop the frame in dark mode so just the mark shows. */
+/* Product (square) logo → invert lightness but keep hue (so the mark stays
+   on-brand rather than monochrome). The filter also acts on this element's own
+   background/border, so colors below are chosen PRE-inversion. */
 :root[data-theme-effective="dark"] .brand-suite__product-logo {
+    filter: invert(1) hue-rotate(180deg);
     background: transparent;
-    border-color: transparent;
+    /* A black border here renders as a subtle WHITE square frame after the
+       invert filter — giving the square logo the visible border requested,
+       in a neutral tone that matches the dark masthead. */
+    border-color: rgba(0, 0, 0, 0.5);
 }
 
 :root[data-theme-effective="dark"] .masthead {
