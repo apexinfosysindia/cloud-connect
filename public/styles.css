@@ -250,6 +250,7 @@ code {
     margin: 0;
     line-height: 1.06;
     letter-spacing: -0.04em;
+    overflow-wrap: anywhere;
 }
 
 .hero-title {
@@ -391,6 +392,10 @@ code {
     align-items: flex-start;
     justify-content: space-between;
     gap: 16px;
+}
+
+.account-shell__header > div {
+    min-width: 0;
 }
 
 .auth-page .account-shell__header {
@@ -1181,11 +1186,11 @@ code {
 }
 
 .detail-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
 }
 
 .dashboard-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
 }
 
 .status-card,
@@ -1195,10 +1200,17 @@ code {
 .admin-intro-card,
 .user-section,
 .user-card {
+    min-width: 0;
     background: var(--surface-subtle);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-sm);
+}
+
+/* The detail-grid is itself a grid item of dashboard-grid; without this its
+   own min-content (a long token / URL) would push the whole column wide. */
+.dashboard-grid > .detail-grid {
+    min-width: 0;
 }
 
 .status-card,
