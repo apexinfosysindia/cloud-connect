@@ -70,18 +70,22 @@
                 <article class="stat-card stat-card--pending">
                     <span class="stat-label">Pending Payment</span>
                     <span id="countPending" class="stat-value">0</span>
+                    <div class="stat-card__bar"><div class="stat-card__bar-fill" id="barPending"></div></div>
                 </article>
                 <article class="stat-card stat-card--trial">
                     <span class="stat-label">Approved</span>
                     <span id="countTrial" class="stat-value">0</span>
+                    <div class="stat-card__bar"><div class="stat-card__bar-fill" id="barTrial"></div></div>
                 </article>
                 <article class="stat-card stat-card--active">
                     <span class="stat-label">Active</span>
                     <span id="countActive" class="stat-value">0</span>
+                    <div class="stat-card__bar"><div class="stat-card__bar-fill" id="barActive"></div></div>
                 </article>
                 <article class="stat-card stat-card--suspended">
                     <span class="stat-label">Suspended / Expired</span>
                     <span id="countDisabled" class="stat-value">0</span>
+                    <div class="stat-card__bar"><div class="stat-card__bar-fill" id="barDisabled"></div></div>
                 </article>
             </div>
 
@@ -110,18 +114,22 @@
                     <article class="stat-card stat-card--trial">
                         <span class="stat-label">Total Devices</span>
                         <span id="countDevicesTotal" class="stat-value">0</span>
+                        <div class="stat-card__bar"><div class="stat-card__bar-fill" id="barDevicesTotal"></div></div>
                     </article>
                     <article class="stat-card stat-card--active">
                         <span class="stat-label">Online</span>
                         <span id="countDevicesOnline" class="stat-value">0</span>
+                        <div class="stat-card__bar"><div class="stat-card__bar-fill" id="barDevicesOnline"></div></div>
                     </article>
                     <article class="stat-card stat-card--pending">
                         <span class="stat-label">Offline</span>
                         <span id="countDevicesOffline" class="stat-value">0</span>
+                        <div class="stat-card__bar"><div class="stat-card__bar-fill" id="barDevicesOffline"></div></div>
                     </article>
                     <article class="stat-card stat-card--suspended">
                         <span class="stat-label">Connect Blocked</span>
                         <span id="countDevicesBlocked" class="stat-value">0</span>
+                        <div class="stat-card__bar"><div class="stat-card__bar-fill" id="barDevicesBlocked"></div></div>
                     </article>
                 </div>
 
@@ -437,18 +445,47 @@ function getAccessSummary(user) {
     };
 }
 
+function setStatBar(id, value, total) {
+    const fill = document.getElementById(id);
+    if (!fill) return;
+    const pct = total > 0 ? Math.round((Number(value) / total) * 100) : 0;
+    fill.style.width = pct + '%';
+}
+
 function updateCounts(users) {
-    document.getElementById('countPending').textContent = users.filter((u) => u.status === 'payment_pending').length;
-    document.getElementById('countTrial').textContent = users.filter((u) => u.status === 'trial').length;
-    document.getElementById('countActive').textContent = users.filter((u) => u.status === 'active').length;
-    document.getElementById('countDisabled').textContent = users.filter((u) => ['suspended', 'expired'].includes(u.status)).length;
+    const pending = users.filter((u) => u.status === 'payment_pending').length;
+    const trial = users.filter((u) => u.status === 'trial').length;
+    const active = users.filter((u) => u.status === 'active').length;
+    const disabled = users.filter((u) => ['suspended', 'expired'].includes(u.status)).length;
+    const total = pending + trial + active + disabled;
+
+    document.getElementById('countPending').textContent = pending;
+    document.getElementById('countTrial').textContent = trial;
+    document.getElementById('countActive').textContent = active;
+    document.getElementById('countDisabled').textContent = disabled;
+
+    setStatBar('barPending', pending, total);
+    setStatBar('barTrial', trial, total);
+    setStatBar('barActive', active, total);
+    setStatBar('barDisabled', disabled, total);
 }
 
 function updateFleetCounts(stats = {}) {
-    countDevicesTotal.textContent = Number(stats.total || 0);
-    countDevicesOnline.textContent = Number(stats.online || 0);
-    countDevicesOffline.textContent = Number(stats.offline || 0);
-    countDevicesBlocked.textContent = Number(stats.blocked || 0);
+    const total = Number(stats.total || 0);
+    const online = Number(stats.online || 0);
+    const offline = Number(stats.offline || 0);
+    const blocked = Number(stats.blocked || 0);
+
+    countDevicesTotal.textContent = total;
+    countDevicesOnline.textContent = online;
+    countDevicesOffline.textContent = offline;
+    countDevicesBlocked.textContent = blocked;
+
+    // Total is the whole fleet (full bar); the rest are shares of the total.
+    setStatBar('barDevicesTotal', total, total);
+    setStatBar('barDevicesOnline', online, total);
+    setStatBar('barDevicesOffline', offline, total);
+    setStatBar('barDevicesBlocked', blocked, total);
 }
 
 function deriveFleetStats(devices) {
