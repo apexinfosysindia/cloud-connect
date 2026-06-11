@@ -1218,6 +1218,60 @@ code {
     display: none;
 }
 
+/* Passkey enrollment list (shared: Oasis manage view + Vista security card).
+   Built entirely from theme tokens that already have light + dark values, so
+   it adapts to the active theme without a separate dark override. */
+.passkey-list {
+    display: grid;
+    gap: 8px;
+}
+
+.passkey-list:empty {
+    display: none;
+}
+
+.passkey-empty {
+    margin: 0;
+    color: var(--text-soft, #64748b);
+}
+
+.passkey-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+    border-radius: var(--radius-md, 12px);
+    border: 1px solid var(--line, #e2e8f0);
+    background: var(--surface-subtle, #f8fafc);
+}
+
+.passkey-item__info {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.passkey-item__name {
+    font-weight: 600;
+    color: var(--text, #0f172a);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.passkey-item__meta {
+    font-size: 0.82rem;
+    color: var(--text-soft, #64748b);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.passkey-item .button {
+    flex-shrink: 0;
+}
+
 .link-row {
     margin: 0;
     text-align: center;

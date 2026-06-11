@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 
-module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, email, billing, device, eventGateway }) {
+module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, webauthn, email, billing, device, eventGateway }) {
     const router = express.Router();
     const { asyncHandler } = utils;
 
@@ -110,6 +110,22 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, e
                 return res.status(401).json({ error: 'Invalid email or password' });
             }
 
+            // Passkey step-up (2FA): once a user enrolls a passkey, password
+            // alone is not enough. Issue a WebAuthn assertion challenge and
+            // return 202 WITHOUT minting a session; the client completes the
+            // passkey assertion and POSTs to /api/auth/login/passkey/verify,
+            // which finishes the login below.
+            if (user.passkey_2fa_enabled) {
+                const principal = { kind: 'customer', subject: user.email, userId: user.id, displayName: user.email };
+                const options = await webauthn.beginAuthentication(principal);
+                if (options) {
+                    res.setHeader('Cache-Control', 'no-store');
+                    return res.status(202).json({ mfa_required: true, mfa_method: 'passkey', options });
+                }
+                // Flag set but no credentials survive (e.g. all removed out of
+                // band): fail open to password-only rather than lock the user out.
+            }
+
             // Send verification email on login for unverified users
             let verificationSent = false;
             if (!user.email_verified && email.isEmailConfigured()) {
@@ -132,6 +148,41 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, e
                         ? 'Login successful. A verification email has been sent to your inbox.'
                         : 'Login successful. Please verify your email to continue.')
                     : 'Login successful',
+                data: auth.serializeUserWithPortalSession(user, portalSessionToken)
+            });
+        })
+    );
+
+    // Complete a passkey-gated login. Reached only after /api/auth/login
+    // verified the password and issued an assertion challenge (202). The
+    // presence of a valid, unconsumed 'authentication' challenge for this email
+    // is what proves the password step happened — it binds the two factors.
+    router.post(
+        '/api/auth/login/passkey/verify',
+        asyncHandler(async (req, res) => {
+            const rawEmail = req.body?.email;
+            const assertion = req.body?.assertion || req.body?.response;
+            if (!rawEmail || !assertion) {
+                return res.status(400).json({ error: 'Email and passkey assertion are required' });
+            }
+
+            const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [rawEmail]);
+            if (!user || !user.passkey_2fa_enabled) {
+                return res.status(401).json({ error: 'Passkey verification failed. Please sign in again.' });
+            }
+
+            const principal = { kind: 'customer', subject: user.email, userId: user.id, displayName: user.email };
+            const result = await webauthn.finishAuthentication(principal, assertion);
+            if (!result.verified) {
+                return res.status(401).json({ error: 'Passkey verification failed. Please sign in again.' });
+            }
+
+            const portalSessionToken = auth.createPortalSessionToken(user.email, user.session_epoch);
+            auth.setPortalSessionCookie(res, portalSessionToken);
+
+            res.setHeader('Cache-Control', 'no-store');
+            res.status(200).json({
+                message: 'Login successful',
                 data: auth.serializeUserWithPortalSession(user, portalSessionToken)
             });
         })
@@ -281,6 +332,13 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, e
             const hashedPassword = await bcrypt.hash(password, 10);
             await dbRun(`UPDATE users SET password = ? WHERE id = ?`, [hashedPassword, record.user_id]);
             await email.markPasswordResetTokenUsed(record.id);
+
+            // Recovery / lockout escape hatch: completing an email-verified
+            // password reset clears passkey 2FA enforcement and removes the
+            // user's enrolled passkeys, so a lost device can never permanently
+            // lock someone out. They re-enroll a passkey after signing back in.
+            await dbRun(`UPDATE users SET passkey_2fa_enabled = 0 WHERE id = ?`, [record.user_id]);
+            await webauthn.deleteAllForUser(record.user_id);
 
             // Also verify the email if not already verified (they proved ownership)
             await email.markUserEmailVerified(record.user_id);

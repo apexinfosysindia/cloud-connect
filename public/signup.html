@@ -208,6 +208,14 @@
                         </form>
                     </section>
 
+                    <section class="manage-section" id="passkeySection">
+                        <span class="detail-label">Two-Factor Security &middot; Passkeys</span>
+                        <p class="detail-copy">Add a passkey (Face ID, Touch ID, Windows Hello or a security key) for two-factor sign-in. Once you add one, signing in will require your password <strong>and</strong> a passkey. If you ever lose your device, resetting your password by email removes your passkeys so you are never locked out.</p>
+                        <div id="passkeyList" class="passkey-list"></div>
+                        <p id="passkeyStatus" class="detail-copy manage-msg"></p>
+                        <button id="addPasskeyBtn" type="button" class="button button-primary button-full">Add a Passkey</button>
+                    </section>
+
                     <section class="manage-section hidden" id="cancelSubscriptionSection">
                         <span class="detail-label">Cancel Subscription</span>
                         <p class="detail-copy">Stop your Razorpay subscription renewals. You will keep access until the end of your current billing period.</p>
@@ -264,6 +272,26 @@
     </div>
 </div>
 
+<div id="removePasskeyModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="removePasskeyModalTitle">
+    <div class="modal__backdrop" data-close-remove-passkey-modal="true"></div>
+    <div class="modal__panel">
+        <div class="modal__header">
+            <div>
+                <h2 id="removePasskeyModalTitle" class="section-title section-title--small danger-label">Remove Passkey</h2>
+                <p class="section-text">Enter your password to remove this passkey. If it is your last passkey, two-factor sign-in will be turned off.</p>
+            </div>
+            <button id="removePasskeyModalClose" class="button button-secondary button-small" data-close-remove-passkey-modal="true">Cancel</button>
+        </div>
+        <form id="removePasskeyForm" autocomplete="off">
+            <label class="detail-label" for="removePasskeyPassword">Enter your password to confirm</label>
+            <input class="input" type="password" id="removePasskeyPassword" placeholder="Your account password" required autocomplete="current-password">
+            <p id="removePasskeyError" class="detail-copy danger-label" style="min-height:1.2em"></p>
+            <button type="submit" id="removePasskeyConfirmBtn" class="button button-danger button-full">Remove Passkey</button>
+        </form>
+    </div>
+</div>
+
+<script src="/vendor/simplewebauthn-browser.umd.min.js"></script>
 <script src="/account.js"></script>
 </body>
 </html>

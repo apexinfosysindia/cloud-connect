@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const express = require('express');
 const bcrypt = require('bcryptjs');
 
-module.exports = function ({ dbAll, dbGet, utils, auth, billing }) {
+module.exports = function ({ dbAll, dbGet, utils, auth, webauthn, billing }) {
     const router = express.Router();
     const { asyncHandler } = utils;
 
@@ -36,6 +36,50 @@ module.exports = function ({ dbAll, dbGet, utils, auth, billing }) {
 
             if (!passwordValid) {
                 return res.status(401).json({ error: 'Invalid admin credentials' });
+            }
+
+            // Passkey step-up (enforced once an admin passkey is enrolled). The
+            // only bypass is the env break-glass flag (set + restart). If a
+            // passkey exists and break-glass is off, return 202 and require the
+            // assertion via /api/admin/login/passkey/verify before issuing a token.
+            if (!webauthn.isAdminPasskeyBreakGlass()) {
+                const principal = { kind: 'admin', subject: email, adminEmail: email, displayName: email };
+                const options = await webauthn.beginAuthentication(principal);
+                if (options) {
+                    res.setHeader('Cache-Control', 'no-store');
+                    return res.status(202).json({ mfa_required: true, mfa_method: 'passkey', options });
+                }
+            }
+
+            res.status(200).json({
+                message: 'Admin login successful',
+                email,
+                token: auth.createAdminToken(email)
+            });
+        })
+    );
+
+    // Complete a passkey-gated admin login. Reached only after /api/admin/login
+    // verified the password and issued an assertion challenge (202).
+    router.post(
+        '/api/admin/login/passkey/verify',
+        asyncHandler(async (req, res) => {
+            try {
+                auth.ensureAdminConfigured();
+            } catch (error) {
+                return res.status(500).json({ error: error.message });
+            }
+
+            const email = process.env.ADMIN_EMAIL;
+            const assertion = req.body?.assertion || req.body?.response;
+            if (!assertion) {
+                return res.status(400).json({ error: 'A passkey assertion is required' });
+            }
+
+            const principal = { kind: 'admin', subject: email, adminEmail: email, displayName: email };
+            const result = await webauthn.finishAuthentication(principal, assertion);
+            if (!result.verified) {
+                return res.status(401).json({ error: 'Passkey verification failed. Please sign in again.' });
             }
 
             res.status(200).json({

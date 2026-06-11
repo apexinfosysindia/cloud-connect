@@ -65,6 +65,9 @@ const alexaEventGateway = require('./lib/alexa/event-gateway')({ dbGet, dbRun, d
 // Auth depends on device, googleCore, and alexaCore, so it must be initialized after them
 const auth = require('./lib/auth')({ dbGet, config, utils, device, googleCore, alexaCore });
 
+// WebAuthn / passkey 2FA helper (owns credential + challenge persistence)
+const webauthn = require('./lib/webauthn')({ dbGet, dbRun, dbAll, config, utils });
+
 // Email module for verification and password reset flows
 const email = require('./lib/email')({ dbGet, dbRun, config, utils });
 
@@ -202,6 +205,7 @@ const deps = {
     config,
     utils,
     auth,
+    webauthn,
     email,
     device,
     billing,
@@ -221,6 +225,7 @@ app.use(require('./routes/pages')(deps));
 app.use(require('./routes/device-api')(deps));
 app.use(require('./routes/admin-fleet')(deps));
 app.use(require('./routes/auth')(deps));
+app.use(require('./routes/webauthn')(deps));
 app.use(require('./routes/billing')(deps));
 app.use(require('./routes/admin')(deps));
 app.use(require('./routes/internal')(deps));
