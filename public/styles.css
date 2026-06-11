@@ -1857,29 +1857,24 @@ code {
 }
 
 @media (max-width: 820px) {
-    /* Tablet & below: keep the masthead a clean single row. The brand area
-       shows logos only (text hidden) and yields space first; the action
-       cluster never shrinks or overlaps. Covers iPad-portrait (768px), which
-       sits just above the 720px layout breakpoint below. */
+    /* Tablet & below: keep the FULL brand-suite (both logos + text) visible at
+       every size. When the brand + actions no longer fit on one line, the
+       action cluster wraps onto its own row beneath the brand rather than the
+       brand hiding/clipping. */
     .masthead {
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
         align-items: center;
         gap: 12px;
     }
 
     .brand-suite {
-        flex: 0 1 auto;
+        flex: 1 1 auto;
         min-width: 0;
-        overflow: hidden;
-    }
-
-    .brand-suite__product > div {
-        display: none;
     }
 
     .masthead-actions {
         flex: 0 0 auto;
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
         margin-left: auto;
     }
 }
@@ -1933,7 +1928,7 @@ code {
     }
 
     .masthead {
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
         gap: 14px;
@@ -1942,9 +1937,8 @@ code {
 
     .brand-suite {
         width: auto;
-        flex: 0 1 auto;
+        flex: 1 1 auto;
         min-width: 0;
-        overflow: hidden;
         gap: 10px;
     }
 
@@ -1972,7 +1966,7 @@ code {
     .masthead-actions {
         width: auto;
         display: flex;
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
         gap: 8px;
         margin-left: auto;
         justify-content: flex-end;
@@ -2079,37 +2073,28 @@ code {
         gap: 10px;
     }
 
-    /* Actions take priority and never shrink/overlap; the brand area gives up
-       space. Logos themselves never shrink (flex-shrink:0 below) so they stay
-       crisp — it's the hidden brand TEXT that frees the room. */
-    .masthead-actions {
-        width: auto;
-        margin-left: auto;
-        display: flex;
-        flex-wrap: nowrap;
-        align-items: center;
-        justify-content: flex-end;
-        gap: 8px;
-        flex: 0 0 auto;
+    /* Full brand-suite (both logos + text) stays visible at every width. On
+       phones the brand takes the full first row and the action cluster wraps
+       to its own full-width row beneath — so nothing hides, clips, or overlaps. */
+    .masthead {
+        flex-wrap: wrap;
     }
 
     .brand-suite {
-        width: auto;
-        flex: 0 1 auto;
+        width: 100%;
+        flex: 1 1 100%;
         min-width: 0;
     }
 
-    .brand-suite__group,
-    .brand-suite__product {
-        flex-shrink: 0;
-    }
-
-    /* On phones, keep only the primary group logo. The secondary square product
-       logo + divider are dropped so the single brand mark always shows fully
-       (never clipped) alongside the action row. */
-    .brand-suite__product,
-    .brand-suite__divider {
-        display: none;
+    .masthead-actions {
+        width: 100%;
+        flex: 1 1 100%;
+        margin-left: 0;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 8px;
     }
 
     .masthead-actions .button,
@@ -2120,22 +2105,14 @@ code {
 
     #guestNavActions {
         display: flex;
-        flex-wrap: nowrap;
-        width: auto;
+        flex-wrap: wrap;
+        width: 100%;
         gap: 8px;
     }
 
     #guestNavActions .button,
     #guestNavActions .button-small {
         width: auto;
-    }
-
-    /* On phones the guest masthead can't fit logo + toggle + Overview +
-       Create Account on one line. Drop the secondary "Overview" link (the same
-       page is reachable from the body) so the logo stays visible and the row
-       never wraps or crowds. */
-    #guestNavActions a[href="/index.html"] {
-        display: none;
     }
 
     /* Free up masthead space on mobile by hiding the (often long) signed-in
@@ -2191,7 +2168,7 @@ code {
     align-items: center;
     justify-content: center;
     gap: 7px;
-    height: 40px;
+    min-height: 44px;
     padding: 0 14px;
     border-radius: var(--radius-md);
     border: 1px solid var(--line-strong);
@@ -2239,7 +2216,7 @@ code {
     }
 
     .theme-toggle {
-        width: 40px;
+        width: 44px;
         padding: 0;
         gap: 0;
     }
