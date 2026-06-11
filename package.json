@@ -17,6 +17,7 @@
     "author": "",
     "license": "ISC",
     "dependencies": {
+        "@simplewebauthn/server": "9.0.3",
         "bcryptjs": "^3.0.3",
         "cookie-parser": "^1.4.7",
         "cors": "^2.8.6",
@@ -30,6 +31,7 @@
     },
     "devDependencies": {
         "@eslint/js": "^9.39.4",
+        "@simplewebauthn/browser": "^9.0.1",
         "eslint": "^9.39.4",
         "eslint-config-prettier": "^10.1.8",
         "globals": "^17.5.0",

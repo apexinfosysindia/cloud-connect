@@ -2029,6 +2029,7 @@
         dashboardSection.classList.add('hidden');
         manageAccountView.classList.remove('hidden');
         manageAccountView.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        loadPasskeys();
     }
 
     function hideManageView() {
@@ -2252,6 +2253,214 @@
                 if (deleteModalConfirmBtn) {
                     deleteModalConfirmBtn.textContent = 'Permanently Delete Account';
                     deleteModalConfirmBtn.disabled = false;
+                }
+            }
+        });
+    }
+
+    // ── Passkeys (two-factor security) ──────────────────────────────────────
+    const passkeySection = document.getElementById('passkeySection');
+    const passkeyList = document.getElementById('passkeyList');
+    const passkeyStatus = document.getElementById('passkeyStatus');
+    const addPasskeyBtn = document.getElementById('addPasskeyBtn');
+    const removePasskeyModal = document.getElementById('removePasskeyModal');
+    const removePasskeyForm = document.getElementById('removePasskeyForm');
+    const removePasskeyPassword = document.getElementById('removePasskeyPassword');
+    const removePasskeyError = document.getElementById('removePasskeyError');
+    const removePasskeyClose = document.getElementById('removePasskeyModalClose');
+    const removePasskeyConfirmBtn = document.getElementById('removePasskeyConfirmBtn');
+    let passkeyPendingRemovalId = null;
+
+    function getStoredToken() {
+        const storedUser = JSON.parse(localStorage.getItem('apex_user') || 'null');
+        return storedUser?.portal_session_token || null;
+    }
+
+    function formatPasskeyDate(value) {
+        if (!value) return 'just now';
+        const ts = new Date(value.includes('Z') || value.includes('T') ? value : value.replace(' ', 'T') + 'Z');
+        if (Number.isNaN(ts.getTime())) return 'recently';
+        return ts.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    }
+
+    function renderPasskeys(passkeys) {
+        if (!passkeyList) return;
+        passkeyList.innerHTML = '';
+        if (!passkeys || !passkeys.length) {
+            const empty = document.createElement('p');
+            empty.className = 'detail-copy passkey-empty';
+            empty.textContent = 'No passkeys yet. Add one to enable two-factor sign-in.';
+            passkeyList.appendChild(empty);
+            return;
+        }
+        passkeys.forEach((pk) => {
+            const item = document.createElement('div');
+            item.className = 'passkey-item';
+
+            const info = document.createElement('div');
+            info.className = 'passkey-item__info';
+            const name = document.createElement('span');
+            name.className = 'passkey-item__name';
+            name.textContent = pk.nickname || 'Passkey';
+            const meta = document.createElement('span');
+            meta.className = 'passkey-item__meta';
+            meta.textContent =
+                'Added ' + formatPasskeyDate(pk.created_at) +
+                (pk.last_used_at ? ' · Last used ' + formatPasskeyDate(pk.last_used_at) : '');
+            info.appendChild(name);
+            info.appendChild(meta);
+
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.className = 'button button-secondary button-small';
+            removeBtn.textContent = 'Remove';
+            removeBtn.addEventListener('click', () => openRemovePasskeyModal(pk.id));
+
+            item.appendChild(info);
+            item.appendChild(removeBtn);
+            passkeyList.appendChild(item);
+        });
+    }
+
+    async function loadPasskeys() {
+        if (!passkeySection) return;
+        const token = getStoredToken();
+        if (!token) return;
+        try {
+            const res = await fetch('/api/account/passkeys', {
+                method: 'GET',
+                headers: { Authorization: 'Bearer ' + token }
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error);
+            renderPasskeys(data.passkeys);
+        } catch (_err) {
+            renderPasskeys([]);
+        }
+    }
+
+    function setPasskeyStatus(message, isError = false) {
+        if (!passkeyStatus) return;
+        passkeyStatus.textContent = message || '';
+        passkeyStatus.classList.toggle('danger-label', Boolean(isError));
+    }
+
+    if (addPasskeyBtn) {
+        addPasskeyBtn.addEventListener('click', async () => {
+            const token = getStoredToken();
+            if (!token) {
+                showAlert('Please log in again to continue.');
+                return;
+            }
+            if (!window.SimpleWebAuthnBrowser) {
+                setPasskeyStatus('Passkeys are not supported in this browser.', true);
+                return;
+            }
+            addPasskeyBtn.disabled = true;
+            addPasskeyBtn.textContent = 'Waiting for passkey...';
+            setPasskeyStatus('');
+            try {
+                const optRes = await fetch('/api/account/passkeys/register/options', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }
+                });
+                const optData = await optRes.json();
+                if (!optRes.ok) throw new Error(optData.error);
+
+                const attestation = await window.SimpleWebAuthnBrowser.startRegistration(optData.options);
+
+                const nickname =
+                    (navigator.platform || 'Passkey').split(' ')[0] + ' · ' + formatPasskeyDate(null);
+                const verifyRes = await fetch('/api/account/passkeys/register/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+                    body: JSON.stringify({ response: attestation, nickname })
+                });
+                const verifyData = await verifyRes.json();
+                if (!verifyRes.ok) throw new Error(verifyData.error);
+
+                setPasskeyStatus('Passkey added. Two-factor sign-in is now on.', false);
+                await loadPasskeys();
+            } catch (err) {
+                const msg = /cancel|timed out|not allowed|abort/i.test(err.message || '')
+                    ? 'Passkey setup was cancelled.'
+                    : err.message || 'Could not add passkey.';
+                setPasskeyStatus(msg, true);
+            } finally {
+                addPasskeyBtn.disabled = false;
+                addPasskeyBtn.textContent = 'Add a Passkey';
+            }
+        });
+    }
+
+    function openRemovePasskeyModal(id) {
+        passkeyPendingRemovalId = id;
+        if (removePasskeyPassword) removePasskeyPassword.value = '';
+        if (removePasskeyError) removePasskeyError.textContent = '';
+        if (removePasskeyConfirmBtn) {
+            removePasskeyConfirmBtn.textContent = 'Remove Passkey';
+            removePasskeyConfirmBtn.disabled = false;
+        }
+        if (removePasskeyModal) removePasskeyModal.classList.remove('hidden');
+        if (removePasskeyPassword) removePasskeyPassword.focus();
+    }
+
+    function closeRemovePasskeyModal() {
+        passkeyPendingRemovalId = null;
+        if (removePasskeyModal) removePasskeyModal.classList.add('hidden');
+        if (removePasskeyPassword) removePasskeyPassword.value = '';
+        if (removePasskeyError) removePasskeyError.textContent = '';
+    }
+
+    if (removePasskeyClose) {
+        removePasskeyClose.addEventListener('click', closeRemovePasskeyModal);
+    }
+    if (removePasskeyModal) {
+        removePasskeyModal.addEventListener('click', (event) => {
+            if (event.target.closest('[data-close-remove-passkey-modal]')) {
+                closeRemovePasskeyModal();
+            }
+        });
+    }
+    if (removePasskeyForm) {
+        removePasskeyForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const token = getStoredToken();
+            if (!token || !passkeyPendingRemovalId) {
+                closeRemovePasskeyModal();
+                showAlert('Please log in again to continue.');
+                return;
+            }
+            const password = (removePasskeyPassword?.value || '').trim();
+            if (!password) {
+                if (removePasskeyError) removePasskeyError.textContent = 'Password is required.';
+                return;
+            }
+            if (removePasskeyConfirmBtn) {
+                removePasskeyConfirmBtn.disabled = true;
+                removePasskeyConfirmBtn.textContent = 'Removing...';
+            }
+            try {
+                const res = await fetch('/api/account/passkeys/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+                    body: JSON.stringify({ id: passkeyPendingRemovalId, password })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error);
+                closeRemovePasskeyModal();
+                setPasskeyStatus(
+                    data.remaining === 0
+                        ? 'Passkey removed. Two-factor sign-in is now off.'
+                        : 'Passkey removed.',
+                    false
+                );
+                await loadPasskeys();
+            } catch (err) {
+                if (removePasskeyError) removePasskeyError.textContent = err.message;
+                if (removePasskeyConfirmBtn) {
+                    removePasskeyConfirmBtn.textContent = 'Remove Passkey';
+                    removePasskeyConfirmBtn.disabled = false;
                 }
             }
         });
@@ -2678,6 +2887,16 @@
     }
 
     if (loginForm) {
+        function finishLoginSuccess(userData) {
+            localStorage.setItem('apex_user', JSON.stringify(userData));
+            renderDashboard(userData);
+            if (!hasSubdomain(userData)) {
+                showAlert('Set your desired cloud address to continue setup.', false);
+            } else if (userData.status === 'payment_pending') {
+                showAlert('Account found. Complete payment from your account to activate remote access.');
+            }
+        }
+
         loginForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = document.getElementById('loginBtn');
@@ -2685,12 +2904,14 @@
             btn.disabled = true;
             hideAlert();
 
+            const email = document.getElementById('loginEmail').value;
+
             try {
                 const res = await fetch('/api/auth/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        email: document.getElementById('loginEmail').value,
+                        email,
                         password: document.getElementById('loginPassword').value
                     })
                 });
@@ -2698,13 +2919,32 @@
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error);
 
-                localStorage.setItem('apex_user', JSON.stringify(data.data));
-                renderDashboard(data.data);
-                if (!hasSubdomain(data.data)) {
-                    showAlert('Set your desired cloud address to continue setup.', false);
-                } else if (data.data.status === 'payment_pending') {
-                    showAlert('Account found. Complete payment from your account to activate remote access.');
+                // Passkey 2FA step-up: the server verified the password but
+                // requires a passkey assertion before issuing a session.
+                if (res.status === 202 && data.mfa_required) {
+                    if (!window.SimpleWebAuthnBrowser) {
+                        throw new Error('Passkeys are not supported in this browser.');
+                    }
+                    btn.textContent = 'Waiting for passkey...';
+                    let assertion;
+                    try {
+                        assertion = await window.SimpleWebAuthnBrowser.startAuthentication(data.options);
+                    } catch (_authErr) {
+                        throw new Error('Passkey verification was cancelled. Please try again.');
+                    }
+
+                    const verifyRes = await fetch('/api/auth/login/passkey/verify', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email, assertion })
+                    });
+                    const verifyData = await verifyRes.json();
+                    if (!verifyRes.ok) throw new Error(verifyData.error);
+                    finishLoginSuccess(verifyData.data);
+                    return;
                 }
+
+                finishLoginSuccess(data.data);
             } catch (err) {
                 showAlert(err.message);
             } finally {
