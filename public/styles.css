@@ -196,23 +196,6 @@ code {
     display: none;
 }
 
-.identity-pill {
-    display: inline-flex;
-    align-items: center;
-    min-height: 40px;
-    padding: 0 12px;
-    border: 1px solid var(--line-strong);
-    border-radius: 999px;
-    background: var(--surface-tint);
-    color: var(--text-muted);
-    font-size: 0.86rem;
-    font-weight: 600;
-    max-width: 320px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
 .portal-main,
 .admin-main {
     display: flex;
@@ -1882,12 +1865,6 @@ code {
         flex-wrap: nowrap;
         margin-left: auto;
         gap: 8px;
-    }
-
-    /* Identity/email pill is desktop-only. */
-    #headerUserEmail,
-    #adminIdentity {
-        display: none !important;
     }
 
     /* Theme toggle: collapse to an icon-only square here. It is also hidden on

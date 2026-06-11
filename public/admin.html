@@ -39,7 +39,6 @@
 
         <div class="masthead-actions">
             <button type="button" class="theme-toggle"></button>
-            <span id="adminIdentity" class="identity-pill hidden"></span>
             <button id="logoutBtn" class="button button-secondary hidden">Log Out</button>
         </div>
     </header>
@@ -193,7 +192,6 @@ const alertBox = document.getElementById('alertBox');
 const loginPanel = document.getElementById('loginPanel');
 const dashboard = document.getElementById('dashboard');
 const logoutBtn = document.getElementById('logoutBtn');
-const adminIdentity = document.getElementById('adminIdentity');
 const adminMasthead = document.querySelector('.masthead--admin');
 const usersTableBody = document.getElementById('usersTableBody');
 const refreshBtn = document.getElementById('refreshBtn');
@@ -270,11 +268,11 @@ let editingFleetNameDraft = '';
 let savingFleetNameDeviceId = null;
 
 function syncAdminMasthead() {
-    // The theme toggle lives alongside identity + logout, which are only shown
-    // once authenticated. When logged out, hide the whole actions cluster (and
-    // thus the toggle) so the masthead stays clean — matching the original
-    // admin layout.
-    const hasVisibleActions = !adminIdentity.classList.contains('hidden') || !logoutBtn.classList.contains('hidden');
+    // The theme toggle lives alongside logout, which is only shown once
+    // authenticated. When logged out, hide the whole actions cluster (and thus
+    // the toggle) so the masthead stays clean — matching the original admin
+    // layout.
+    const hasVisibleActions = !logoutBtn.classList.contains('hidden');
     adminMasthead.classList.toggle('masthead--no-actions', !hasVisibleActions);
 }
 
@@ -1011,11 +1009,9 @@ async function restoreAdminSession() {
     }
 
     try {
-        const me = await api('/api/admin/me');
+        await api('/api/admin/me');
         loginPanel.classList.add('hidden');
         dashboard.classList.remove('hidden');
-        adminIdentity.textContent = me.email;
-        adminIdentity.classList.remove('hidden');
         logoutBtn.classList.remove('hidden');
         syncAdminMasthead();
         await loadDashboardData();
@@ -1044,8 +1040,6 @@ document.getElementById('loginForm').addEventListener('submit', async (event) =>
         localStorage.setItem(ADMIN_TOKEN_KEY, data.token);
         loginPanel.classList.add('hidden');
         dashboard.classList.remove('hidden');
-        adminIdentity.textContent = data.email;
-        adminIdentity.classList.remove('hidden');
         logoutBtn.classList.remove('hidden');
         syncAdminMasthead();
         await loadDashboardData();
@@ -1088,8 +1082,6 @@ logoutBtn.addEventListener('click', () => {
     localStorage.removeItem(ADMIN_TOKEN_KEY);
     stopFleetAutoRefresh();
     dashboard.classList.add('hidden');
-    adminIdentity.classList.add('hidden');
-    adminIdentity.textContent = '';
     logoutBtn.classList.add('hidden');
     loginPanel.classList.remove('hidden');
     usersTableBody.innerHTML = '';
