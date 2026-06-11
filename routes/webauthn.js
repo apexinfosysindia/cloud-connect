@@ -1,4 +1,3 @@
-const crypto = require('crypto');
 const express = require('express');
 const bcrypt = require('bcryptjs');
 
@@ -9,9 +8,10 @@ const bcrypt = require('bcryptjs');
  * routes/admin.js — this file only handles the authenticated management of
  * passkeys: registering a new one, listing, and removing (password-confirmed).
  *
- * Customer routes are gated by auth.requirePortalUser (req.portalUser);
- * admin routes by auth.requireAdmin (req.admin). Each builds a `principal`
- * that lib/webauthn.js uses to scope credentials + challenges.
+ * Customer routes are gated by auth.requirePortalUser (req.portalUser); admin
+ * routes by auth.requireAdmin + auth.requireAdminSudo (fresh re-auth required
+ * before any admin passkey mutation). Each builds a `principal` that
+ * lib/webauthn.js uses to scope credentials + challenges.
  */
 module.exports = function ({ webauthn, auth, utils }) {
     const router = express.Router();
@@ -29,19 +29,6 @@ module.exports = function ({ webauthn, auth, utils }) {
     function adminPrincipal() {
         const email = process.env.ADMIN_EMAIL;
         return { kind: 'admin', subject: email, adminEmail: email, displayName: email };
-    }
-
-    function verifyAdminPassword(password) {
-        const adminPasswordHash = process.env.ADMIN_PASSWORD_HASH;
-        if (adminPasswordHash) {
-            return bcrypt.compare(password || '', adminPasswordHash);
-        }
-        if (process.env.ADMIN_PASSWORD) {
-            const expected = Buffer.from(process.env.ADMIN_PASSWORD);
-            const received = Buffer.from(password || '');
-            return Promise.resolve(expected.length === received.length && crypto.timingSafeEqual(expected, received));
-        }
-        return Promise.resolve(false);
     }
 
     // ── Customer (Oasis) ───────────────────────────────────────────────────
@@ -112,10 +99,15 @@ module.exports = function ({ webauthn, auth, utils }) {
     );
 
     // ── Admin (Vista) ────────────────────────────────────────────────────────
+    // Every admin passkey route additionally requires a fresh sudo grant
+    // (requireAdminSudo), so a stolen 8h session token alone cannot view or
+    // mutate passkeys — the admin must have re-proven password + passkey on the
+    // security page within the last few minutes.
 
     router.post(
         '/api/admin/passkeys/register/options',
         auth.requireAdmin,
+        auth.requireAdminSudo,
         asyncHandler(async (req, res) => {
             const options = await webauthn.beginRegistration(adminPrincipal());
             res.setHeader('Cache-Control', 'no-store');
@@ -126,6 +118,7 @@ module.exports = function ({ webauthn, auth, utils }) {
     router.post(
         '/api/admin/passkeys/register/verify',
         auth.requireAdmin,
+        auth.requireAdminSudo,
         asyncHandler(async (req, res) => {
             const principal = adminPrincipal();
             const result = await webauthn.finishRegistration(principal, req.body?.response);
@@ -140,6 +133,7 @@ module.exports = function ({ webauthn, auth, utils }) {
     router.get(
         '/api/admin/passkeys',
         auth.requireAdmin,
+        auth.requireAdminSudo,
         asyncHandler(async (req, res) => {
             const creds = await webauthn.listCredentials(adminPrincipal());
             res.setHeader('Cache-Control', 'no-store');
@@ -153,6 +147,7 @@ module.exports = function ({ webauthn, auth, utils }) {
     router.post(
         '/api/admin/passkeys/delete',
         auth.requireAdmin,
+        auth.requireAdminSudo,
         asyncHandler(async (req, res) => {
             const { password, id } = req.body || {};
             const credentialRowId = utils.parsePositiveInt(id);
@@ -162,7 +157,7 @@ module.exports = function ({ webauthn, auth, utils }) {
             if (!password) {
                 return res.status(400).json({ error: 'Your admin password is required to remove a passkey' });
             }
-            const passwordOk = await verifyAdminPassword(password);
+            const passwordOk = await auth.verifyAdminPassword(password);
             if (!passwordOk) {
                 return res.status(401).json({ error: 'Incorrect password' });
             }

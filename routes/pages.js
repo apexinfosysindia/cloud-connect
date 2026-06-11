@@ -55,6 +55,22 @@ module.exports = function ({ config }) {
         return next();
     });
 
+    // Admin security page (passkeys + credentials). Served only on the admin
+    // host; other hosts are redirected to the admin portal. No nav link — admins
+    // reach it by URL — and the page itself requires sudo re-auth before showing
+    // any control.
+    router.get(['/admin-security', '/admin-security.html'], (req, res, next) => {
+        if (req.hostname === config.ADMIN_PORTAL_HOST) {
+            return res.sendFile(path.join(__dirname, '..', 'public', 'admin-security.html'));
+        }
+
+        if (req.hostname === config.CUSTOMER_PORTAL_HOST || req.hostname === config.CLOUD_BASE_DOMAIN) {
+            return res.redirect(`https://${config.ADMIN_PORTAL_HOST}/admin-security`);
+        }
+
+        return next();
+    });
+
     router.get('/index.html', (req, res) => {
         if (req.hostname === config.ADMIN_PORTAL_HOST || req.hostname === config.CUSTOMER_PORTAL_HOST) {
             return res.redirect('/');
