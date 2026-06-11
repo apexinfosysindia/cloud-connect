@@ -147,7 +147,10 @@
 
                     <article id="tokenCard" class="detail-card hidden">
                         <span class="detail-label">Access Token</span>
-                        <code id="dashToken" class="token-value"></code>
+                        <button type="button" id="dashTokenCopy" class="copyable-token" aria-label="Copy access token to clipboard">
+                            <code id="dashToken" class="token-value"></code>
+                            <span class="copyable-token__hint" aria-hidden="true"></span>
+                        </button>
                         <p class="detail-copy">Paste this into the <strong>Access Token</strong> field in your ApexOS add-on.</p>
                     </article>
 

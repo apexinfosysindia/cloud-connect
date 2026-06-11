@@ -1294,6 +1294,71 @@ code {
     word-break: break-all;
 }
 
+/* Click-to-copy access-token container */
+.copyable-token {
+    position: relative;
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+}
+
+.copyable-token .token-value {
+    margin: 0;
+    padding-right: 84px;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.copyable-token:hover .token-value,
+.copyable-token:focus-visible .token-value {
+    border-color: var(--brand);
+    background: var(--surface-tint);
+}
+
+.copyable-token:focus-visible {
+    outline: none;
+}
+
+.copyable-token__hint {
+    position: absolute;
+    top: 50%;
+    right: 12px;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 9px;
+    border-radius: 999px;
+    background: var(--brand);
+    color: #fff;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    pointer-events: none;
+}
+
+.copyable-token.is-copied .token-value {
+    border-color: var(--success);
+}
+
+.copyable-token.is-copied .copyable-token__hint {
+    background: var(--success);
+}
+
+.copyable-token.is-copied .copyable-token__hint::after {
+    content: "Copied!";
+}
+
+.copyable-token:not(.is-copied) .copyable-token__hint::after {
+    content: "Copy";
+}
+
 /* Plan picker */
 .plan-picker {
     display: grid;
@@ -1392,18 +1457,56 @@ code {
 }
 
 .domain-link {
-    display: inline-flex;
+    display: flex;
     align-items: center;
     gap: 8px;
     margin-top: 4px;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--surface);
     font-size: 1rem;
     font-weight: 700;
     text-decoration: none;
     word-break: break-word;
+    transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+
+.domain-link--live,
+.domain-link--setup {
+    cursor: pointer;
 }
 
 .domain-link--live {
     color: var(--brand-dark);
+}
+
+.domain-link--live::after {
+    content: "↗";
+    margin-left: auto;
+    font-size: 1.05rem;
+    opacity: 0.75;
+}
+
+.domain-link--live:hover,
+.domain-link--live:focus-visible,
+.domain-link--setup:hover,
+.domain-link--setup:focus-visible {
+    border-color: var(--brand);
+    background: var(--surface-tint);
+    outline: none;
+}
+
+.domain-link--setup {
+    color: var(--brand-dark);
+}
+
+.domain-link--setup::after {
+    content: "+";
+    margin-left: auto;
+    font-size: 1.15rem;
+    font-weight: 700;
+    opacity: 0.8;
 }
 
 .domain-link--disabled {
@@ -2530,8 +2633,30 @@ code {
 }
 
 :root[data-theme-effective="dark"] .manage-section--danger {
-    border-color: var(--danger-soft);
+    border-color: #b8525a;
     background: var(--danger-soft);
+}
+
+/* Customer dashboard status pills: the base badge uses --surface, which on the
+   coloured gradient status-cards reads as a flat dark blob. Give each state a
+   light chip with dark text + dot so it pops. Scoped to .auth-page so the admin
+   gradient badges are untouched. */
+:root[data-theme-effective="dark"] .auth-page .status-badge--active {
+    background: #d6f5e3;
+    color: #0f5132;
+    border-color: #b6e6c8;
+}
+
+:root[data-theme-effective="dark"] .auth-page .status-badge--pending {
+    background: #f5e9cf;
+    color: #6a4a12;
+    border-color: #e6d2a6;
+}
+
+:root[data-theme-effective="dark"] .auth-page .status-badge--attention {
+    background: #f7d6d9;
+    color: #7a262b;
+    border-color: #eeb6bb;
 }
 
 /* Selected plan tile */

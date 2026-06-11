@@ -115,6 +115,23 @@
         alertBox.className = 'alert';
     }
 
+    async function copyToClipboard(value) {
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            await navigator.clipboard.writeText(value);
+            return;
+        }
+
+        const temp = document.createElement('textarea');
+        temp.value = value;
+        temp.setAttribute('readonly', '');
+        temp.style.position = 'absolute';
+        temp.style.left = '-9999px';
+        document.body.appendChild(temp);
+        temp.select();
+        document.execCommand('copy');
+        document.body.removeChild(temp);
+    }
+
     function restoreButton(button, fallbackText) {
         if (!button) return;
         button.textContent = fallbackText;
@@ -1318,10 +1335,10 @@
         const dashUrlLabel = document.getElementById('dashUrlLabel');
         if (!subdomainConfigured) {
             dashUrlLabel.textContent = 'Cloud Address';
-            dashUrl.textContent = 'Not set';
+            dashUrl.textContent = 'Set your cloud address';
             dashUrl.href = '#';
             dashUrl.removeAttribute('target');
-            dashUrl.className = 'domain-link domain-link--disabled';
+            dashUrl.className = 'domain-link domain-link--setup';
             if (dashUrlHelp) {
                 dashUrlHelp.textContent = 'Set your desired cloud address to continue account activation.';
             }
@@ -1333,7 +1350,7 @@
                 dashUrl.target = '_blank';
                 dashUrl.className = 'domain-link domain-link--live';
                 if (dashUrlHelp) {
-                    dashUrlHelp.textContent = 'Your cloud address is active and ready to use.';
+                    dashUrlHelp.textContent = 'Your cloud address is active and ready to use. Click to open it.';
                 }
             } else {
                 dashUrlLabel.textContent = 'Reserved Cloud Address';
@@ -2438,6 +2455,49 @@
                 showAlert(err.message);
             } finally {
                 restoreButton(saveSubdomainBtn, originalText);
+            }
+        });
+    }
+
+    // Click-to-copy on the access-token container.
+    const dashTokenCopy = document.getElementById('dashTokenCopy');
+    if (dashTokenCopy) {
+        dashTokenCopy.addEventListener('click', async () => {
+            const token = (document.getElementById('dashToken')?.textContent || '').trim();
+            if (!token || token === 'Issued when service is enabled') {
+                return;
+            }
+
+            try {
+                await copyToClipboard(token);
+                dashTokenCopy.classList.add('is-copied');
+                window.clearTimeout(dashTokenCopy.copiedTimer);
+                dashTokenCopy.copiedTimer = window.setTimeout(() => {
+                    dashTokenCopy.classList.remove('is-copied');
+                }, 1800);
+                showAlert('Access token copied to clipboard.', false);
+            } catch (err) {
+                showAlert('Could not copy token. Select and copy it manually.');
+            }
+        });
+    }
+
+    // Clicking the cloud-address tile when not yet configured jumps to the
+    // subdomain setter; the live/reserved states are handled by the anchor
+    // itself (live opens in a new tab, reserved is inert).
+    const dashUrlTile = document.getElementById('dashUrl');
+    if (dashUrlTile) {
+        dashUrlTile.addEventListener('click', (event) => {
+            if (!dashUrlTile.classList.contains('domain-link--setup')) {
+                return;
+            }
+            event.preventDefault();
+            if (subdomainCard) {
+                subdomainCard.classList.remove('hidden');
+                subdomainCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+            if (dashSubdomain) {
+                window.setTimeout(() => dashSubdomain.focus(), 300);
             }
         });
     }
