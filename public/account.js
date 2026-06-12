@@ -1,4 +1,7 @@
 (function accountPortal() {
+    // Build marker — open DevTools console to confirm which JS is actually
+    // running (bump on each deploy that touches this file).
+    console.log('account.js build r4-2026-06-12');
     const pageMode = document.body.dataset.authMode;
     const loginForm = document.getElementById('loginForm');
     const signupForm = document.getElementById('signupForm');
@@ -202,6 +205,14 @@
         stopGoogleEntitiesAutoRefresh();
         googleOAuthRedirectInFlight = false;
         localStorage.removeItem('apex_user');
+        // Re-arm the passkey nudges for the next login in this same tab (a brand
+        // new browser session clears sessionStorage on its own).
+        try {
+            sessionStorage.removeItem('apex_passkey_prompt_dismissed');
+            sessionStorage.removeItem('apex_passkey_interstitial_seen');
+        } catch (_e) {
+            // ignore
+        }
         setHeaderState(null);
 
         try {
@@ -2564,16 +2575,31 @@
     // Dismissal persists in sessionStorage so it survives page reloads (F5)
     // within the same browser session, but clears when the tab/session ends —
     // so the nudge returns on a genuinely new login, not on every refresh.
-    function readPasskeyPromptDismissed() {
+    const PASSKEY_DISMISS_KEY = 'apex_passkey_prompt_dismissed';
+    const PASSKEY_INTERSTITIAL_KEY = 'apex_passkey_interstitial_seen';
+    function readSessionFlag(key) {
         try {
-            return sessionStorage.getItem('apex_passkey_prompt_dismissed') === '1';
+            return sessionStorage.getItem(key) === '1';
         } catch (_e) {
             return false;
         }
     }
-    let passkeyPromptDismissed = readPasskeyPromptDismissed();
-    let passkeyInterstitialSeen = false;
+    function writeSessionFlag(key) {
+        try {
+            sessionStorage.setItem(key, '1');
+        } catch (_e) {
+            // sessionStorage unavailable (private mode etc.) — module var still holds for this page
+        }
+    }
+    let passkeyPromptDismissed = readSessionFlag(PASSKEY_DISMISS_KEY);
+    // Initialize from storage so the interstitial does NOT re-pop on soft refresh.
+    let passkeyInterstitialSeen = readSessionFlag(PASSKEY_INTERSTITIAL_KEY);
     let passkeyBannerShownThisSession = false;
+
+    function markInterstitialSeen() {
+        passkeyInterstitialSeen = true;
+        writeSessionFlag(PASSKEY_INTERSTITIAL_KEY);
+    }
 
     function updatePasskeyPromptBanner(userData) {
         const enrolled = Boolean(userData && userData.passkey_2fa_enabled);
@@ -2582,7 +2608,7 @@
         if (passkeyInterstitial) {
             const showInterstitial = !enrolled && !passkeyInterstitialSeen && !passkeyPromptDismissed;
             if (showInterstitial) {
-                passkeyInterstitialSeen = true;
+                markInterstitialSeen();
                 if (passkeyInterstitialStatus) passkeyInterstitialStatus.textContent = '';
                 passkeyInterstitial.classList.remove('hidden');
             } else if (enrolled) {
@@ -2621,11 +2647,7 @@
     if (passkeyPromptDismiss) {
         passkeyPromptDismiss.addEventListener('click', () => {
             passkeyPromptDismissed = true;
-            try {
-                sessionStorage.setItem('apex_passkey_prompt_dismissed', '1');
-            } catch (_e) {
-                // sessionStorage unavailable (private mode etc.) — module var still holds for this page
-            }
+            writeSessionFlag(PASSKEY_DISMISS_KEY);
             if (passkeyPromptBanner) passkeyPromptBanner.classList.add('hidden');
         });
     }
@@ -2641,6 +2663,7 @@
             }
             const result = await enrollPasskey();
             if (result.ok) {
+                markInterstitialSeen();
                 markPasskeyEnrolledLocally();
                 closeInterstitial();
                 if (passkeyPromptBanner) passkeyPromptBanner.classList.add('hidden');
@@ -2657,9 +2680,11 @@
         });
     }
 
-    // Interstitial "Maybe later": dismiss to the dashboard (banner stays).
+    // Interstitial "Maybe later": dismiss to the dashboard (banner stays). Mark
+    // it seen so it does not re-pop on the next refresh/poll this session.
     if (passkeyInterstitialLater) {
         passkeyInterstitialLater.addEventListener('click', () => {
+            markInterstitialSeen();
             closeInterstitial();
         });
     }

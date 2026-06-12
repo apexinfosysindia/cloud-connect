@@ -194,7 +194,19 @@ app.use('/api/account/delete', authRateLimiter);
 app.use('/api/account/cancel-subscription', authRateLimiter);
 
 // --- Static files ---
-app.use(express.static(path.join(__dirname, 'public'), { index: false }));
+// no-cache = "cache, but always revalidate before use". Express still sends
+// ETag/Last-Modified, so unchanged files return a cheap 304 while a redeployed
+// file is served fresh immediately — no content-hashing/build step needed, and
+// no more stale account.js after a soft refresh. Nothing here is fingerprinted,
+// so this applies uniformly (incl. the vendored webauthn bundle).
+app.use(
+    express.static(path.join(__dirname, 'public'), {
+        index: false,
+        setHeaders: (res) => {
+            res.setHeader('Cache-Control', 'no-cache');
+        }
+    })
+);
 
 // --- Shared deps object for route factories ---
 const deps = {

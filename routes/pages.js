@@ -4,6 +4,14 @@ const express = require('express');
 module.exports = function ({ config }) {
     const router = express.Router();
 
+    // HTML pages are served via res.sendFile (which the express.static
+    // setHeaders does NOT cover), so force revalidation here too — otherwise a
+    // soft refresh can keep serving a stale page shell.
+    router.use((req, res, next) => {
+        res.set('Cache-Control', 'no-cache');
+        next();
+    });
+
     router.get(['/login', '/login.html', '/signup', '/signup.html'], (req, res, next) => {
         const isSignupPath = req.path.startsWith('/signup');
         const targetPath = isSignupPath ? '/signup.html' : '/login.html';
