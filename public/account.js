@@ -1,7 +1,4 @@
 (function accountPortal() {
-    // Build marker — open DevTools console to confirm which JS is actually
-    // running (bump on each deploy that touches this file).
-    console.log('account.js build r4-2026-06-12');
     const pageMode = document.body.dataset.authMode;
     const loginForm = document.getElementById('loginForm');
     const signupForm = document.getElementById('signupForm');
@@ -2445,11 +2442,16 @@
             if (!verifyRes.ok) throw new Error(verifyData.error);
             return { ok: true };
         } catch (err) {
-            const cancelled = /cancel|timed out|not allowed|abort/i.test(err.message || '');
+            // WebAuthn failures are DOMExceptions whose diagnostic is in
+            // err.name (err.message is usually empty). Surface the name so a
+            // failing authenticator (e.g. Dashlane) reports the real cause.
+            const name = (err && err.name) || '';
+            const cancelled = name === 'NotAllowedError' || name === 'AbortError';
+            const detail = name || (err && err.message) || 'Unknown error';
             return {
                 ok: false,
                 cancelled,
-                message: cancelled ? 'Passkey setup was cancelled.' : err.message || 'Could not add passkey.'
+                message: cancelled ? 'Passkey setup was cancelled.' : `Couldn't add passkey (${detail}).`
             };
         }
     }
