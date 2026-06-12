@@ -392,9 +392,13 @@ if (addPasskeyBtn) {
             await loadPasskeys();
         } catch (error) {
             if (error.sudoExpired) return;
-            const msg = /cancel|timed out|not allowed|abort/i.test(error.message || '')
+            // Surface the DOMException name (err.message is usually empty for
+            // WebAuthn failures) so a failing authenticator reports the cause.
+            const name = (error && error.name) || '';
+            const cancelled = name === 'NotAllowedError' || name === 'AbortError';
+            const msg = cancelled
                 ? 'Passkey setup was cancelled.'
-                : normalizeErrorMessage(error, 'Could not add passkey.');
+                : `Couldn't add passkey (${name || normalizeErrorMessage(error, 'Unknown error')}).`;
             setPasskeyStatus(msg, true);
         } finally {
             addPasskeyBtn.disabled = false;
