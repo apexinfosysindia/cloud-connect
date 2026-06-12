@@ -2561,7 +2561,17 @@
     const passkeyInterstitialSetup = document.getElementById('passkeyInterstitialSetup');
     const passkeyInterstitialLater = document.getElementById('passkeyInterstitialLater');
     const passkeyInterstitialStatus = document.getElementById('passkeyInterstitialStatus');
-    let passkeyPromptDismissed = false;
+    // Dismissal persists in sessionStorage so it survives page reloads (F5)
+    // within the same browser session, but clears when the tab/session ends —
+    // so the nudge returns on a genuinely new login, not on every refresh.
+    function readPasskeyPromptDismissed() {
+        try {
+            return sessionStorage.getItem('apex_passkey_prompt_dismissed') === '1';
+        } catch (_e) {
+            return false;
+        }
+    }
+    let passkeyPromptDismissed = readPasskeyPromptDismissed();
     let passkeyInterstitialSeen = false;
     let passkeyBannerShownThisSession = false;
 
@@ -2611,6 +2621,11 @@
     if (passkeyPromptDismiss) {
         passkeyPromptDismiss.addEventListener('click', () => {
             passkeyPromptDismissed = true;
+            try {
+                sessionStorage.setItem('apex_passkey_prompt_dismissed', '1');
+            } catch (_e) {
+                // sessionStorage unavailable (private mode etc.) — module var still holds for this page
+            }
             if (passkeyPromptBanner) passkeyPromptBanner.classList.add('hidden');
         });
     }
