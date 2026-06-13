@@ -2373,8 +2373,14 @@
         const uaData = navigator.userAgentData;
         if (uaData && Array.isArray(uaData.brands)) {
             os = uaData.platform || '';
-            const brand = uaData.brands.find((b) => !/Not.?A.?Brand/i.test(b.brand));
-            browser = brand ? brand.brand : '';
+            // brands lists BOTH "Chromium" and the real brand (e.g. "Google
+            // Chrome", "Brave", "Microsoft Edge"). Prefer the specific brand
+            // over the generic "Chromium" so names read "Chrome", not "Chromium".
+            const real = uaData.brands
+                .map((b) => b.brand)
+                .filter((b) => b && !/Not.?A.?Brand/i.test(b));
+            browser = real.find((b) => !/chromium/i.test(b)) || real[0] || '';
+            browser = browser.replace(/^Google\s+/i, '').replace(/^Microsoft\s+/i, '');
         }
         const ua = navigator.userAgent || '';
         if (!os) {
