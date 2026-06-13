@@ -275,9 +275,17 @@ except Exception:
         area_map='{}'
     fi
 
+    # NOTE: device_info_map and area_map are passed via STDIN (jq -n '[inputs]'),
+    # NOT --argjson. On Linux a single argv string is capped at MAX_ARG_STRLEN
+    # (128 KB, not tunable); on large HA instances the registry map exceeds that
+    # and execve() fails with E2BIG ("Argument list too long"), yielding zero
+    # entities. stdin has no such limit. The three inputs are read in order:
+    # states, device_info, area_map.
     local entities_json='[]'
-    entities_json=$(printf '%s' "$states_json" | jq -c --argjson devinfo "$device_info_map" --argjson areamap "$area_map" '
-            map(select(.entity_id | test("^(switch|light|sensor|fan|cover|lock|climate|media_player|scene|button|vacuum|humidifier|alarm_control_panel|water_heater|binary_sensor|input_boolean|automation|script|camera|group|input_button|input_select|select|valve|lawn_mower|event)\\.")))
+    entities_json=$({ printf '%s\n' "$states_json"; printf '%s\n' "$device_info_map"; printf '%s\n' "$area_map"; } | jq -c -n '
+            [inputs] as $__in | ($__in[0]) as $states | ($__in[1]) as $devinfo | ($__in[2]) as $areamap |
+            $states
+            | map(select(.entity_id | test("^(switch|light|sensor|fan|cover|lock|climate|media_player|scene|button|vacuum|humidifier|alarm_control_panel|water_heater|binary_sensor|input_boolean|automation|script|camera|group|input_button|input_select|select|valve|lawn_mower|event)\\.")))
             | map(select(
                 if (.entity_id | startswith("sensor."))
                 then (
@@ -552,7 +560,9 @@ except Exception:
             break
         fi
 
-        payload=$(jq -n --argjson entities "$chunk" '{entities: $entities, full_snapshot: false}')
+        # $chunk via stdin (not --argjson): a single batch's attributes can cross
+        # the Linux 128 KB MAX_ARG_STRLEN argv cap and fail with E2BIG.
+        payload=$(printf '%s' "$chunk" | jq -c '{entities: ., full_snapshot: false}')
         cloud_post_capture "/api/internal/devices/google-home/entities" "$payload" "$DEVICE_TOKEN"
 
         case "$CLOUD_POST_STATUS" in
@@ -581,7 +591,10 @@ except Exception:
         offset=$((offset + GOOGLE_ENTITY_SYNC_BATCH_SIZE))
     done
 
-    payload=$(jq -n --argjson entities '[]' --argjson snapshot_entity_ids "$all_entity_ids_json" '{entities: $entities, full_snapshot: true, snapshot_entity_ids: $snapshot_entity_ids}')
+    # $all_entity_ids_json via stdin (not --argjson): the id list grows with
+    # entity count and crosses the Linux 128 KB MAX_ARG_STRLEN cap on large
+    # installs (E2BIG). entities is a tiny literal, fine to keep as --argjson.
+    payload=$(printf '%s' "$all_entity_ids_json" | jq -c '{entities: [], full_snapshot: true, snapshot_entity_ids: .}')
     cloud_post_capture "/api/internal/devices/google-home/entities" "$payload" "$DEVICE_TOKEN"
     case "$CLOUD_POST_STATUS" in
         2??)
@@ -707,9 +720,14 @@ sync_alexa_entities() {
         area_map='{}'
     fi
 
+    # See sync_google_entities: maps go via STDIN (jq -n '[inputs]'), not
+    # --argjson, to avoid the Linux 128 KB MAX_ARG_STRLEN cap that produces
+    # "Argument list too long" / zero entities on large HA instances.
     local entities_json='[]'
-    entities_json=$(printf '%s' "$states_json" | jq -c --argjson devinfo "$device_info_map" --argjson areamap "$area_map" '
-            map(select(.entity_id | test("^(light|fan|switch|input_boolean|automation|group|scene|script|button|input_button|lock|cover|valve|sensor|binary_sensor|select|input_select|humidifier|water_heater|climate|vacuum|lawn_mower|media_player|alarm_control_panel|camera|event)\\.")))
+    entities_json=$({ printf '%s\n' "$states_json"; printf '%s\n' "$device_info_map"; printf '%s\n' "$area_map"; } | jq -c -n '
+            [inputs] as $__in | ($__in[0]) as $states | ($__in[1]) as $devinfo | ($__in[2]) as $areamap |
+            $states
+            | map(select(.entity_id | test("^(light|fan|switch|input_boolean|automation|group|scene|script|button|input_button|lock|cover|valve|sensor|binary_sensor|select|input_select|humidifier|water_heater|climate|vacuum|lawn_mower|media_player|alarm_control_panel|camera|event)\\.")))
             | map(select(
                 if (.entity_id | startswith("sensor."))
                 then (((.attributes.device_class // "") | tostring) | test("^(temperature|humidity)$"))
@@ -938,7 +956,9 @@ sync_alexa_entities() {
             break
         fi
 
-        payload=$(jq -n --argjson entities "$chunk" '{entities: $entities, full_snapshot: false}')
+        # $chunk via stdin (not --argjson): a single batch's attributes can cross
+        # the Linux 128 KB MAX_ARG_STRLEN argv cap and fail with E2BIG.
+        payload=$(printf '%s' "$chunk" | jq -c '{entities: ., full_snapshot: false}')
         cloud_post_capture "/api/internal/devices/alexa/endpoints" "$payload" "$DEVICE_TOKEN"
 
         case "$CLOUD_POST_STATUS" in
@@ -966,7 +986,10 @@ sync_alexa_entities() {
         offset=$((offset + ALEXA_ENTITY_SYNC_BATCH_SIZE))
     done
 
-    payload=$(jq -n --argjson entities '[]' --argjson snapshot_entity_ids "$all_entity_ids_json" '{entities: $entities, full_snapshot: true, snapshot_entity_ids: $snapshot_entity_ids}')
+    # $all_entity_ids_json via stdin (not --argjson): the id list grows with
+    # entity count and crosses the Linux 128 KB MAX_ARG_STRLEN cap on large
+    # installs (E2BIG). entities is a tiny literal, fine to keep as --argjson.
+    payload=$(printf '%s' "$all_entity_ids_json" | jq -c '{entities: [], full_snapshot: true, snapshot_entity_ids: .}')
     cloud_post_capture "/api/internal/devices/alexa/endpoints" "$payload" "$DEVICE_TOKEN"
     case "$CLOUD_POST_STATUS" in
         2??)
