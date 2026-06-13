@@ -202,14 +202,19 @@
         stopGoogleEntitiesAutoRefresh();
         googleOAuthRedirectInFlight = false;
         localStorage.removeItem('apex_user');
-        // Re-arm the passkey nudges for the next login in this same tab (a brand
-        // new browser session clears sessionStorage on its own).
+        // Re-arm the passkey nudges for the next login in this same tab. Clear
+        // BOTH the persisted flags and the in-memory latches — login does not
+        // reload the page, so without resetting the latches the banner +
+        // interstitial would stay suppressed after a same-tab logout->login.
         try {
             sessionStorage.removeItem('apex_passkey_prompt_dismissed');
             sessionStorage.removeItem('apex_passkey_interstitial_seen');
         } catch (_e) {
             // ignore
         }
+        passkeyPromptDismissed = false;
+        passkeyInterstitialSeen = false;
+        passkeyBannerShownThisSession = false;
         setHeaderState(null);
 
         try {
@@ -2484,15 +2489,15 @@
     }
 
     // Shared passkey enrollment: register options -> WebAuthn attestation ->
-    // verify. Returns { ok: true } or { ok: false, cancelled, message }. Reused
+    // verify. Returns { ok: true } or { ok: false, isError, message }. Reused
     // by the Manage Account "Add a passkey" button and the welcome interstitial.
     async function enrollPasskey() {
         const token = getStoredToken();
         if (!token) {
-            return { ok: false, message: 'Please log in again to continue.' };
+            return { ok: false, isError: true, message: 'Please log in again to continue.' };
         }
         if (!window.SimpleWebAuthnBrowser) {
-            return { ok: false, message: 'Passkeys are not supported in this browser.' };
+            return { ok: false, isError: true, message: 'Passkeys are not supported in this browser.' };
         }
         try {
             const optRes = await fetch('/api/account/passkeys/register/options', {
@@ -2520,7 +2525,7 @@
             // WebAuthn failures are DOMExceptions whose diagnostic is in
             // err.name (err.message is usually empty). Map to a friendly message.
             const r = describePasskeyError(err);
-            return { ok: false, cancelled: r.cancelled, isError: r.isError, message: r.message };
+            return { ok: false, isError: r.isError, message: r.message };
         }
     }
 
@@ -2633,9 +2638,10 @@
     }
 
     // ── Passkey enrollment prompts ──────────────────────────────────────────
-    // Two nudges for users who haven't enrolled a passkey, shown each login
-    // until they do (dismiss state is per-session — a module variable, no
-    // storage — so it returns next login):
+    // Two nudges for users who haven't enrolled a passkey, shown after login
+    // until they do. Dismiss state persists in sessionStorage (survives reloads
+    // within the session, clears on a new browser session) and is also reset on
+    // an explicit logout so the next same-tab login re-shows them:
     //   1. A full-screen welcome interstitial that can enrol inline.
     //   2. A minimal dismissible dashboard banner (kept as a persistent nudge).
     const passkeyPromptBanner = document.getElementById('passkeyPromptBanner');
@@ -2837,9 +2843,7 @@
                 closeCancelSubModal();
                 showAlert(data.message || 'Subscription cancelled.', false);
                 // Refresh dashboard so the Cancel button hides and status reflects reality.
-                if (typeof loadAccount === 'function') {
-                    try { await loadAccount(); } catch (_e) { /* best-effort */ }
-                }
+                refreshAccountState({ silent: true });
             } catch (err) {
                 if (cancelSubError) cancelSubError.textContent = err.message;
                 if (cancelSubConfirmBtn) {
@@ -3225,9 +3229,14 @@
                     btn.textContent = 'Waiting for passkey...';
                     let assertion;
                     try {
-                        assertion = await window.SimpleWebAuthnBrowser.startAuthentication(data.options);
-                    } catch (_authErr) {
-                        throw new Error('Passkey verification was cancelled. Please try again.');
+                        assertion = await withTimeout(
+                            window.SimpleWebAuthnBrowser.startAuthentication(data.options),
+                            90000
+                        );
+                    } catch (authErr) {
+                        // Surface the real reason (hang/timeout, NotSupported,
+                        // etc.) instead of always claiming "cancelled".
+                        throw new Error(describePasskeyError(authErr).message);
                     }
 
                     const verifyRes = await fetch('/api/auth/login/passkey/verify', {

@@ -234,9 +234,12 @@ if (sudoForm) {
                 sudoSubmitBtn.textContent = 'Waiting for passkey...';
                 let assertion;
                 try {
-                    assertion = await window.SimpleWebAuthnBrowser.startAuthentication(optData.options);
-                } catch (_authErr) {
-                    throw new Error('Passkey verification was cancelled. Please try again.');
+                    assertion = await withTimeout(
+                        window.SimpleWebAuthnBrowser.startAuthentication(optData.options),
+                        90000
+                    );
+                } catch (authErr) {
+                    throw new Error(describePasskeyError(authErr).message);
                 }
                 const verified = await api('/api/admin/sudo/verify', {
                     method: 'POST',
