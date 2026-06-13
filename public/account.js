@@ -2403,12 +2403,78 @@
             transports = [];
         }
         let method = '';
-        if (transports.includes('internal')) method = 'This device';
-        else if (transports.includes('hybrid')) method = 'Phone';
+        // Only append a method when it adds distinguishing info. For an internal
+        // (platform) credential the "<Browser> on <OS>" base already identifies
+        // it — a "This device" suffix would be wrong when the list is later
+        // viewed from a different device, since the name is stored statically.
+        if (transports.includes('hybrid')) method = 'Phone';
         else if (transports.some((t) => ['usb', 'nfc', 'ble'].includes(t))) method = 'Security key';
 
         const where = [browser, os].filter(Boolean).join(' on ');
         return [where || 'Passkey', method].filter(Boolean).join(' · ');
+    }
+
+    // Race a promise against a timeout so a WebAuthn ceremony that never
+    // settles (iOS Safari can absorb a non-Apple authenticator flow, leaving
+    // navigator.credentials.create() hanging forever) can't leave the UI stuck
+    // on "Waiting for passkey...". startRegistration@9 has no abort param, so
+    // this only stops OUR await; a late-settling ceremony is harmless.
+    function withTimeout(promise, ms, name = 'PasskeyTimeoutError') {
+        let t;
+        const timer = new Promise((_resolve, reject) => {
+            t = setTimeout(() => {
+                const e = new Error('Passkey ceremony timed out');
+                e.name = name;
+                reject(e);
+            }, ms);
+        });
+        return Promise.race([promise, timer]).finally(() => clearTimeout(t));
+    }
+
+    // Translate a WebAuthn DOMException into a human message + flags. Note:
+    // InvalidStateError is success-adjacent — it means a passkey ALREADY exists
+    // on this authenticator (the browser refusing a duplicate), so it is shown
+    // as informational (isError:false), not a red failure.
+    function describePasskeyError(err) {
+        const name = (err && err.name) || '';
+        // For DOMExceptions the diagnostic is the name; for a plain Error
+        // (e.g. a server verify error) the message is the meaningful part.
+        const isDomException = typeof DOMException !== 'undefined' && err instanceof DOMException;
+        const detail = isDomException ? name : (err && err.message) || name || 'Unknown error';
+        if (name === 'PasskeyTimeoutError') {
+            return {
+                cancelled: false,
+                isError: true,
+                message:
+                    "Passkey setup didn't complete. On iPhone, try choosing iCloud Keychain instead of a third-party app, or try a different device."
+            };
+        }
+        switch (name) {
+            case 'NotAllowedError':
+            case 'AbortError':
+                return { cancelled: true, isError: false, message: 'Passkey setup was cancelled.' };
+            case 'InvalidStateError':
+                return {
+                    cancelled: false,
+                    isError: false,
+                    message:
+                        'You already have a passkey set up on this device. You can use it to sign in, or remove it first to register a new one.'
+                };
+            case 'NotSupportedError':
+                return {
+                    cancelled: false,
+                    isError: true,
+                    message: "This device or browser doesn't support passkeys."
+                };
+            case 'SecurityError':
+                return {
+                    cancelled: false,
+                    isError: true,
+                    message: "Couldn't add passkey due to a security/origin error."
+                };
+            default:
+                return { cancelled: false, isError: true, message: `Couldn't add passkey (${detail}).` };
+        }
     }
 
     // Shared passkey enrollment: register options -> WebAuthn attestation ->
@@ -2430,7 +2496,10 @@
             const optData = await optRes.json();
             if (!optRes.ok) throw new Error(optData.error);
 
-            const attestation = await window.SimpleWebAuthnBrowser.startRegistration(optData.options);
+            const attestation = await withTimeout(
+                window.SimpleWebAuthnBrowser.startRegistration(optData.options),
+                90000
+            );
 
             const nickname = describePasskeyDevice(attestation);
             const verifyRes = await fetch('/api/account/passkeys/register/verify', {
@@ -2443,16 +2512,9 @@
             return { ok: true };
         } catch (err) {
             // WebAuthn failures are DOMExceptions whose diagnostic is in
-            // err.name (err.message is usually empty). Surface the name so a
-            // failing authenticator (e.g. Dashlane) reports the real cause.
-            const name = (err && err.name) || '';
-            const cancelled = name === 'NotAllowedError' || name === 'AbortError';
-            const detail = name || (err && err.message) || 'Unknown error';
-            return {
-                ok: false,
-                cancelled,
-                message: cancelled ? 'Passkey setup was cancelled.' : `Couldn't add passkey (${detail}).`
-            };
+            // err.name (err.message is usually empty). Map to a friendly message.
+            const r = describePasskeyError(err);
+            return { ok: false, cancelled: r.cancelled, isError: r.isError, message: r.message };
         }
     }
 
@@ -2481,7 +2543,10 @@
                 setPasskeyStatus('Passkey added. Two-factor sign-in is now on.', false);
                 await loadPasskeys();
             } else {
-                setPasskeyStatus(result.message, true);
+                setPasskeyStatus(result.message, result.isError);
+                // Re-render the list so a blocking/existing passkey is visible
+                // (e.g. InvalidStateError = a passkey already exists here).
+                await loadPasskeys();
             }
             addPasskeyBtn.disabled = false;
             addPasskeyBtn.textContent = 'Add a Passkey';
@@ -2674,8 +2739,9 @@
             } else {
                 if (passkeyInterstitialStatus) {
                     passkeyInterstitialStatus.textContent = result.message;
-                    passkeyInterstitialStatus.classList.add('danger-label');
+                    passkeyInterstitialStatus.classList.toggle('danger-label', Boolean(result.isError));
                 }
+                loadPasskeys();
             }
             passkeyInterstitialSetup.disabled = false;
             passkeyInterstitialSetup.textContent = 'Set up passkey';
