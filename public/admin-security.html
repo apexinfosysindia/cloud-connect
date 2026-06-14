@@ -106,6 +106,7 @@
 </div>
 
 <script src="/vendor/simplewebauthn-browser.umd.min.js"></script>
+<script src="/passkey-helpers.js"></script>
 <script>
 const ADMIN_TOKEN_KEY = 'apex_admin_token';
 const alertBox = document.getElementById('alertBox');
@@ -274,111 +275,8 @@ const removePasskeyClose = document.getElementById('removePasskeyModalClose');
 const removePasskeyConfirmBtn = document.getElementById('removePasskeyConfirmBtn');
 let passkeyPendingRemovalId = null;
 
-function formatPasskeyDate(value) {
-    if (!value) return 'just now';
-    const ts = new Date(value.includes('Z') || value.includes('T') ? value : value.replace(' ', 'T') + 'Z');
-    if (Number.isNaN(ts.getTime())) return 'recently';
-    return ts.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-}
-
-// "<Browser> on <OS> · <method>" so multiple admin keys are distinguishable.
-function describePasskeyDevice(attestation) {
-    let os = '';
-    let browser = '';
-    const uaData = navigator.userAgentData;
-    if (uaData && Array.isArray(uaData.brands)) {
-        os = uaData.platform || '';
-        // Prefer the specific brand over the generic "Chromium" that brands also lists.
-        const real = uaData.brands
-            .map((b) => b.brand)
-            .filter((b) => b && !/Not.?A.?Brand/i.test(b));
-        browser = real.find((b) => !/chromium/i.test(b)) || real[0] || '';
-        browser = browser.replace(/^Google\s+/i, '').replace(/^Microsoft\s+/i, '');
-    }
-    const ua = navigator.userAgent || '';
-    if (!os) {
-        if (/Windows/i.test(ua)) os = 'Windows';
-        else if (/iPhone|iPad|iPod/i.test(ua)) os = 'iOS';
-        else if (/Mac/i.test(ua)) os = 'macOS';
-        else if (/Android/i.test(ua)) os = 'Android';
-        else if (/Linux/i.test(ua)) os = 'Linux';
-    }
-    if (!browser) {
-        if (/Edg\//i.test(ua)) browser = 'Edge';
-        else if (/Chrome\//i.test(ua) && !/Edg\//i.test(ua)) browser = 'Chrome';
-        else if (/Firefox\//i.test(ua)) browser = 'Firefox';
-        else if (/Safari\//i.test(ua) && !/Chrome\//i.test(ua)) browser = 'Safari';
-    }
-    let transports = [];
-    try {
-        const fromGetter = attestation && attestation.response && attestation.response.getTransports
-            ? attestation.response.getTransports()
-            : null;
-        transports = Array.isArray(fromGetter)
-            ? fromGetter
-            : (attestation && attestation.response && Array.isArray(attestation.response.transports)
-                ? attestation.response.transports
-                : []);
-    } catch (_e) {
-        transports = [];
-    }
-    let method = '';
-    // Platform (internal) credentials are left unsuffixed — "<Browser> on <OS>"
-    // already identifies them, and a device-relative label would be wrong when
-    // the statically-stored nickname is later viewed from elsewhere.
-    if (transports.includes('hybrid')) method = 'Phone';
-    else if (transports.some((t) => ['usb', 'nfc', 'ble'].includes(t))) method = 'Security key';
-
-    const where = [browser, os].filter(Boolean).join(' on ');
-    return 'Admin · ' + ([where || 'Passkey', method].filter(Boolean).join(' · '));
-}
-
-// Race a promise against a timeout so a hung WebAuthn ceremony (iOS Safari can
-// absorb a non-Apple authenticator flow) can't leave the UI stuck on
-// "Waiting for passkey...". Only stops our await; a late ceremony is harmless.
-function withTimeout(promise, ms, name = 'PasskeyTimeoutError') {
-    let t;
-    const timer = new Promise((_resolve, reject) => {
-        t = setTimeout(() => {
-            const e = new Error('Passkey ceremony timed out');
-            e.name = name;
-            reject(e);
-        }, ms);
-    });
-    return Promise.race([promise, timer]).finally(() => clearTimeout(t));
-}
-
-// Translate a WebAuthn DOMException into a human message + flags.
-// InvalidStateError is informational (a passkey already exists here), not an error.
-function describePasskeyError(err) {
-    const name = (err && err.name) || '';
-    const isDomException = typeof DOMException !== 'undefined' && err instanceof DOMException;
-    const detail = isDomException ? name : (err && err.message) || name || 'Unknown error';
-    if (name === 'PasskeyTimeoutError') {
-        return {
-            isError: true,
-            message:
-                "Passkey setup didn't complete. On iPhone, try choosing iCloud Keychain instead of a third-party app, or try a different device."
-        };
-    }
-    switch (name) {
-        case 'NotAllowedError':
-        case 'AbortError':
-            return { isError: false, message: 'Passkey setup was cancelled.' };
-        case 'InvalidStateError':
-            return {
-                isError: false,
-                message:
-                    'You already have a passkey set up on this device. You can use it to sign in, or remove it first to register a new one.'
-            };
-        case 'NotSupportedError':
-            return { isError: true, message: "This device or browser doesn't support passkeys." };
-        case 'SecurityError':
-            return { isError: true, message: "Couldn't add passkey due to a security/origin error." };
-        default:
-            return { isError: true, message: `Couldn't add passkey (${detail}).` };
-    }
-}
+// Shared passkey UI helpers (one copy in /passkey-helpers.js, loaded first).
+const { withTimeout, describePasskeyError, describePasskeyDevice, formatPasskeyDate } = window.PasskeyHelpers;
 
 function setPasskeyStatus(message, isError) {
     if (!passkeyStatus) return;
@@ -447,7 +345,7 @@ if (addPasskeyBtn) {
                 window.SimpleWebAuthnBrowser.startRegistration(optData.options),
                 90000
             );
-            const nickname = describePasskeyDevice(attestation);
+            const nickname = 'Admin · ' + describePasskeyDevice(attestation);
             await api('/api/admin/passkeys/register/verify', {
                 method: 'POST',
                 body: { response: attestation, nickname }
