@@ -14,7 +14,7 @@ test('resolves known consumer providers to their exact names', () => {
         '531126d6-e717-415c-9320-3d9aa6981239': 'Dashlane',
         'd548826e-79b4-db40-a3d8-11116f7e8349': 'Bitwarden',
         '53414d53-554e-4700-0000-000000000000': 'Samsung Pass',
-        'b5397666-4885-aa6b-cebf-e52262a439a2': 'Chromium Browser'
+        'b5397666-4885-aa6b-cebf-e52262a439a2': 'Chromium'
     };
     for (const [aaguid, name] of Object.entries(cases)) {
         assert.equal(providerNameForAaguid(aaguid), name, `${aaguid} should resolve to ${name}`);

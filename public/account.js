@@ -2419,10 +2419,10 @@
             transports = [];
         }
         let method = '';
-        // Only append a method when it adds distinguishing info. For an internal
-        // (platform) credential the "<Browser> on <OS>" base already identifies
-        // it — a "This device" suffix would be wrong when the list is later
-        // viewed from a different device, since the name is stored statically.
+        // Append a method only when it adds distinguishing info. Platform
+        // (internal) credentials are left unsuffixed — "<Browser> on <OS>"
+        // already identifies them, and the nickname is stored statically so a
+        // device-relative label would be wrong when viewed from elsewhere.
         if (transports.includes('hybrid')) method = 'Phone';
         else if (transports.some((t) => ['usb', 'nfc', 'ble'].includes(t))) method = 'Security key';
 
@@ -2459,7 +2459,6 @@
         const detail = isDomException ? name : (err && err.message) || name || 'Unknown error';
         if (name === 'PasskeyTimeoutError') {
             return {
-                cancelled: false,
                 isError: true,
                 message:
                     "Passkey setup didn't complete. On iPhone, try choosing iCloud Keychain instead of a third-party app, or try a different device."
@@ -2468,28 +2467,19 @@
         switch (name) {
             case 'NotAllowedError':
             case 'AbortError':
-                return { cancelled: true, isError: false, message: 'Passkey setup was cancelled.' };
+                return { isError: false, message: 'Passkey setup was cancelled.' };
             case 'InvalidStateError':
                 return {
-                    cancelled: false,
                     isError: false,
                     message:
                         'You already have a passkey set up on this device. You can use it to sign in, or remove it first to register a new one.'
                 };
             case 'NotSupportedError':
-                return {
-                    cancelled: false,
-                    isError: true,
-                    message: "This device or browser doesn't support passkeys."
-                };
+                return { isError: true, message: "This device or browser doesn't support passkeys." };
             case 'SecurityError':
-                return {
-                    cancelled: false,
-                    isError: true,
-                    message: "Couldn't add passkey due to a security/origin error."
-                };
+                return { isError: true, message: "Couldn't add passkey due to a security/origin error." };
             default:
-                return { cancelled: false, isError: true, message: `Couldn't add passkey (${detail}).` };
+                return { isError: true, message: `Couldn't add passkey (${detail}).` };
         }
     }
 
