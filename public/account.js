@@ -2323,11 +2323,16 @@
             info.className = 'passkey-item__info';
             const name = document.createElement('span');
             name.className = 'passkey-item__name';
-            name.textContent = pk.nickname || 'Passkey';
+            // Prefer the provider name resolved server-side from the AAGUID
+            // (e.g. "1Password"); fall back to the device nickname or "Passkey".
+            name.textContent = pk.display_name || pk.nickname || 'Passkey';
             const meta = document.createElement('span');
             meta.className = 'passkey-item__meta';
+            // Show the device/method nickname as secondary context, but only
+            // when it adds info beyond the (provider) name already shown.
+            const detail = pk.nickname && pk.nickname !== name.textContent ? pk.nickname + ' · ' : '';
             meta.textContent =
-                'Added ' + formatPasskeyDate(pk.created_at) +
+                detail + 'Added ' + formatPasskeyDate(pk.created_at) +
                 (pk.last_used_at ? ' · Last used ' + formatPasskeyDate(pk.last_used_at) : '');
             info.appendChild(name);
             info.appendChild(meta);

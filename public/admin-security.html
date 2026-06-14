@@ -397,11 +397,16 @@ function renderPasskeys(passkeys) {
     passkeys.forEach((pk) => {
         const item = document.createElement('div');
         item.className = 'passkey-item';
+        // Primary label: provider name resolved from AAGUID (e.g. "1Password");
+        // fall back to the device nickname. Show the device/method nickname as
+        // secondary context only when it adds info beyond the name shown.
+        const displayName = pk.display_name || pk.nickname || 'Passkey';
+        const detail = pk.nickname && pk.nickname !== displayName ? escapeHtml(pk.nickname) + ' &middot; ' : '';
         const meta = pk.last_used_at ? ' &middot; Last used ' + escapeHtml(formatPasskeyDate(pk.last_used_at)) : '';
         item.innerHTML =
             '<div class="passkey-item__info">' +
-            '<span class="passkey-item__name">' + escapeHtml(pk.nickname || 'Passkey') + '</span>' +
-            '<span class="passkey-item__meta">Added ' + escapeHtml(formatPasskeyDate(pk.created_at)) + meta + '</span>' +
+            '<span class="passkey-item__name">' + escapeHtml(displayName) + '</span>' +
+            '<span class="passkey-item__meta">' + detail + 'Added ' + escapeHtml(formatPasskeyDate(pk.created_at)) + meta + '</span>' +
             '</div>';
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
