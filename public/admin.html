@@ -206,6 +206,7 @@
 </div>
 
 <script src="/vendor/simplewebauthn-browser.umd.min.js"></script>
+<script src="/passkey-helpers.js"></script>
 <script>
 const alertBox = document.getElementById('alertBox');
 const loginPanel = document.getElementById('loginPanel');
@@ -327,33 +328,8 @@ function normalizeErrorMessage(error, fallback) {
     return fallback;
 }
 
-// Race a promise against a timeout so a WebAuthn ceremony that never settles
-// (some authenticators hang on iOS Safari) can't leave the admin login stuck
-// on "Waiting for passkey...". Only stops our await; a late ceremony is harmless.
-function withTimeout(promise, ms) {
-    let t;
-    const timer = new Promise((_resolve, reject) => {
-        t = setTimeout(() => {
-            const e = new Error('Passkey timed out');
-            e.name = 'PasskeyTimeoutError';
-            reject(e);
-        }, ms);
-    });
-    return Promise.race([promise, timer]).finally(() => clearTimeout(t));
-}
-
-// Map a WebAuthn assertion DOMException to a human message (err.message is
-// usually empty for these; the diagnostic is err.name).
-function describePasskeyAuthError(err) {
-    const name = (err && err.name) || '';
-    if (name === 'NotAllowedError' || name === 'AbortError') {
-        return 'Passkey verification was cancelled. Please try again.';
-    }
-    if (name === 'PasskeyTimeoutError') {
-        return "Passkey verification didn't complete. Please try again or use a different device.";
-    }
-    return 'Passkey verification failed (' + (name || 'Unknown error') + '). Please try again.';
-}
+// Shared passkey UI helpers (one copy in /passkey-helpers.js, loaded first).
+const { withTimeout, describePasskeyError } = window.PasskeyHelpers;
 
 async function api(path, options = {}) {
     const token = getAdminToken();
@@ -1000,7 +976,7 @@ document.getElementById('loginForm').addEventListener('submit', async (event) =>
                     90000
                 );
             } catch (authErr) {
-                throw new Error(describePasskeyAuthError(authErr));
+                throw new Error(describePasskeyError(authErr).message);
             }
             const verified = await api('/api/admin/login/passkey/verify', {
                 method: 'POST',
