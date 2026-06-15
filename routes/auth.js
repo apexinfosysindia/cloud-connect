@@ -540,6 +540,9 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, w
             const portalSessionToken = auth.createPortalSessionToken(updatedUser.email, updatedUser.session_epoch);
             auth.setPortalSessionCookie(res, portalSessionToken);
 
+            // Security notification (best-effort; never blocks the response).
+            email.sendSessionsRevokedEmail(user.email).catch(() => {});
+
             return res.status(200).json({
                 message: 'All devices have been logged out. It can take up to an hour before all sessions are fully terminated.',
                 data: auth.serializeUserWithPortalSession(updatedUser, portalSessionToken)
