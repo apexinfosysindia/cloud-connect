@@ -344,6 +344,9 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, w
             // Also verify the email if not already verified (they proved ownership)
             await email.markUserEmailVerified(record.user_id);
 
+            // Security notification (best-effort; never blocks the response).
+            email.sendPasswordChangedEmail(record.email).catch(() => {});
+
             return res.status(200).json({
                 message: 'Password has been reset successfully. You can now sign in with your new password.'
             });
@@ -589,6 +592,9 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, w
             const hashedPassword = await bcrypt.hash(new_password, 10);
             await dbRun(`UPDATE users SET password = ? WHERE id = ?`, [hashedPassword, user.id]);
 
+            // Security notification (best-effort; never blocks the response).
+            email.sendPasswordChangedEmail(user.email).catch(() => {});
+
             return res.status(200).json({
                 message: 'Password changed successfully.'
             });
@@ -629,10 +635,15 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, w
                 return res.status(401).json({ error: 'Incorrect password. Account was not deleted.' });
             }
 
+            const deletedEmail = user.email;
             const deleted = await billing.deleteUserAccount(user.id);
             if (!deleted) {
                 return res.status(500).json({ error: 'Unable to delete account. Please try again.' });
             }
+
+            // Security notification (best-effort) using the pre-captured address;
+            // the user row is gone now.
+            email.sendAccountDeletedEmail(deletedEmail).catch(() => {});
 
             auth.clearPortalSessionCookie(res);
             return res.status(200).json({ message: 'Your account has been permanently deleted.' });
