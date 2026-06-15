@@ -13,7 +13,7 @@ const bcrypt = require('bcryptjs');
  * before any admin passkey mutation). Each builds a `principal` that
  * lib/webauthn.js uses to scope credentials + challenges.
  */
-module.exports = function ({ webauthn, auth, utils }) {
+module.exports = function ({ webauthn, auth, utils, email }) {
     const router = express.Router();
     const { asyncHandler } = utils;
 
@@ -55,6 +55,11 @@ module.exports = function ({ webauthn, auth, utils }) {
             }
             await webauthn.insertCredential(principal, result.credential, req.body?.nickname);
             await webauthn.setCustomerPasskeyEnabled(req.portalUser.id, true);
+            // Security notification (best-effort; never blocks the response).
+            email.sendPasskeyAddedEmail(req.portalUser.email, {
+                nickname: req.body?.nickname,
+                when: new Date()
+            }).catch(() => {});
             res.status(201).json({ message: 'Passkey registered' });
         })
     );
@@ -95,6 +100,9 @@ module.exports = function ({ webauthn, auth, utils }) {
             if (remaining === 0) {
                 await webauthn.setCustomerPasskeyEnabled(req.portalUser.id, false);
             }
+            // Security notification (best-effort). The delete path doesn't have
+            // the credential nickname in scope, so the email uses generic wording.
+            email.sendPasskeyRemovedEmail(req.portalUser.email, { when: new Date() }).catch(() => {});
             res.status(200).json({ message: 'Passkey removed', remaining });
         })
     );
