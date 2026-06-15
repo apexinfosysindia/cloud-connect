@@ -95,7 +95,6 @@
                         <h2 class="section-title section-title--small">Customer accounts</h2>
                         <p class="section-text">Review the current state and apply the next service action as needed.</p>
                     </div>
-                    <button id="refreshBtn" class="button button-secondary">Refresh</button>
                 </div>
 
                 <div id="usersTableBody" class="user-list"></div>
@@ -145,6 +144,8 @@
                     <a href="/admin-security" class="button button-secondary">Manage Passkeys</a>
                 </div>
             </section>
+
+            <button id="logoutBtnMobile" type="button" class="button button-secondary mobile-only-nav">Log Out</button>
         </section>
     </main>
 </div>
@@ -214,7 +215,6 @@ const dashboard = document.getElementById('dashboard');
 const logoutBtn = document.getElementById('logoutBtn');
 const adminMasthead = document.querySelector('.masthead--admin');
 const usersTableBody = document.getElementById('usersTableBody');
-const refreshBtn = document.getElementById('refreshBtn');
 const tokenModal = document.getElementById('tokenModal');
 const tokenModalClose = document.getElementById('tokenModalClose');
 const tokenModalValue = document.getElementById('tokenModalValue');
@@ -279,9 +279,11 @@ document.addEventListener('keydown', (event) => {
 const loginBtn = document.getElementById('loginBtn');
 const ADMIN_TOKEN_KEY = 'apex_admin_token';
 const FLEET_REFRESH_MS = 15000;
+const USERS_REFRESH_MS = 30000;
 
 let fleetDevices = [];
 let fleetRefreshTimer = null;
+let usersRefreshTimer = null;
 let fleetHeartbeatWindowSeconds = 45;
 
 function syncAdminMasthead() {
@@ -922,6 +924,29 @@ function stopFleetAutoRefresh() {
     }
 }
 
+// Customer accounts list has no manual refresh button — keep it current with a
+// silent background poll (replaces the old "Refresh" button).
+function startUsersAutoRefresh() {
+    stopUsersAutoRefresh();
+    usersRefreshTimer = window.setInterval(async () => {
+        if (dashboard.classList.contains('hidden')) {
+            return;
+        }
+        try {
+            await loadUsers();
+        } catch (error) {
+            // Silent refresh failures should not interrupt active workflows.
+        }
+    }, USERS_REFRESH_MS);
+}
+
+function stopUsersAutoRefresh() {
+    if (usersRefreshTimer) {
+        window.clearInterval(usersRefreshTimer);
+        usersRefreshTimer = null;
+    }
+}
+
 async function loadDashboardData() {
     await loadUsers();
     await loadFleet();
@@ -941,6 +966,7 @@ async function restoreAdminSession() {
         syncAdminMasthead();
         await loadDashboardData();
         startFleetAutoRefresh();
+        startUsersAutoRefresh();
     } catch (error) {
         localStorage.removeItem(ADMIN_TOKEN_KEY);
         syncAdminMasthead();
@@ -993,21 +1019,13 @@ document.getElementById('loginForm').addEventListener('submit', async (event) =>
         syncAdminMasthead();
         await loadDashboardData();
         startFleetAutoRefresh();
+        startUsersAutoRefresh();
         showAlert('Admin login successful.', false);
     } catch (error) {
         showAlert(normalizeErrorMessage(error, 'Unable to sign in'));
     } finally {
         loginBtn.disabled = false;
         loginBtn.textContent = 'Sign In';
-    }
-});
-
-refreshBtn.addEventListener('click', async () => {
-    try {
-        await loadUsers();
-        hideAlert();
-    } catch (error) {
-        showAlert(normalizeErrorMessage(error, 'Unable to refresh user list'));
     }
 });
 
@@ -1027,9 +1045,10 @@ refreshFleetBtn.addEventListener('click', async () => {
     }
 });
 
-logoutBtn.addEventListener('click', () => {
+function doLogout() {
     localStorage.removeItem(ADMIN_TOKEN_KEY);
     stopFleetAutoRefresh();
+    stopUsersAutoRefresh();
     dashboard.classList.add('hidden');
     logoutBtn.classList.add('hidden');
     loginPanel.classList.remove('hidden');
@@ -1040,7 +1059,13 @@ logoutBtn.addEventListener('click', () => {
     closeFleetLogsModal();
     syncAdminMasthead();
     hideAlert();
-});
+}
+
+logoutBtn.addEventListener('click', doLogout);
+const logoutBtnMobile = document.getElementById('logoutBtnMobile');
+if (logoutBtnMobile) {
+    logoutBtnMobile.addEventListener('click', doLogout);
+}
 
 tokenModalClose.addEventListener('click', closeTokenModal);
 tokenModal.addEventListener('click', (event) => {
@@ -1169,7 +1194,10 @@ fleetList.addEventListener('keydown', (event) => {
     toggle.setAttribute('aria-expanded', card.classList.contains('is-expanded') ? 'true' : 'false');
 });
 
-window.addEventListener('beforeunload', stopFleetAutoRefresh);
+window.addEventListener('beforeunload', () => {
+    stopFleetAutoRefresh();
+    stopUsersAutoRefresh();
+});
 
 syncAdminMasthead();
 restoreAdminSession();

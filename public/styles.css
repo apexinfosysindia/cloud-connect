@@ -1274,9 +1274,10 @@ code {
     flex-shrink: 0;
 }
 
-/* On phones, stack the passkey card so the name, meta line, and a full-width
-   Remove button are all visible and tappable (was clipping to button-only). */
-@media (max-width: 560px) {
+/* Stack the passkey card (name, meta line, full-width Remove button all
+   visible and tappable) on phones AND smaller tablets — up to 720px, since the
+   row layout squeezes the info column to nothing in the 561-720 range. */
+@media (max-width: 720px) {
     .passkey-item {
         flex-direction: column;
         align-items: stretch;
@@ -2313,6 +2314,27 @@ code {
         -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4'/%3E%3Cpolyline points='10 17 15 12 10 7'/%3E%3Cline x1='15' y1='12' x2='3' y2='12'/%3E%3C/svg%3E");
         mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4'/%3E%3Cpolyline points='10 17 15 12 10 7'/%3E%3Cline x1='15' y1='12' x2='3' y2='12'/%3E%3C/svg%3E");
     }
+
+    /* Vista (admin) phones + tablets: hide the masthead action cluster (theme
+       toggle, Log Out / Dashboard) and surface in-body nav buttons at the
+       bottom of the page instead, so there is exactly one nav set per size.
+       Oasis keeps its existing 461-820 icon buttons (this is scoped to admin). */
+    .masthead--admin .masthead-actions {
+        display: none;
+    }
+
+    /* .admin-page scope raises specificity above the base `.mobile-only-nav
+       { display:none }` rule below, so this wins regardless of source order. */
+    .admin-page .mobile-only-nav {
+        display: block;
+        width: 100%;
+    }
+}
+
+/* Bottom-of-page nav buttons (Vista): hidden on desktop, shown at <=820px by
+   the rule above. */
+.mobile-only-nav {
+    display: none;
 }
 
 @media (max-width: 460px) {
@@ -2351,10 +2373,32 @@ code {
     }
 
     .section-header,
-    .user-card__top,
-    .modal__header {
+    .user-card__top {
         flex-direction: column;
         align-items: flex-start;
+    }
+
+    /* Modal layout on small screens: dissolve the header (display:contents) so
+       its children become direct flex items of the panel, letting us order the
+       Cancel button AFTER the form's primary action instead of stacking it
+       between the title and the password field. */
+    .modal__panel {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .modal__header {
+        display: contents;
+    }
+
+    .modal__header > div {
+        order: -1;
+    }
+
+    .modal__header > button {
+        order: 100;
+        align-self: stretch;
     }
 
     .status-meta {
