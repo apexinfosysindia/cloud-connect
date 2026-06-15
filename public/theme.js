@@ -86,6 +86,16 @@
         renderToggle(choice);
     }
 
+    // Keep the footer copyright year current without a build step: each footer
+    // ships a static fallback year inside <span class="footer-year"> and this
+    // overwrites it with the actual current year on load.
+    function updateFooterYear() {
+        const year = String(new Date().getFullYear());
+        document.querySelectorAll('.footer-year').forEach((el) => {
+            el.textContent = year;
+        });
+    }
+
     function cycle() {
         const current = readChoice();
         const nextIndex = (ORDER.indexOf(current) + 1) % ORDER.length;
@@ -98,6 +108,7 @@
         // this file self-sufficient if the inline snippet is ever removed).
         applyChoice(choice);
         renderToggle(choice);
+        updateFooterYear();
 
         document.querySelectorAll('.theme-toggle').forEach((btn) => {
             btn.addEventListener('click', cycle);
