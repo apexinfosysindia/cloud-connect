@@ -177,7 +177,26 @@ const emailRateLimiter = rateLimit({
 });
 
 app.use('/api/', generalApiRateLimiter);
-app.use('/api/auth/login', authRateLimiter);
+// Identifier-first login is multi-step, and the steps are NOT equal:
+//   • lookup + passkey/begin check no secret — they reveal an email's existence
+//     (an accepted enumeration trade-off) and issue a public WebAuthn challenge.
+//     They run on EVERY login attempt, and on shared/NAT'd IPs many distinct
+//     users hit them, so they must stay on the generous general-API bucket
+//     above. Holding them under the strict per-IP cap caused false "Too many
+//     attempts" lockouts (a single passkey login alone spends lookup + begin +
+//     verify = 3 of 10).
+//   • password, otp/verify, passkey/verify each verify a secret (password, code,
+//     assertion) and ARE the brute-force surface → strict bucket.
+// app.use('/api/auth/login', …) prefix-matches every sub-route; inside the
+// handler req.path is relative to that mount, so we let the two non-secret steps
+// fall through (general-API limiter only) and apply the strict limiter to
+// everything else — including the legacy bare POST /api/auth/login (req.path '/').
+app.use('/api/auth/login', (req, res, next) => {
+    if (req.path === '/lookup' || req.path === '/passkey/begin') {
+        return next();
+    }
+    return authRateLimiter(req, res, next);
+});
 app.use('/api/admin/login', authRateLimiter);
 app.use('/api/auth/signup', signupRateLimiter);
 app.use('/api/auth/forgot-password', emailRateLimiter);

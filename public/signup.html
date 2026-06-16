@@ -90,7 +90,7 @@
                 <div id="passkeyPromptBanner" class="passkey-prompt-banner hidden" role="status">
                     <div class="passkey-prompt-banner__text">
                         <span class="passkey-prompt-banner__title">Secure your account with a passkey</span>
-                        <span class="passkey-prompt-banner__desc">Add Face ID, Touch ID, or a security key for stronger two-factor sign-in.</span>
+                        <span class="passkey-prompt-banner__desc">Add Face ID, Touch ID, or a security key to sign in without a password.</span>
                     </div>
                     <div class="passkey-prompt-banner__actions">
                         <button type="button" id="passkeyPromptAddBtn" class="button button-primary button-small">Add a passkey</button>
@@ -212,8 +212,8 @@
                     </section>
 
                     <section class="manage-section" id="passkeySection">
-                        <span class="detail-label">Two-Factor Security &middot; Passkeys</span>
-                        <p class="detail-copy">Add a passkey (Face ID, Touch ID, Windows Hello or a security key) for two-factor sign-in. Once you add one, signing in will require your password <strong>and</strong> a passkey. If you ever lose your device, resetting your password by email removes your passkeys so you are never locked out.</p>
+                        <span class="detail-label">Passwordless Sign-in &middot; Passkeys</span>
+                        <p class="detail-copy">Add a passkey (Face ID, Touch ID, Windows Hello or a security key) to sign in without typing a password. Once you add one, you can sign in with just your passkey. Your password stays as a backup &mdash; if you ever lose your passkey device, you can still sign in with your password plus a one-time code we email you.</p>
                         <div id="passkeyList" class="passkey-list"></div>
                         <p id="passkeyStatus" class="detail-copy manage-msg"></p>
                         <button id="addPasskeyBtn" type="button" class="button button-primary button-full">Add a Passkey</button>
@@ -288,7 +288,7 @@
         <div class="modal__header">
             <div>
                 <h2 id="removePasskeyModalTitle" class="section-title section-title--small danger-label">Remove Passkey</h2>
-                <p class="section-text">Enter your password to remove this passkey. If it is your last passkey, two-factor sign-in will be turned off.</p>
+                <p class="section-text">Enter your password to remove this passkey. If it is your last passkey, you will sign in with your password again.</p>
             </div>
             <button id="removePasskeyModalClose" class="button button-secondary button-small" data-close-remove-passkey-modal="true">Cancel</button>
         </div>
@@ -310,7 +310,7 @@
             </svg>
         </div>
         <h2 id="passkeyInterstitialTitle" class="passkey-interstitial__title">Secure your account with a passkey</h2>
-        <p class="passkey-interstitial__desc">Use Face ID, Touch ID, Windows Hello, a password manager, or a security key to sign in faster and protect your account with two-factor security. You can set it up right now in a couple of seconds.</p>
+        <p class="passkey-interstitial__desc">Use Face ID, Touch ID, Windows Hello, a password manager, or a security key to sign in without a password. It is faster and more secure, and you can set it up right now in a couple of seconds.</p>
         <p id="passkeyInterstitialStatus" class="passkey-interstitial__status" style="min-height:1.2em"></p>
         <div class="passkey-interstitial__actions">
             <button type="button" id="passkeyInterstitialSetup" class="button button-primary button-full">Set up passkey</button>
