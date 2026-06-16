@@ -9,7 +9,6 @@
     const headerSubtitle = document.getElementById('headerSubtitle');
     const accountTitle = document.getElementById('accountTitle');
     const alertBox = document.getElementById('alertBox');
-    const accountShell = document.getElementById('account-shell');
     const logoutBtn = document.getElementById('logoutBtn');
     const headerLogoutBtn = document.getElementById('headerLogoutBtn');
     const guestNavActions = document.getElementById('guestNavActions');
@@ -94,10 +93,6 @@
         } catch (_error) {
             // ignore sessionStorage failures
         }
-    }
-
-    function scrollToAccountShell() {
-        accountShell.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     function showAlert(message, isError = true) {
@@ -311,7 +306,6 @@
         accountTitle.textContent = 'Sign in to your Cloud account';
         headerSubtitle.textContent = 'Manage access, billing and your cloud address from one place.';
         hideAlert();
-        scrollToAccountShell();
 
         if (isGoogleOauthLinkingIntent() && !googleOAuthConsentMode) {
             window.setTimeout(() => {
@@ -338,7 +332,6 @@
         accountTitle.textContent = 'Create your Cloud account';
         headerSubtitle.textContent = 'Create your account, reserve your cloud address and complete billing.';
         hideAlert();
-        scrollToAccountShell();
 
         if (isGoogleOauthLinkingIntent() && !googleOAuthConsentMode) {
             window.setTimeout(() => {
@@ -1289,7 +1282,6 @@
             return;
         }
         accountRenderFingerprint = buildAccountRenderFingerprint(userData);
-        const shouldScroll = options.scroll !== false;
         if (loginForm) loginForm.classList.add('hidden');
         if (signupForm) signupForm.classList.add('hidden');
         if (forgotPasswordForm) forgotPasswordForm.classList.add('hidden');
@@ -1471,14 +1463,7 @@
 
         const consentHandled = handleGoogleConsentFlow(userData);
         if (consentHandled) {
-            if (shouldScroll) {
-                scrollToAccountShell();
-            }
             return;
-        }
-
-        if (shouldScroll) {
-            scrollToAccountShell();
         }
 
         startAccountAutoRefresh();
@@ -2109,13 +2094,13 @@
         manageAccountView.classList.remove('hidden');
         loadPasskeys();
 
-        // Scroll to a specific section when requested (e.g. the passkey nudge
-        // jumps straight to "Add a passkey"), otherwise to the top of the view.
-        const scrollTarget =
-            options.scrollTo === 'passkey'
-                ? document.getElementById('passkeySection') || manageAccountView
-                : manageAccountView;
-        scrollTarget.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // Scroll only when explicitly jumping to a section (e.g. the passkey
+        // nudge jumps straight to "Add a passkey"). Opening Manage Account
+        // normally does NOT auto-scroll — the view already starts at the top.
+        if (options.scrollTo === 'passkey') {
+            const passkeyTarget = document.getElementById('passkeySection') || manageAccountView;
+            passkeyTarget.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
     }
 
     function hideManageView() {
