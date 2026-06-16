@@ -2324,9 +2324,12 @@ code {
     }
 
     /* .admin-page scope raises specificity above the base `.mobile-only-nav
-       { display:none }` rule below, so this wins regardless of source order. */
+       { display:none }` rule below, so this wins regardless of source order.
+       Use flex (NOT block) so the element keeps `.button`'s inline-flex
+       centering — `display:block` clobbered align/justify-center and left the
+       label squished against the top edge instead of centered in the button. */
     .admin-page .mobile-only-nav {
-        display: block;
+        display: flex;
         width: 100%;
     }
 }

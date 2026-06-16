@@ -2094,12 +2094,18 @@
         manageAccountView.classList.remove('hidden');
         loadPasskeys();
 
-        // Scroll only when explicitly jumping to a section (e.g. the passkey
-        // nudge jumps straight to "Add a passkey"). Opening Manage Account
-        // normally does NOT auto-scroll — the view already starts at the top.
+        // Opening Manage Account should start at the very top of the page —
+        // otherwise, on small screens where you'd scrolled the dashboard down,
+        // the swapped-in view inherits that scroll and lands mid-page. We use
+        // window.scrollTo(top:0) rather than scrollIntoView so this can ONLY
+        // scroll up to the top, never down (that downward yank is exactly the
+        // on-load auto-scroll we removed elsewhere). The passkey nudge still
+        // overrides this to jump straight to the passkey section.
         if (options.scrollTo === 'passkey') {
             const passkeyTarget = document.getElementById('passkeySection') || manageAccountView;
             passkeyTarget.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
         }
     }
 

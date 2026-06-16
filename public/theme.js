@@ -57,10 +57,28 @@
         return prefersDark() ? 'dark' : 'light';
     }
 
+    // The phone status-bar / address-bar tint. Mobile browsers read
+    // <meta name="theme-color"> to color that chrome; we keep it in sync with
+    // the resolved theme so the bar matches the page background (it blends into
+    // the top of the page) instead of defaulting to black. Values mirror the
+    // body's top gradient stop: light #f8fafc, dark --bg-soft #121c2e.
+    const THEME_COLORS = { light: '#f8fafc', dark: '#121c2e' };
+    function applyThemeColorMeta(effective) {
+        let meta = document.querySelector('meta[name="theme-color"]');
+        if (!meta) {
+            meta = document.createElement('meta');
+            meta.setAttribute('name', 'theme-color');
+            document.head.appendChild(meta);
+        }
+        meta.setAttribute('content', THEME_COLORS[effective] || THEME_COLORS.light);
+    }
+
     function applyChoice(choice) {
         const root = document.documentElement;
+        const effective = resolveEffective(choice);
         root.setAttribute('data-theme', choice);
-        root.setAttribute('data-theme-effective', resolveEffective(choice));
+        root.setAttribute('data-theme-effective', effective);
+        applyThemeColorMeta(effective);
     }
 
     function renderToggle(choice) {
