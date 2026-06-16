@@ -5,6 +5,45 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, w
     const router = express.Router();
     const { asyncHandler } = utils;
 
+    // Canonical email form used for every users-table lookup. Signup stores
+    // emails lowercased + trimmed, so any sign-in path that looks a user up by
+    // a raw, as-typed address must normalize first — otherwise "User@x.com"
+    // silently fails to match the stored "user@x.com". (This was a latent bug
+    // in the legacy /login handler; normalizing here fixes it everywhere.)
+    const normEmail = (e) => String(e || '').trim().toLowerCase();
+
+    // Shared "issue the session and respond 200" tail for every successful
+    // customer sign-in (passwordless passkey, password-only, OTP fallback, and
+    // the legacy combined login). Mints the portal session cookie + token and,
+    // for an unverified account, best-effort re-sends the verification email and
+    // reflects that in the success message — so the behavior the old /login
+    // handler had on every path is preserved no matter which factor was used.
+    async function finishLogin(res, user) {
+        let verificationSent = false;
+        if (!user.email_verified && email.isEmailConfigured()) {
+            try {
+                const token = await email.createEmailVerificationToken(user.id);
+                await email.sendVerificationEmail(user.email, token);
+                verificationSent = true;
+            } catch (emailError) {
+                console.error('LOGIN VERIFICATION EMAIL ERROR:', emailError);
+            }
+        }
+
+        const portalSessionToken = auth.createPortalSessionToken(user.email, user.session_epoch);
+        auth.setPortalSessionCookie(res, portalSessionToken);
+
+        res.setHeader('Cache-Control', 'no-store');
+        return res.status(200).json({
+            message: !user.email_verified
+                ? verificationSent
+                    ? 'Login successful. A verification email has been sent to your inbox.'
+                    : 'Login successful. Please verify your email to continue.'
+                : 'Login successful',
+            data: auth.serializeUserWithPortalSession(user, portalSessionToken)
+        });
+    }
+
     router.post('/api/auth/signup', async (req, res) => {
         const { email: rawEmail, password, subdomain } = req.body;
         const normalizedSubdomain =
@@ -100,7 +139,7 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, w
                 return res.status(400).json({ error: 'Email and password are required' });
             }
 
-            const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [rawEmail]);
+            const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [normEmail(rawEmail)]);
             if (!user) {
                 return res.status(401).json({ error: 'Invalid email or password' });
             }
@@ -110,11 +149,11 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, w
                 return res.status(401).json({ error: 'Invalid email or password' });
             }
 
-            // Passkey step-up (2FA): once a user enrolls a passkey, password
-            // alone is not enough. Issue a WebAuthn assertion challenge and
-            // return 202 WITHOUT minting a session; the client completes the
-            // passkey assertion and POSTs to /api/auth/login/passkey/verify,
-            // which finishes the login below.
+            // Legacy combined login (kept one release for back-compat with any
+            // cached/native client still POSTing here). The identifier-first
+            // flow has superseded it: lookup → passkey/begin+verify, or
+            // password → otp. The 202 step-up below mirrors the old behavior so
+            // those clients still work until this route is removed next cycle.
             if (user.passkey_2fa_enabled) {
                 const principal = { kind: 'customer', subject: user.email, userId: user.id, displayName: user.email };
                 const options = await webauthn.beginAuthentication(principal);
@@ -126,47 +165,81 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, w
                 // band): fail open to password-only rather than lock the user out.
             }
 
-            // Send verification email on login for unverified users
-            let verificationSent = false;
-            if (!user.email_verified && email.isEmailConfigured()) {
-                try {
-                    const token = await email.createEmailVerificationToken(user.id);
-                    await email.sendVerificationEmail(user.email, token);
-                    verificationSent = true;
-                } catch (emailError) {
-                    console.error('LOGIN VERIFICATION EMAIL ERROR:', emailError);
-                }
-            }
-
-            const portalSessionToken = auth.createPortalSessionToken(user.email, user.session_epoch);
-            auth.setPortalSessionCookie(res, portalSessionToken);
-
-            res.setHeader('Cache-Control', 'no-store');
-            res.status(200).json({
-                message: !user.email_verified
-                    ? (verificationSent
-                        ? 'Login successful. A verification email has been sent to your inbox.'
-                        : 'Login successful. Please verify your email to continue.')
-                    : 'Login successful',
-                data: auth.serializeUserWithPortalSession(user, portalSessionToken)
-            });
+            return finishLogin(res, user);
         })
     );
 
-    // Complete a passkey-gated login. Reached only after /api/auth/login
-    // verified the password and issued an assertion challenge (202). The
-    // presence of a valid, unconsumed 'authentication' challenge for this email
-    // is what proves the password step happened — it binds the two factors.
+    // ── Identifier-first passwordless login ─────────────────────────────────
+    // Step 1: the email lookup. The client shows ONLY an email field first;
+    // this tells it which factor to offer next. Account existence IS revealed
+    // (has_passkey implies the account exists) — an accepted trade-off so the UI
+    // can branch the way Google/Microsoft/GitHub sign-in does.
+    router.post(
+        '/api/auth/login/lookup',
+        asyncHandler(async (req, res) => {
+            const emailNorm = normEmail(req.body?.email);
+            if (!emailNorm || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNorm)) {
+                return res.status(400).json({ error: 'Please enter a valid email address.' });
+            }
+
+            const user = await dbGet(`SELECT id, passkey_2fa_enabled FROM users WHERE email = ?`, [emailNorm]);
+            res.setHeader('Cache-Control', 'no-store');
+            if (!user) {
+                return res.status(200).json({ exists: false, has_passkey: false });
+            }
+
+            // passkey_2fa_enabled now means "has >=1 passkey". Double-check the
+            // live credential count so a stale flag (creds removed out of band)
+            // never advertises a passkey the user can't actually produce.
+            const principal = { kind: 'customer', subject: emailNorm, userId: user.id };
+            const hasPasskey = Boolean(user.passkey_2fa_enabled) && (await webauthn.countCredentials(principal)) > 0;
+            return res.status(200).json({ exists: true, has_passkey: hasPasskey });
+        })
+    );
+
+    // Step 2a (passkey path): issue a WebAuthn assertion challenge for the
+    // email. No password required — the passkey IS the primary factor. The
+    // client completes the assertion and POSTs to /login/passkey/verify below.
+    router.post(
+        '/api/auth/login/passkey/begin',
+        asyncHandler(async (req, res) => {
+            const emailNorm = normEmail(req.body?.email);
+            if (!emailNorm) {
+                return res.status(400).json({ error: 'Email is required' });
+            }
+
+            const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [emailNorm]);
+            res.setHeader('Cache-Control', 'no-store');
+            if (!user) {
+                return res.status(404).json({ error: 'No passkey is available for this account.' });
+            }
+
+            const principal = { kind: 'customer', subject: user.email, userId: user.id, displayName: user.email };
+            const options = await webauthn.beginAuthentication(principal);
+            if (!options) {
+                return res.status(404).json({ error: 'No passkey is available for this account.' });
+            }
+            return res.status(200).json({ options });
+        })
+    );
+
+    // Step 2a (cont.): complete the passkey assertion and sign in. In the
+    // passwordless model the valid, unconsumed 'authentication' challenge issued
+    // by /login/passkey/begin is the ONLY factor — possession of the passkey IS
+    // the proof of identity, so no prior password step is required or implied.
+    // The challenge is single-use and bound to this email, which is what makes
+    // that safe. (Also reached by the legacy /login 202 step-up during the
+    // back-compat window.)
     router.post(
         '/api/auth/login/passkey/verify',
         asyncHandler(async (req, res) => {
-            const rawEmail = req.body?.email;
+            const emailNorm = normEmail(req.body?.email);
             const assertion = req.body?.assertion || req.body?.response;
-            if (!rawEmail || !assertion) {
+            if (!emailNorm || !assertion) {
                 return res.status(400).json({ error: 'Email and passkey assertion are required' });
             }
 
-            const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [rawEmail]);
+            const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [emailNorm]);
             if (!user || !user.passkey_2fa_enabled) {
                 return res.status(401).json({ error: 'Passkey verification failed. Please sign in again.' });
             }
@@ -178,14 +251,96 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, w
                 return res.status(401).json({ error: 'Passkey verification failed. Please sign in again.' });
             }
 
-            const portalSessionToken = auth.createPortalSessionToken(user.email, user.session_epoch);
-            auth.setPortalSessionCookie(res, portalSessionToken);
+            return finishLogin(res, user);
+        })
+    );
 
-            res.setHeader('Cache-Control', 'no-store');
-            res.status(200).json({
-                message: 'Login successful',
-                data: auth.serializeUserWithPortalSession(user, portalSessionToken)
-            });
+    // Step 2b (password path): verify the password.
+    //   • Account WITHOUT a passkey → password is its primary factor → sign in
+    //     directly (matches today's behavior for password-only accounts).
+    //   • Account WITH a passkey → the user is deliberately falling back (lost
+    //     device). A correct password is necessary but NOT sufficient: email a
+    //     6-digit code and return 202 WITHOUT a session. The user completes the
+    //     code at /login/otp/verify. This is the emergency fallback that keeps a
+    //     lost-passkey user from being locked out without weakening the passkey-
+    //     primary posture to "password is just as good".
+    router.post(
+        '/api/auth/login/password',
+        asyncHandler(async (req, res) => {
+            const emailNorm = normEmail(req.body?.email);
+            const password = req.body?.password;
+            if (!emailNorm || !password) {
+                return res.status(400).json({ error: 'Email and password are required' });
+            }
+
+            const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [emailNorm]);
+            if (!user) {
+                return res.status(401).json({ error: 'Invalid email or password' });
+            }
+
+            const isMatch = await bcrypt.compare(password, user.password);
+            if (!isMatch) {
+                return res.status(401).json({ error: 'Invalid email or password' });
+            }
+
+            const principal = { kind: 'customer', subject: user.email, userId: user.id };
+            const hasPasskey = Boolean(user.passkey_2fa_enabled) && (await webauthn.countCredentials(principal)) > 0;
+
+            if (hasPasskey) {
+                if (!email.isEmailConfigured()) {
+                    // No mail transport = no way to deliver the code. Rather than
+                    // strand a passkey user mid-fallback, fail closed with a
+                    // clear message (they can still use their passkey).
+                    return res.status(503).json({
+                        error: 'Email service is unavailable, so a sign-in code cannot be sent. Please use your passkey instead.'
+                    });
+                }
+                try {
+                    const code = await email.createLoginOtp(user.id);
+                    await email.sendLoginOtpEmail(user.email, code);
+                } catch (otpError) {
+                    console.error('LOGIN OTP EMAIL ERROR:', otpError);
+                    return res.status(500).json({ error: 'Unable to send your sign-in code. Please try again.' });
+                }
+                res.setHeader('Cache-Control', 'no-store');
+                return res.status(202).json({
+                    otp_required: true,
+                    message: 'We emailed you a 6-digit sign-in code. Enter it to finish signing in.'
+                });
+            }
+
+            return finishLogin(res, user);
+        })
+    );
+
+    // Step 3 (OTP fallback): verify the emailed 6-digit code and sign in. Only
+    // reached after /login/password returned 202 for a passkey-holding account.
+    router.post(
+        '/api/auth/login/otp/verify',
+        asyncHandler(async (req, res) => {
+            const emailNorm = normEmail(req.body?.email);
+            const code = String(req.body?.code || '').trim();
+            if (!emailNorm || !code) {
+                return res.status(400).json({ error: 'Email and code are required' });
+            }
+
+            const user = await dbGet(`SELECT * FROM users WHERE email = ?`, [emailNorm]);
+            if (!user) {
+                return res.status(401).json({ error: 'Invalid or expired code.' });
+            }
+
+            const result = await email.verifyLoginOtp(user.id, code);
+            if (result.locked) {
+                return res.status(429).json({
+                    error: 'Too many incorrect codes. Please request a new sign-in code.'
+                });
+            }
+            if (!result.ok) {
+                return res.status(401).json({ error: 'Invalid or expired code.' });
+            }
+
+            await email.markLoginOtpUsed(result.id);
+            return finishLogin(res, user);
         })
     );
 
@@ -334,12 +489,12 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, w
             await dbRun(`UPDATE users SET password = ? WHERE id = ?`, [hashedPassword, record.user_id]);
             await email.markPasswordResetTokenUsed(record.id);
 
-            // Recovery / lockout escape hatch: completing an email-verified
-            // password reset clears passkey 2FA enforcement and removes the
-            // user's enrolled passkeys, so a lost device can never permanently
-            // lock someone out. They re-enroll a passkey after signing back in.
-            await dbRun(`UPDATE users SET passkey_2fa_enabled = 0 WHERE id = ?`, [record.user_id]);
-            await webauthn.deleteAllForUser(record.user_id);
+            // NOTE: a password reset deliberately does NOT touch the user's
+            // passkeys anymore. Under the passwordless model the passkey is a
+            // primary credential — wiping it on a password reset would let
+            // anyone with inbox access silently strip a victim's strongest
+            // factor. A lost-passkey user instead recovers via the password +
+            // email-OTP fallback at sign-in; they keep any other passkeys.
 
             // Also verify the email if not already verified (they proved ownership)
             await email.markUserEmailVerified(record.user_id);

@@ -61,21 +61,64 @@
 
             <div id="alertBox" class="alert"></div>
 
-            <form id="loginForm" class="stack">
-                <div class="field">
-                    <label class="field-label" for="loginEmail">Email Address</label>
-                    <input class="input" type="email" id="loginEmail" autocomplete="email" required>
+            <!--
+              Identifier-first passwordless sign-in. One <form> wrapper (so the
+              existing show/hide of #loginForm keeps working) holding four steps
+              that toggle via .hidden. Inputs deliberately omit the `required`
+              attribute: a hidden `required` field silently blocks form submit
+              ("not focusable"), so each step validates in JS instead. The submit
+              handler in account.js dispatches on the active step.
+            -->
+            <form id="loginForm" class="stack" novalidate>
+                <!-- Step 1: email -->
+                <div id="loginStepEmail" class="stack login-step">
+                    <div class="field">
+                        <label class="field-label" for="loginEmail">Email Address</label>
+                        <input class="input" type="email" id="loginEmail" autocomplete="email" autofocus>
+                    </div>
+
+                    <button type="submit" id="loginEmailBtn" class="button button-primary button-full">Continue</button>
+
+                    <p class="link-row">Need an account? <a href="/signup.html" class="link-inline">Create one</a></p>
                 </div>
 
-                <div class="field">
-                    <label class="field-label" for="loginPassword">Password</label>
-                    <input class="input" type="password" id="loginPassword" autocomplete="current-password" required>
+                <!-- Step 2a: passkey (auto-starts on entry) -->
+                <div id="loginStepPasskey" class="stack login-step hidden">
+                    <p class="section-text">Use your passkey (Face ID, Touch ID, Windows Hello, or a security key) to sign in as <strong id="loginPasskeyEmail"></strong>.</p>
+
+                    <button type="submit" id="loginPasskeyBtn" class="button button-primary button-full">Sign in with a passkey</button>
+
+                    <p class="link-row"><a href="#" id="loginUseAnotherWay" class="link-inline">Use another way</a></p>
+                    <p class="link-row"><a href="#" class="link-inline login-back-to-email">&larr; Use a different email</a></p>
                 </div>
 
-                <button type="submit" id="loginBtn" class="button button-primary button-full">Sign In</button>
+                <!-- Step 2b: password -->
+                <div id="loginStepPassword" class="stack login-step hidden">
+                    <p class="section-text hidden" id="loginPasswordHint"></p>
+                    <div class="field">
+                        <label class="field-label" for="loginPassword">Password</label>
+                        <input class="input" type="password" id="loginPassword" autocomplete="current-password">
+                    </div>
 
-                <p class="link-row"><a href="#" id="forgotPasswordLink" class="link-inline">Forgot your password?</a></p>
-                <p class="link-row">Need an account? <a href="/signup.html" class="link-inline">Create one</a></p>
+                    <button type="submit" id="loginPasswordBtn" class="button button-primary button-full">Sign In</button>
+
+                    <p class="link-row"><a href="#" id="forgotPasswordLink" class="link-inline">Forgot your password?</a></p>
+                    <p class="link-row"><a href="#" class="link-inline login-back-to-email">&larr; Use a different email</a></p>
+                </div>
+
+                <!-- Step 3: email OTP (lost-passkey fallback) -->
+                <div id="loginStepOtp" class="stack login-step hidden">
+                    <p class="section-text">For your security, enter the 6-digit code we emailed to <strong id="loginOtpEmail"></strong> to finish signing in.</p>
+                    <div class="field">
+                        <label class="field-label" for="loginOtp">Sign-in code</label>
+                        <input class="input" type="text" id="loginOtp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*" placeholder="6-digit code">
+                    </div>
+
+                    <button type="submit" id="loginOtpBtn" class="button button-primary button-full">Verify &amp; sign in</button>
+
+                    <p class="link-row"><a href="#" id="loginResendOtp" class="link-inline">Resend code</a></p>
+                    <p class="link-row"><a href="#" class="link-inline login-back-to-email">&larr; Use a different email</a></p>
+                </div>
             </form>
 
             <form id="forgotPasswordForm" class="stack hidden">
@@ -93,7 +136,7 @@
                 <div id="passkeyPromptBanner" class="passkey-prompt-banner hidden" role="status">
                     <div class="passkey-prompt-banner__text">
                         <span class="passkey-prompt-banner__title">Secure your account with a passkey</span>
-                        <span class="passkey-prompt-banner__desc">Add Face ID, Touch ID, or a security key for stronger two-factor sign-in.</span>
+                        <span class="passkey-prompt-banner__desc">Add Face ID, Touch ID, or a security key to sign in without a password.</span>
                     </div>
                     <div class="passkey-prompt-banner__actions">
                         <button type="button" id="passkeyPromptAddBtn" class="button button-primary button-small">Add a passkey</button>
@@ -255,8 +298,8 @@
                     </section>
 
                     <section class="manage-section" id="passkeySection">
-                        <span class="detail-label">Two-Factor Security &middot; Passkeys</span>
-                        <p class="detail-copy">Add a passkey (Face ID, Touch ID, Windows Hello or a security key) for two-factor sign-in. Once you add one, signing in will require your password <strong>and</strong> a passkey. If you ever lose your device, resetting your password by email removes your passkeys so you are never locked out.</p>
+                        <span class="detail-label">Passwordless Sign-in &middot; Passkeys</span>
+                        <p class="detail-copy">Add a passkey (Face ID, Touch ID, Windows Hello or a security key) to sign in without typing a password. Once you add one, you can sign in with just your passkey. Your password stays as a backup &mdash; if you ever lose your passkey device, you can still sign in with your password plus a one-time code we email you.</p>
                         <div id="passkeyList" class="passkey-list"></div>
                         <p id="passkeyStatus" class="detail-copy manage-msg"></p>
                         <button id="addPasskeyBtn" type="button" class="button button-primary button-full">Add a Passkey</button>
@@ -345,7 +388,7 @@
         <div class="modal__header">
             <div>
                 <h2 id="removePasskeyModalTitle" class="section-title section-title--small danger-label">Remove Passkey</h2>
-                <p class="section-text">Enter your password to remove this passkey. If it is your last passkey, two-factor sign-in will be turned off.</p>
+                <p class="section-text">Enter your password to remove this passkey. If it is your last passkey, you will sign in with your password again.</p>
             </div>
             <button id="removePasskeyModalClose" class="button button-secondary button-small" data-close-remove-passkey-modal="true">Cancel</button>
         </div>
@@ -367,7 +410,7 @@
             </svg>
         </div>
         <h2 id="passkeyInterstitialTitle" class="passkey-interstitial__title">Secure your account with a passkey</h2>
-        <p class="passkey-interstitial__desc">Use Face ID, Touch ID, Windows Hello, a password manager, or a security key to sign in faster and protect your account with two-factor security. You can set it up right now in a couple of seconds.</p>
+        <p class="passkey-interstitial__desc">Use Face ID, Touch ID, Windows Hello, a password manager, or a security key to sign in without a password. It is faster and more secure, and you can set it up right now in a couple of seconds.</p>
         <p id="passkeyInterstitialStatus" class="passkey-interstitial__status" style="min-height:1.2em"></p>
         <div class="passkey-interstitial__actions">
             <button type="button" id="passkeyInterstitialSetup" class="button button-primary button-full">Set up passkey</button>

@@ -138,6 +138,68 @@
         button.disabled = false;
     }
 
+    // ── Identifier-first login state machine ────────────────────────────────
+    // The login form is one <form> holding four steps (email → passkey /
+    // password → otp) that toggle via .hidden. `loginCurrentStep` drives the
+    // single submit dispatcher (defined with the form handler lower down), and
+    // `loginEmailValue` carries the validated address between steps so later
+    // steps never re-read the (now-hidden) email input.
+    const loginSteps = {
+        email: document.getElementById('loginStepEmail'),
+        passkey: document.getElementById('loginStepPasskey'),
+        password: document.getElementById('loginStepPassword'),
+        otp: document.getElementById('loginStepOtp')
+    };
+    let loginCurrentStep = 'email';
+    let loginEmailValue = '';
+
+    // Show one step, hide the rest, and focus its primary input. Resetting to
+    // 'email' also clears the carried-over address + transient field values so a
+    // returning view never shows a stale password/code.
+    function goLoginStep(step) {
+        loginCurrentStep = step;
+        Object.keys(loginSteps).forEach((key) => {
+            const el = loginSteps[key];
+            if (el) el.classList.toggle('hidden', key !== step);
+        });
+
+        if (step === 'email') {
+            loginEmailValue = '';
+            const pw = document.getElementById('loginPassword');
+            const otp = document.getElementById('loginOtp');
+            if (pw) pw.value = '';
+            if (otp) otp.value = '';
+        }
+
+        const focusId = {
+            email: 'loginEmail',
+            passkey: 'loginPasskeyBtn',
+            password: 'loginPassword',
+            otp: 'loginOtp'
+        }[step];
+        const focusEl = focusId ? document.getElementById(focusId) : null;
+        if (focusEl) {
+            try {
+                focusEl.focus();
+            } catch (_) {
+                /* focusing a not-yet-painted element can throw; ignore */
+            }
+        }
+    }
+
+    // Reset the login form back to the first (email) step. Called whenever the
+    // login view is (re)shown so it never reappears mid-flow.
+    function resetLoginSteps() {
+        const emailInput = document.getElementById('loginEmail');
+        if (emailInput) emailInput.value = '';
+        const hint = document.getElementById('loginPasswordHint');
+        if (hint) {
+            hint.textContent = '';
+            hint.classList.add('hidden');
+        }
+        goLoginStep('email');
+    }
+
     function setPageTitle(title) {
         document.title = title;
     }
@@ -243,6 +305,7 @@
         if (loginForm) loginForm.classList.remove('hidden');
         if (forgotPasswordForm) forgotPasswordForm.classList.add('hidden');
         if (dashboard) dashboard.classList.add('hidden');
+        resetLoginSteps();
         setHeaderState(null);
         setPageTitle(loginTitle);
         accountTitle.textContent = 'Sign in to your Cloud account';
@@ -1935,6 +1998,7 @@
             hideAlert();
             if (forgotPasswordForm) forgotPasswordForm.classList.add('hidden');
             if (loginForm) loginForm.classList.remove('hidden');
+            resetLoginSteps();
             accountTitle.textContent = 'Sign in to your Cloud account';
             headerSubtitle.textContent = 'Manage access, billing and your cloud address from one place.';
         });
@@ -2280,7 +2344,7 @@
         });
     }
 
-    // ── Passkeys (two-factor security) ──────────────────────────────────────
+    // ── Passkeys (passwordless sign-in) ─────────────────────────────────────
     const passkeySection = document.getElementById('passkeySection');
     const passkeyList = document.getElementById('passkeyList');
     const passkeyStatus = document.getElementById('passkeyStatus');
@@ -2308,7 +2372,7 @@
         if (!passkeys || !passkeys.length) {
             const empty = document.createElement('p');
             empty.className = 'detail-copy passkey-empty';
-            empty.textContent = 'No passkeys yet. Add one to enable two-factor sign-in.';
+            empty.textContent = 'No passkeys yet. Add one to sign in without a password.';
             passkeyList.appendChild(empty);
             return;
         }
@@ -2432,7 +2496,7 @@
             const result = await enrollPasskey();
             if (result.ok) {
                 markPasskeyEnrolledLocally();
-                setPasskeyStatus('Passkey added. Two-factor sign-in is now on.', false);
+                setPasskeyStatus('Passkey added. You can now sign in without a password.', false);
                 await loadPasskeys();
             } else {
                 setPasskeyStatus(result.message, result.isError);
@@ -2503,7 +2567,7 @@
                 closeRemovePasskeyModal();
                 setPasskeyStatus(
                     data.remaining === 0
-                        ? 'Passkey removed. Two-factor sign-in is now off.'
+                        ? 'Passkey removed. You will sign in with your password again.'
                         : 'Passkey removed.',
                     false
                 );
@@ -2627,7 +2691,7 @@
                 markPasskeyEnrolledLocally();
                 closeInterstitial();
                 if (passkeyPromptBanner) passkeyPromptBanner.classList.add('hidden');
-                showAlert('Passkey added. Two-factor sign-in is now on.', false);
+                showAlert('Passkey added. You can now sign in without a password.', false);
                 loadPasskeys();
             } else {
                 if (passkeyInterstitialStatus) {
@@ -3079,55 +3143,155 @@
             }
         }
 
-        loginForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const btn = document.getElementById('loginBtn');
-            btn.textContent = 'Signing In...';
-            btn.disabled = true;
+        // Run a passkey assertion ceremony for `loginEmailValue` and finish the
+        // login. Shared by the auto-start on entering the passkey step and the
+        // explicit "Sign in with a passkey" button. `btn` is whichever control
+        // triggered it (so we can show progress + restore it); returns true on
+        // success so callers can early-return.
+        async function runPasskeyLogin(btn) {
+            if (!window.SimpleWebAuthnBrowser) {
+                showAlert('Passkeys are not supported in this browser. Use another way to sign in.');
+                return false;
+            }
+            const restore = btn ? btn.textContent : null;
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Waiting for passkey...';
+            }
             hideAlert();
-
-            const email = document.getElementById('loginEmail').value;
-
             try {
-                const res = await fetch('/api/auth/login', {
+                const beginRes = await fetch('/api/auth/login/passkey/begin', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        email,
-                        password: document.getElementById('loginPassword').value
-                    })
+                    body: JSON.stringify({ email: loginEmailValue })
                 });
+                const beginData = await beginRes.json();
+                if (!beginRes.ok) throw new Error(beginData.error || 'Could not start passkey sign-in.');
 
+                let assertion;
+                try {
+                    assertion = await withTimeout(
+                        window.SimpleWebAuthnBrowser.startAuthentication(beginData.options),
+                        90000
+                    );
+                } catch (authErr) {
+                    // Surface the real reason (hang/timeout, cancel, NotSupported)
+                    // instead of a generic failure.
+                    throw new Error(describePasskeyError(authErr).message);
+                }
+
+                const verifyRes = await fetch('/api/auth/login/passkey/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: loginEmailValue, assertion })
+                });
+                const verifyData = await verifyRes.json();
+                if (!verifyRes.ok) throw new Error(verifyData.error || 'Passkey verification failed.');
+                finishLoginSuccess(verifyData.data);
+                return true;
+            } catch (err) {
+                showAlert(err.message);
+                return false;
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    if (restore !== null) btn.textContent = restore;
+                }
+            }
+        }
+
+        // Step 1 → lookup the email and branch to the right next step.
+        async function submitLoginEmail(btn) {
+            const input = document.getElementById('loginEmail');
+            const value = (input ? input.value : '').trim().toLowerCase();
+            if (!value || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+                showAlert('Please enter a valid email address.');
+                return;
+            }
+            const restore = btn ? btn.textContent : null;
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Checking...';
+            }
+            hideAlert();
+            try {
+                const res = await fetch('/api/auth/login/lookup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: value })
+                });
                 const data = await res.json();
-                if (!res.ok) throw new Error(data.error);
+                if (!res.ok) throw new Error(data.error || 'Could not look up that email.');
 
-                // Passkey 2FA step-up: the server verified the password but
-                // requires a passkey assertion before issuing a session.
-                if (res.status === 202 && data.mfa_required) {
-                    if (!window.SimpleWebAuthnBrowser) {
-                        throw new Error('Passkeys are not supported in this browser.');
-                    }
-                    btn.textContent = 'Waiting for passkey...';
-                    let assertion;
-                    try {
-                        assertion = await withTimeout(
-                            window.SimpleWebAuthnBrowser.startAuthentication(data.options),
-                            90000
-                        );
-                    } catch (authErr) {
-                        // Surface the real reason (hang/timeout, NotSupported,
-                        // etc.) instead of always claiming "cancelled".
-                        throw new Error(describePasskeyError(authErr).message);
-                    }
+                loginEmailValue = value;
+                const hint = document.getElementById('loginPasswordHint');
 
-                    const verifyRes = await fetch('/api/auth/login/passkey/verify', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ email, assertion })
-                    });
-                    const verifyData = await verifyRes.json();
-                    if (!verifyRes.ok) throw new Error(verifyData.error);
-                    finishLoginSuccess(verifyData.data);
+                if (data.has_passkey) {
+                    const passkeyEmail = document.getElementById('loginPasskeyEmail');
+                    if (passkeyEmail) passkeyEmail.textContent = value;
+                    goLoginStep('passkey');
+                    // Auto-start the assertion so the platform UI appears without
+                    // an extra click; the button remains for an explicit retry.
+                    runPasskeyLogin(document.getElementById('loginPasskeyBtn'));
+                } else {
+                    // No passkey: password is this account's primary factor. Show
+                    // a gentle hint when the email isn't even registered (we still
+                    // route to the password step so the form behaves like a normal
+                    // sign-in and reveals nothing extra beyond what lookup already
+                    // returned).
+                    if (hint) {
+                        if (data.exists) {
+                            hint.textContent = '';
+                            hint.classList.add('hidden');
+                        } else {
+                            hint.innerHTML =
+                                'We couldn\'t find an account for that email. Check it, or <a href="/signup.html" class="link-inline">create an account</a>.';
+                            hint.classList.remove('hidden');
+                        }
+                    }
+                    goLoginStep('password');
+                }
+            } catch (err) {
+                showAlert(err.message);
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    if (restore !== null) btn.textContent = restore;
+                }
+            }
+        }
+
+        // Step 2b → verify the password. A passkey account that lands here is
+        // falling back: the server answers 202 and emails an OTP, so we advance
+        // to the code step instead of signing in.
+        async function submitLoginPassword(btn) {
+            const pwInput = document.getElementById('loginPassword');
+            const password = pwInput ? pwInput.value : '';
+            if (!password) {
+                showAlert('Please enter your password.');
+                return;
+            }
+            const restore = btn ? btn.textContent : null;
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Signing In...';
+            }
+            hideAlert();
+            try {
+                const res = await fetch('/api/auth/login/password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: loginEmailValue, password })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Sign-in failed.');
+
+                if (res.status === 202 && data.otp_required) {
+                    const otpEmail = document.getElementById('loginOtpEmail');
+                    if (otpEmail) otpEmail.textContent = loginEmailValue;
+                    if (pwInput) pwInput.value = '';
+                    goLoginStep('otp');
+                    showAlert(data.message || 'We emailed you a 6-digit sign-in code.', false);
                     return;
                 }
 
@@ -3135,9 +3299,95 @@
             } catch (err) {
                 showAlert(err.message);
             } finally {
-                btn.textContent = 'Sign In';
-                btn.disabled = false;
+                if (btn) {
+                    btn.disabled = false;
+                    if (restore !== null) btn.textContent = restore;
+                }
             }
+        }
+
+        // Step 3 → verify the emailed 6-digit code and sign in.
+        async function submitLoginOtp(btn) {
+            const otpInput = document.getElementById('loginOtp');
+            const code = (otpInput ? otpInput.value : '').replace(/\D/g, '').trim();
+            if (code.length !== 6) {
+                showAlert('Enter the 6-digit code from your email.');
+                return;
+            }
+            const restore = btn ? btn.textContent : null;
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Verifying...';
+            }
+            hideAlert();
+            try {
+                const res = await fetch('/api/auth/login/otp/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: loginEmailValue, code })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Invalid or expired code.');
+                finishLoginSuccess(data.data);
+            } catch (err) {
+                showAlert(err.message);
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    if (restore !== null) btn.textContent = restore;
+                }
+            }
+        }
+
+        // Single submit dispatcher: the active step decides which handler runs.
+        loginForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            if (loginCurrentStep === 'email') {
+                submitLoginEmail(document.getElementById('loginEmailBtn'));
+            } else if (loginCurrentStep === 'passkey') {
+                runPasskeyLogin(document.getElementById('loginPasskeyBtn'));
+            } else if (loginCurrentStep === 'password') {
+                submitLoginPassword(document.getElementById('loginPasswordBtn'));
+            } else if (loginCurrentStep === 'otp') {
+                submitLoginOtp(document.getElementById('loginOtpBtn'));
+            }
+        });
+
+        // "Use another way" — drop from the passkey step to the password step.
+        const useAnotherWay = document.getElementById('loginUseAnotherWay');
+        if (useAnotherWay) {
+            useAnotherWay.addEventListener('click', (e) => {
+                e.preventDefault();
+                hideAlert();
+                const hint = document.getElementById('loginPasswordHint');
+                if (hint) {
+                    hint.textContent = '';
+                    hint.classList.add('hidden');
+                }
+                goLoginStep('password');
+            });
+        }
+
+        // "Resend code" — re-trigger the password step's OTP send. We don't have
+        // the password in scope anymore (cleared on advancing), so bounce the
+        // user back to re-enter it; this also naturally rate-limits resends.
+        const resendOtp = document.getElementById('loginResendOtp');
+        if (resendOtp) {
+            resendOtp.addEventListener('click', (e) => {
+                e.preventDefault();
+                hideAlert();
+                showAlert('Re-enter your password to get a fresh sign-in code.', false);
+                goLoginStep('password');
+            });
+        }
+
+        // Every "← Use a different email" link resets to step 1.
+        document.querySelectorAll('.login-back-to-email').forEach((link) => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                hideAlert();
+                resetLoginSteps();
+            });
         });
     }
 
