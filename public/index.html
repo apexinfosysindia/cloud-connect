@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#f8fafc">
     <title>ApexOS Cloud Connect | Oasis Portal</title>
     <script>
         // No-flash theme bootstrap: resolve light/dark/auto before CSS paints.
@@ -15,6 +16,10 @@
                 var r = document.documentElement;
                 r.setAttribute('data-theme', c);
                 r.setAttribute('data-theme-effective', eff);
+                // Tint the phone status bar to match the page before CSS/theme.js
+                // load, so it never flashes the default black.
+                var tc = document.querySelector('meta[name="theme-color"]');
+                if (tc) tc.setAttribute('content', eff === 'dark' ? '#121c2e' : '#f8fafc');
             } catch (e) {}
         })();
     </script>
