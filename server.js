@@ -237,11 +237,31 @@ const deps = {
 };
 
 // --- Register routes ---
+// Canonical clean URLs: hide the .html extension everywhere. Any GET/HEAD for a
+// /*.html path 301s to its extensionless form (/login.html → /login,
+// /index.html → /). This covers old bookmarks, links inside already-sent emails,
+// and someone typing the extension by hand — the bar never shows .html. The
+// query string (e.g. ?token=…) is preserved so verify/reset links keep working.
+// Must run before the pages router + static so it canonicalizes first.
+app.use((req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+        return next();
+    }
+    if (!req.path.endsWith('.html')) {
+        return next();
+    }
+    const base = req.path.slice(0, -'.html'.length);
+    const cleanPath = base === '/index' ? '/' : base;
+    const queryIndex = req.originalUrl.indexOf('?');
+    const queryString = queryIndex >= 0 ? req.originalUrl.slice(queryIndex) : '';
+    return res.redirect(301, cleanPath + queryString);
+});
+
 // The pages router MUST run before express.static. It applies host-based
-// redirects (e.g. cloud.apexinfosys.in/admin.html → vista, /login.html → oasis)
-// so the device/landing host never serves portal HTML off disk. If static ran
-// first it would answer any *.html request by filename alone — ignoring the
-// hostname — and the redirects below would never fire.
+// redirects (e.g. cloud.apexinfosys.in/admin → vista, /login → oasis) so the
+// device/landing host never serves portal HTML off disk. If static ran first it
+// would answer any page request by filename alone (via the `extensions` option
+// below) — ignoring the hostname — and the redirects below would never fire.
 app.use(require('./routes/pages')(deps));
 
 // --- Static files (registered AFTER the pages router on purpose; see above) ---
@@ -253,6 +273,9 @@ app.use(require('./routes/pages')(deps));
 app.use(
     express.static(path.join(__dirname, 'public'), {
         index: false,
+        // Serve /login from login.html on disk so URLs stay extensionless. The
+        // 301 middleware above already bounced any explicit /login.html here.
+        extensions: ['html'],
         setHeaders: (res) => {
             res.setHeader('Cache-Control', 'no-cache');
         }

@@ -38,7 +38,7 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, c
             }
 
             const forceCustomerLogin = req.hostname !== config.CUSTOMER_PORTAL_HOST || req.query?.from_cookie !== '1';
-            const loginRedirect = `/login.html?alexa_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
+            const loginRedirect = `/login?alexa_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
 
             if (!portalToken) {
                 return res.redirect(forceCustomerLogin ? `https://${config.CUSTOMER_PORTAL_HOST}${loginRedirect}` : loginRedirect);
