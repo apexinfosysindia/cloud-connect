@@ -3236,7 +3236,7 @@
                             hint.classList.add('hidden');
                         } else {
                             hint.innerHTML =
-                                'We couldn\'t find an account for that email. Check it, or <a href="/signup.html" class="link-inline">create an account</a>.';
+                                'We couldn\'t find an account for that email. Check it, or <a href="/signup" class="link-inline">create an account</a>.';
                             hint.classList.remove('hidden');
                         }
                     }

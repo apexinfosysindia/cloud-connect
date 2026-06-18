@@ -1,6 +1,15 @@
 const path = require('path');
 const express = require('express');
 
+// Page routing + canonical host enforcement.
+//
+// URLs are extensionless everywhere (.html is hidden): a global middleware in
+// server.js 301s any /*.html → its clean path before this router runs, and
+// express.static is configured with extensions:['html'] so /login resolves to
+// login.html on disk. This router only has to (a) keep each portal page on its
+// correct host (redirecting cross-host hits to oasis/vista), and (b) serve the
+// host-specific landing/admin/login page at `/`. All redirect targets below are
+// extensionless so the address bar never shows .html.
 module.exports = function ({ config }) {
     const router = express.Router();
 
@@ -12,54 +21,43 @@ module.exports = function ({ config }) {
         next();
     });
 
-    router.get(['/login', '/login.html', '/signup', '/signup.html'], (req, res, next) => {
-        const isSignupPath = req.path.startsWith('/signup');
-        const targetPath = isSignupPath ? '/signup.html' : '/login.html';
-        const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+    // Carry any querystring (?token=…, ?google_oauth=1, …) across a cross-host
+    // redirect so verify/reset/OAuth links keep working when hit on the wrong host.
+    const queryOf = (req) => {
+        const i = req.originalUrl.indexOf('?');
+        return i >= 0 ? req.originalUrl.slice(i) : '';
+    };
 
+    // Customer (Oasis) auth pages: login + signup.
+    router.get(['/login', '/signup'], (req, res, next) => {
         if (req.hostname === config.CUSTOMER_PORTAL_HOST) {
-            if (req.path === '/login' || req.path === '/signup') {
-                return res.redirect(`${targetPath}${query}`);
-            }
             return next();
         }
-
         if (req.hostname === config.ADMIN_PORTAL_HOST || req.hostname === config.CLOUD_BASE_DOMAIN) {
-            return res.redirect(`https://${config.CUSTOMER_PORTAL_HOST}${targetPath}${query}`);
+            return res.redirect(`https://${config.CUSTOMER_PORTAL_HOST}${req.path}${queryOf(req)}`);
         }
-
         return next();
     });
 
-    router.get(['/verify-email', '/verify-email.html', '/reset-password', '/reset-password.html'], (req, res, next) => {
-        const isResetPath = req.path.startsWith('/reset-password');
-        const targetPath = isResetPath ? '/reset-password.html' : '/verify-email.html';
-        const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-
+    // Customer (Oasis) account-lifecycle pages: email verification + password reset.
+    router.get(['/verify-email', '/reset-password'], (req, res, next) => {
         if (req.hostname === config.CUSTOMER_PORTAL_HOST) {
-            if (req.path === '/verify-email' || req.path === '/reset-password') {
-                return res.redirect(`${targetPath}${query}`);
-            }
             return next();
         }
-
-        // Redirect to customer portal if accessed from other hosts
         if (req.hostname === config.ADMIN_PORTAL_HOST || req.hostname === config.CLOUD_BASE_DOMAIN) {
-            return res.redirect(`https://${config.CUSTOMER_PORTAL_HOST}${targetPath}${query}`);
+            return res.redirect(`https://${config.CUSTOMER_PORTAL_HOST}${req.path}${queryOf(req)}`);
         }
-
         return next();
     });
 
-    router.get(['/admin', '/admin.html'], (req, res, next) => {
+    // Admin (Vista) dashboard.
+    router.get('/admin', (req, res, next) => {
         if (req.hostname === config.ADMIN_PORTAL_HOST) {
             return res.redirect('/');
         }
-
         if (req.hostname === config.CUSTOMER_PORTAL_HOST || req.hostname === config.CLOUD_BASE_DOMAIN) {
             return res.redirect(`https://${config.ADMIN_PORTAL_HOST}/`);
         }
-
         return next();
     });
 
@@ -67,24 +65,14 @@ module.exports = function ({ config }) {
     // host; other hosts are redirected to the admin portal. No nav link — admins
     // reach it by URL — and the page itself requires sudo re-auth before showing
     // any control.
-    router.get(['/admin-security', '/admin-security.html'], (req, res, next) => {
+    router.get('/admin-security', (req, res, next) => {
         if (req.hostname === config.ADMIN_PORTAL_HOST) {
             return res.sendFile(path.join(__dirname, '..', 'public', 'admin-security.html'));
         }
-
         if (req.hostname === config.CUSTOMER_PORTAL_HOST || req.hostname === config.CLOUD_BASE_DOMAIN) {
             return res.redirect(`https://${config.ADMIN_PORTAL_HOST}/admin-security`);
         }
-
         return next();
-    });
-
-    router.get('/index.html', (req, res) => {
-        if (req.hostname === config.ADMIN_PORTAL_HOST || req.hostname === config.CUSTOMER_PORTAL_HOST) {
-            return res.redirect('/');
-        }
-
-        return res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
     });
 
     router.get('/', (req, res) => {
