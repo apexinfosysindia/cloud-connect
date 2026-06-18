@@ -1925,6 +1925,19 @@
             return;
         }
 
+        // Razorpay renders its checkout in its own cross-origin iframe and lays a
+        // backdrop over our page. On mobile it defaults that backdrop to an opaque
+        // light grey (rgba(245,245,245,1)) — which slams white over the dark portal
+        // in dark mode. Pass an explicit theme-aware backdrop_color so the page
+        // behind the popup stays dark; it's applied verbatim as the backdrop's CSS
+        // background, so an rgba() dim scrim (matching our own modals) works. Light
+        // mode keeps Razorpay's default, which already looks right.
+        const isDark = document.documentElement.getAttribute('data-theme-effective') === 'dark';
+        const theme = { color: '#1d4ed8' };
+        if (isDark) {
+            theme.backdrop_color = 'rgba(8, 14, 26, 0.72)';
+        }
+
         const razorpay = new window.Razorpay({
             key: checkout.key,
             subscription_id: checkout.subscription_id,
@@ -1932,7 +1945,7 @@
             description: checkout.description,
             prefill: checkout.prefill,
             notes: checkout.notes,
-            theme: { color: '#1d4ed8' },
+            theme: theme,
             modal: {
                 ondismiss: () => {
                     restoreButton(button, fallbackText);
