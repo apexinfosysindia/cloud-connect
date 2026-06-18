@@ -212,21 +212,6 @@ app.use('/api/account/change-password', authRateLimiter);
 app.use('/api/account/delete', authRateLimiter);
 app.use('/api/account/cancel-subscription', authRateLimiter);
 
-// --- Static files ---
-// no-cache = "cache, but always revalidate before use". Express still sends
-// ETag/Last-Modified, so unchanged files return a cheap 304 while a redeployed
-// file is served fresh immediately — no content-hashing/build step needed, and
-// no more stale account.js after a soft refresh. Nothing here is fingerprinted,
-// so this applies uniformly (incl. the vendored webauthn bundle).
-app.use(
-    express.static(path.join(__dirname, 'public'), {
-        index: false,
-        setHeaders: (res) => {
-            res.setHeader('Cache-Control', 'no-cache');
-        }
-    })
-);
-
 // --- Shared deps object for route factories ---
 const deps = {
     dbGet,
@@ -252,7 +237,28 @@ const deps = {
 };
 
 // --- Register routes ---
+// The pages router MUST run before express.static. It applies host-based
+// redirects (e.g. cloud.apexinfosys.in/admin.html → vista, /login.html → oasis)
+// so the device/landing host never serves portal HTML off disk. If static ran
+// first it would answer any *.html request by filename alone — ignoring the
+// hostname — and the redirects below would never fire.
 app.use(require('./routes/pages')(deps));
+
+// --- Static files (registered AFTER the pages router on purpose; see above) ---
+// no-cache = "cache, but always revalidate before use". Express still sends
+// ETag/Last-Modified, so unchanged files return a cheap 304 while a redeployed
+// file is served fresh immediately — no content-hashing/build step needed, and
+// no more stale account.js after a soft refresh. Nothing here is fingerprinted,
+// so this applies uniformly (incl. the vendored webauthn bundle).
+app.use(
+    express.static(path.join(__dirname, 'public'), {
+        index: false,
+        setHeaders: (res) => {
+            res.setHeader('Cache-Control', 'no-cache');
+        }
+    })
+);
+
 app.use(require('./routes/device-api')(deps));
 app.use(require('./routes/admin-fleet')(deps));
 app.use(require('./routes/auth')(deps));
