@@ -1500,19 +1500,36 @@
         }
 
         alexaOAuthRedirectInFlight = true;
-        // Alexa's /api/alexa/oauth route reads portal_session_token from the
-        // cookie OR query param. Pass it explicitly to avoid cookie-timing
-        // races right after login. Alexa has no separate consent screen, so we
-        // pass approved=1 to satisfy the route's consent gate; it then mints the
-        // auth code and 302s straight back to Amazon (no consent bounce, which
-        // would otherwise drop client_id/redirect_uri and dead-end on the dashboard).
-        const continueUrl = new URL('/api/alexa/oauth', window.location.origin);
-        continueUrl.searchParams.set('client_id', alexaOAuthClientId);
-        continueUrl.searchParams.set('redirect_uri', alexaOAuthRedirectUri);
-        continueUrl.searchParams.set('state', alexaOAuthState);
-        continueUrl.searchParams.set('portal_session_token', portalToken);
-        continueUrl.searchParams.set('approved', '1');
-        window.location.assign(continueUrl.toString());
+        // Mirror the Google flow: POST to /api/alexa/oauth/continue first. That
+        // endpoint re-issues the portal cookie from this valid token (via
+        // setPortalSessionCookie) BEFORE we hit the authorize route — so a stale
+        // cookie left in the browser can't shadow the good token and bounce us
+        // back to /login (the infinite account-linking loop). It returns the
+        // authorize redirect_url (which also carries the token in the query), and
+        // we navigate to it. Alexa has no portal-side consent screen, so authorize
+        // mints the code and 302s straight back to Amazon.
+        try {
+            const response = await fetch('/api/alexa/oauth/continue', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    client_id: alexaOAuthClientId,
+                    redirect_uri: alexaOAuthRedirectUri,
+                    state: alexaOAuthState,
+                    portal_session_token: portalToken
+                })
+            });
+
+            const data = await response.json();
+            if (!response.ok || !data?.redirect_url) {
+                throw new Error(data?.error || 'Unable to continue Alexa linking');
+            }
+
+            window.location.assign(data.redirect_url);
+        } catch (error) {
+            alexaOAuthRedirectInFlight = false;
+            showAlert(error.message || 'Unable to continue Alexa linking');
+        }
     }
 
     async function appendGoogleOAuthPortalToken(userData) {

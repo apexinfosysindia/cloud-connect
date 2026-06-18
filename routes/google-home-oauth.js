@@ -14,7 +14,9 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, g
             const portalTokenRaw = req.query?.portal_session_token;
             const queryPortalToken = typeof portalTokenRaw === 'string' ? portalTokenRaw.trim() : '';
             const cookiePortalToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
-            const portalToken = cookiePortalToken || queryPortalToken;
+            // Prefer whichever token VERIFIES — a stale cookie must not shadow a
+            // valid query token (that caused the account-linking loop back to /login).
+            const portalToken = auth.pickValidPortalToken(cookiePortalToken, queryPortalToken).token;
 
             if (!clientId || !redirectUri) {
                 return res.status(400).send('Missing OAuth parameters');
@@ -160,7 +162,9 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, g
             const portalTokenRaw = req.body?.portal_session_token;
             const bodyPortalToken = typeof portalTokenRaw === 'string' ? portalTokenRaw.trim() : '';
             const cookiePortalToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
-            const portalToken = cookiePortalToken || bodyPortalToken;
+            // Prefer whichever token VERIFIES so a stale cookie can't shadow the
+            // valid body token (the client posts the good token here to refresh it).
+            const portalToken = auth.pickValidPortalToken(cookiePortalToken, bodyPortalToken).token;
 
             if (!clientId || !redirectUri || !portalToken) {
                 return res.status(400).json({ error: 'missing_oauth_parameters' });
