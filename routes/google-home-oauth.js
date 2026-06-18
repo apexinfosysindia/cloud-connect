@@ -14,9 +14,7 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, g
             const portalTokenRaw = req.query?.portal_session_token;
             const queryPortalToken = typeof portalTokenRaw === 'string' ? portalTokenRaw.trim() : '';
             const cookiePortalToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
-            // Prefer whichever token VERIFIES — a stale cookie must not shadow a
-            // valid query token (that caused the account-linking loop back to /login).
-            const portalToken = auth.pickValidPortalToken(cookiePortalToken, queryPortalToken).token;
+            const portalToken = cookiePortalToken || queryPortalToken;
 
             if (!clientId || !redirectUri) {
                 return res.status(400).send('Missing OAuth parameters');
@@ -36,7 +34,7 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, g
 
             const forceCustomerLogin = req.hostname !== config.CUSTOMER_PORTAL_HOST || req.query?.from_cookie !== '1';
             if (!portalToken) {
-                const loginRedirect = `/login?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
+                const loginRedirect = `/login.html?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
                 if (forceCustomerLogin) {
                     return res.redirect(`https://${config.CUSTOMER_PORTAL_HOST}${loginRedirect}`);
                 }
@@ -45,7 +43,7 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, g
 
             const session = auth.verifyPortalSessionToken(portalToken);
             if (!session) {
-                const loginRedirect = `/login?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
+                const loginRedirect = `/login.html?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
                 if (forceCustomerLogin) {
                     return res.redirect(`https://${config.CUSTOMER_PORTAL_HOST}${loginRedirect}`);
                 }
@@ -90,7 +88,7 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, g
             }
 
             if (!auth.portalTokenEpochMatches(session, user)) {
-                const loginRedirect = `/login?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
+                const loginRedirect = `/login.html?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
                 if (forceCustomerLogin) {
                     return res.redirect(`https://${config.CUSTOMER_PORTAL_HOST}${loginRedirect}`);
                 }
@@ -102,7 +100,7 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, g
             }
 
             if (req.query?.approved !== '1') {
-                const consentUrl = `/login?google_oauth=1&google_oauth_consent=1&oauth_challenge=${consentChallenge}`;
+                const consentUrl = `/login.html?google_oauth=1&google_oauth_consent=1&oauth_challenge=${consentChallenge}`;
                 if (req.hostname !== config.CUSTOMER_PORTAL_HOST) {
                     return res.redirect(`https://${config.CUSTOMER_PORTAL_HOST}${consentUrl}`);
                 }
@@ -162,9 +160,7 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, g
             const portalTokenRaw = req.body?.portal_session_token;
             const bodyPortalToken = typeof portalTokenRaw === 'string' ? portalTokenRaw.trim() : '';
             const cookiePortalToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
-            // Prefer whichever token VERIFIES so a stale cookie can't shadow the
-            // valid body token (the client posts the good token here to refresh it).
-            const portalToken = auth.pickValidPortalToken(cookiePortalToken, bodyPortalToken).token;
+            const portalToken = cookiePortalToken || bodyPortalToken;
 
             if (!clientId || !redirectUri || !portalToken) {
                 return res.status(400).json({ error: 'missing_oauth_parameters' });
