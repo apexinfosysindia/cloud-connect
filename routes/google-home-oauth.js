@@ -34,7 +34,7 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, g
 
             const forceCustomerLogin = req.hostname !== config.CUSTOMER_PORTAL_HOST || req.query?.from_cookie !== '1';
             if (!portalToken) {
-                const loginRedirect = `/login.html?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
+                const loginRedirect = `/login?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
                 if (forceCustomerLogin) {
                     return res.redirect(`https://${config.CUSTOMER_PORTAL_HOST}${loginRedirect}`);
                 }
@@ -43,7 +43,7 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, g
 
             const session = auth.verifyPortalSessionToken(portalToken);
             if (!session) {
-                const loginRedirect = `/login.html?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
+                const loginRedirect = `/login?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
                 if (forceCustomerLogin) {
                     return res.redirect(`https://${config.CUSTOMER_PORTAL_HOST}${loginRedirect}`);
                 }
@@ -88,7 +88,7 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, g
             }
 
             if (!auth.portalTokenEpochMatches(session, user)) {
-                const loginRedirect = `/login.html?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
+                const loginRedirect = `/login?google_oauth=1&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
                 if (forceCustomerLogin) {
                     return res.redirect(`https://${config.CUSTOMER_PORTAL_HOST}${loginRedirect}`);
                 }
@@ -100,7 +100,7 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, g
             }
 
             if (req.query?.approved !== '1') {
-                const consentUrl = `/login.html?google_oauth=1&google_oauth_consent=1&oauth_challenge=${consentChallenge}`;
+                const consentUrl = `/login?google_oauth=1&google_oauth_consent=1&oauth_challenge=${consentChallenge}`;
                 if (req.hostname !== config.CUSTOMER_PORTAL_HOST) {
                     return res.redirect(`https://${config.CUSTOMER_PORTAL_HOST}${consentUrl}`);
                 }

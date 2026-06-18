@@ -212,21 +212,6 @@ app.use('/api/account/change-password', authRateLimiter);
 app.use('/api/account/delete', authRateLimiter);
 app.use('/api/account/cancel-subscription', authRateLimiter);
 
-// --- Static files ---
-// no-cache = "cache, but always revalidate before use". Express still sends
-// ETag/Last-Modified, so unchanged files return a cheap 304 while a redeployed
-// file is served fresh immediately — no content-hashing/build step needed, and
-// no more stale account.js after a soft refresh. Nothing here is fingerprinted,
-// so this applies uniformly (incl. the vendored webauthn bundle).
-app.use(
-    express.static(path.join(__dirname, 'public'), {
-        index: false,
-        setHeaders: (res) => {
-            res.setHeader('Cache-Control', 'no-cache');
-        }
-    })
-);
-
 // --- Shared deps object for route factories ---
 const deps = {
     dbGet,
@@ -252,7 +237,51 @@ const deps = {
 };
 
 // --- Register routes ---
+// Canonical clean URLs: hide the .html extension everywhere. Any GET/HEAD for a
+// /*.html path 301s to its extensionless form (/login.html → /login,
+// /index.html → /). This covers old bookmarks, links inside already-sent emails,
+// and someone typing the extension by hand — the bar never shows .html. The
+// query string (e.g. ?token=…) is preserved so verify/reset links keep working.
+// Must run before the pages router + static so it canonicalizes first.
+app.use((req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+        return next();
+    }
+    if (!req.path.endsWith('.html')) {
+        return next();
+    }
+    const base = req.path.slice(0, -'.html'.length);
+    const cleanPath = base === '/index' ? '/' : base;
+    const queryIndex = req.originalUrl.indexOf('?');
+    const queryString = queryIndex >= 0 ? req.originalUrl.slice(queryIndex) : '';
+    return res.redirect(301, cleanPath + queryString);
+});
+
+// The pages router MUST run before express.static. It applies host-based
+// redirects (e.g. cloud.apexinfosys.in/admin → vista, /login → oasis) so the
+// device/landing host never serves portal HTML off disk. If static ran first it
+// would answer any page request by filename alone (via the `extensions` option
+// below) — ignoring the hostname — and the redirects below would never fire.
 app.use(require('./routes/pages')(deps));
+
+// --- Static files (registered AFTER the pages router on purpose; see above) ---
+// no-cache = "cache, but always revalidate before use". Express still sends
+// ETag/Last-Modified, so unchanged files return a cheap 304 while a redeployed
+// file is served fresh immediately — no content-hashing/build step needed, and
+// no more stale account.js after a soft refresh. Nothing here is fingerprinted,
+// so this applies uniformly (incl. the vendored webauthn bundle).
+app.use(
+    express.static(path.join(__dirname, 'public'), {
+        index: false,
+        // Serve /login from login.html on disk so URLs stay extensionless. The
+        // 301 middleware above already bounced any explicit /login.html here.
+        extensions: ['html'],
+        setHeaders: (res) => {
+            res.setHeader('Cache-Control', 'no-cache');
+        }
+    })
+);
+
 app.use(require('./routes/device-api')(deps));
 app.use(require('./routes/admin-fleet')(deps));
 app.use(require('./routes/auth')(deps));
