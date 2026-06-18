@@ -1925,17 +1925,29 @@
             return;
         }
 
-        // Razorpay renders its checkout in its own cross-origin iframe and lays a
-        // backdrop over our page. On mobile it defaults that backdrop to an opaque
-        // light grey (rgba(245,245,245,1)) — which slams white over the dark portal
-        // in dark mode. Pass an explicit theme-aware backdrop_color so the page
-        // behind the popup stays dark; it's applied verbatim as the backdrop's CSS
-        // background, so an rgba() dim scrim (matching our own modals) works. Light
-        // mode keeps Razorpay's default, which already looks right.
-        const isDark = document.documentElement.getAttribute('data-theme-effective') === 'dark';
-        const theme = { color: '#1d4ed8' };
-        if (isDark) {
-            theme.backdrop_color = 'rgba(8, 14, 26, 0.72)';
+        // Razorpay's checkout card is a cross-origin iframe that is ALWAYS light —
+        // theme.color only tints its accent/button, there is no dark checkout. On a
+        // dark page that white card (and, on mobile, Razorpay's own light backdrop)
+        // looks jarring. So present the whole payment in light: flip the page to
+        // light while checkout is open, then restore the user's theme when it closes.
+        // Dark-mode checkout then looks exactly like light-mode (the consistent
+        // intent). We flip only the data-theme-effective attribute the CSS keys off —
+        // NOT the saved apex_theme choice — so the user's preference is untouched and
+        // restored verbatim. The status-bar meta is kept in sync for mobile.
+        const rootEl = document.documentElement;
+        const previousEffective = rootEl.getAttribute('data-theme-effective');
+        const forceLightForCheckout = previousEffective === 'dark';
+        const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+
+        function applyCheckoutTheme() {
+            if (!forceLightForCheckout) return;
+            rootEl.setAttribute('data-theme-effective', 'light');
+            if (themeColorMeta) themeColorMeta.setAttribute('content', '#f8fafc');
+        }
+        function restoreUserTheme() {
+            if (!forceLightForCheckout) return;
+            rootEl.setAttribute('data-theme-effective', previousEffective);
+            if (themeColorMeta) themeColorMeta.setAttribute('content', '#121c2e');
         }
 
         const razorpay = new window.Razorpay({
@@ -1945,14 +1957,16 @@
             description: checkout.description,
             prefill: checkout.prefill,
             notes: checkout.notes,
-            theme: theme,
+            theme: { color: '#1d4ed8' },
             modal: {
                 ondismiss: () => {
+                    restoreUserTheme();
                     restoreButton(button, fallbackText);
                     showAlert('Payment was not completed. You can resume it anytime from your account.');
                 }
             },
             handler: async (response) => {
+                restoreUserTheme();
                 try {
                     await verifyPayment(response, button, fallbackText);
                 } catch (err) {
@@ -1962,6 +1976,7 @@
         });
 
         razorpay.on('payment.failed', (response) => {
+            restoreUserTheme();
             const error = response?.error || {};
             const detailParts = [
                 error.description,
@@ -1975,6 +1990,7 @@
             console.error('Razorpay payment failed:', response);
         });
 
+        applyCheckoutTheme();
         razorpay.open();
     }
 
