@@ -18,6 +18,12 @@ module.exports = function ({ dbGet, dbRun, utils, auth, core, eventGateway }) {
         asyncHandler(async (req, res) => {
             const enable = req.body?.enabled !== false;
 
+            // Cancel any in-flight unlink-retry timer for this user: a fresh manual
+            // unlink (or a re-enable) supersedes a pending background retry.
+            if (eventGateway?.cancelAlexaUnlinkRetry) {
+                eventGateway.cancelAlexaUnlinkRetry(req.portalUser.id);
+            }
+
             if (!enable) {
                 // Unlink ordering matters and is GATED. We must drop the device tiles
                 // from Alexa (DeleteReport) BEFORE disabling the skill, because Amazon
@@ -65,6 +71,15 @@ module.exports = function ({ dbGet, dbRun, utils, auth, core, eventGateway }) {
                     // it (enabled=0) so the dashboard reflects "paused". Tell the user.
                     console.warn('ALEXA UNLINK: DeleteReport failed; keeping link for retry, NOT disabling skill. user', req.portalUser.id);
                     await dbRun(`UPDATE users SET alexa_enabled = 0 WHERE id = ?`, [req.portalUser.id]);
+                    // Schedule a background retry with backoff — Amazon's enablement
+                    // state is eventually-consistent after a rapid link/unlink and the
+                    // delete usually lands within a few minutes, so the tiles clear
+                    // without the user re-clicking. On success the retry finishes the
+                    // unlink (disable skill + cleanup). In-memory; lost on restart, in
+                    // which case the manual Unlink button still works.
+                    if (eventGateway?.scheduleAlexaUnlinkRetry) {
+                        eventGateway.scheduleAlexaUnlinkRetry(req.portalUser.id, 0);
+                    }
                     const pausedUser = await dbGet(`SELECT * FROM users WHERE id = ?`, [req.portalUser.id]);
                     const pausedToken = auth.createPortalSessionToken(pausedUser.email);
                     auth.setPortalSessionCookie(res, pausedToken);
