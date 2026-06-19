@@ -19,32 +19,61 @@ module.exports = function ({ dbGet, dbRun, utils, auth, core, eventGateway }) {
             const enable = req.body?.enabled !== false;
 
             if (!enable) {
-                // Drop the endpoints from Alexa BEFORE cleanup wipes the LWA token.
-                // AddOrUpdateReport is additive-only, so without an explicit
-                // DeleteReport the device tiles linger (dead) in the Alexa app.
-                // Best-effort and awaited so it runs while the link is still alive.
+                // Unlink ordering matters and is GATED. We must drop the device tiles
+                // from Alexa (DeleteReport) BEFORE disabling the skill, because Amazon
+                // rejects DeleteReports for a disabled skill ("no valid enablement") —
+                // disabling first would orphan the tiles forever with no way to retry.
+                // So: (1) DeleteReport; (2) ONLY if that succeeded, disable the skill +
+                // wipe our tokens (full clean unlink, stops the relink nag). If the
+                // DeleteReport FAILED (e.g. the link was already in a broken/disabled
+                // state at Amazon), we do NOT disable and do NOT wipe tokens — we keep
+                // the link so the tiles can still be cleared later, set enabled=0 so the
+                // dashboard reflects "paused", and tell the user.
+                let deleteOk = true; // default true so a no-endpoints unlink still disables
                 try {
                     const rows = await core.getAlexaEndpointsForUser(req.portalUser.id, { includeDisabled: true });
                     const endpointIds = (rows || []).map((r) => r.entity_id).filter(Boolean);
                     if (endpointIds.length > 0) {
-                        await eventGateway.deleteEndpointsNow(req.portalUser.id, endpointIds, 'portal_unlink');
+                        // One immediate attempt + one short retry — transient gateway 5xx
+                        // is common and a retry often lands before we give up.
+                        let resp = await eventGateway.deleteEndpointsNow(req.portalUser.id, endpointIds, 'portal_unlink');
+                        if (!resp?.ok && !resp?.skipped) {
+                            await new Promise((r) => setTimeout(r, 750));
+                            resp = await eventGateway.deleteEndpointsNow(req.portalUser.id, endpointIds, 'portal_unlink_retry');
+                        }
+                        // A skip (no creds / no token) is NOT a delivered delete → treat as not-ok.
+                        deleteOk = Boolean(resp?.ok);
                     }
                 } catch (error) {
-                    console.warn('ALEXA UNLINK DELETE_REPORT skipped:', error?.message);
+                    console.warn('ALEXA UNLINK DELETE_REPORT error:', error?.message);
+                    deleteOk = false;
                 }
-                // Disable + unlink the skill at Amazon using the customer's LWA token.
-                // This is what actually stops the "relink your account" nag — revoking
-                // only our own tokens (below) leaves the skill enabled, so Amazon's next
-                // failed refresh prompts a relink. Best-effort; must run before cleanup
-                // wipes the LWA token. If it can't (no ALEXA_SKILL_ID, or the token lacks
-                // the account_linking scope), the unlink copy tells the user to disable
-                // the skill in the Alexa app instead.
-                try {
-                    await eventGateway.disableSkillForUser(req.portalUser.id, 'portal_unlink');
-                } catch (error) {
-                    console.warn('ALEXA UNLINK skill-disable skipped:', error?.message);
+
+                if (deleteOk) {
+                    // Tiles are gone from Alexa — safe to disable the skill at Amazon
+                    // (stops the relink nag) and wipe our tokens.
+                    try {
+                        await eventGateway.disableSkillForUser(req.portalUser.id, 'portal_unlink');
+                    } catch (error) {
+                        console.warn('ALEXA UNLINK skill-disable skipped:', error?.message);
+                    }
+                    await core.cleanupAlexaAuthDataForUser(req.portalUser.id);
+                } else {
+                    // DeleteReport did not land. Do NOT disable the skill or wipe tokens —
+                    // that would make the orphaned tiles permanently unrecoverable. Leave
+                    // the link intact (alexa_linked stays 1) for a future retry; just pause
+                    // it (enabled=0) so the dashboard reflects "paused". Tell the user.
+                    console.warn('ALEXA UNLINK: DeleteReport failed; keeping link for retry, NOT disabling skill. user', req.portalUser.id);
+                    await dbRun(`UPDATE users SET alexa_enabled = 0 WHERE id = ?`, [req.portalUser.id]);
+                    const pausedUser = await dbGet(`SELECT * FROM users WHERE id = ?`, [req.portalUser.id]);
+                    const pausedToken = auth.createPortalSessionToken(pausedUser.email);
+                    auth.setPortalSessionCookie(res, pausedToken);
+                    return res.status(200).json({
+                        message: 'alexa_unlink_tiles_pending',
+                        tiles_cleared: false,
+                        data: auth.serializeUserWithPortalSession(pausedUser, pausedToken)
+                    });
                 }
-                await core.cleanupAlexaAuthDataForUser(req.portalUser.id);
             }
 
             await dbRun(`UPDATE users SET alexa_enabled = ? WHERE id = ?`, [enable ? 1 : 0, req.portalUser.id]);
