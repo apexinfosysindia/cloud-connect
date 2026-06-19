@@ -1097,10 +1097,10 @@
         alexa: {
             endpoint: '/api/account/alexa/enable',
             title: 'Unlink Alexa',
-            body: 'Unlink here while still linked and we ask Alexa to remove your devices from the app, then the skill disables itself automatically within the hour. Note: if you instead disable the skill from the Alexa app first, Alexa keeps the (now unresponsive) device tiles and you will need to remove them manually in the Alexa app.',
+            body: 'Unlink here while still linked and we remove your devices from the Alexa app and disable the Apex Oasis skill for your account. If Alexa still shows the skill or prompts you to relink, open the Alexa app and disable the "Apex Oasis" skill there to finish. Note: if you disable the skill in the Alexa app first instead, Alexa keeps the (now unresponsive) device tiles and you will need to remove them manually.',
             confirmLabel: 'Unlink Alexa',
             error: 'Unable to unlink Alexa',
-            success: 'Alexa unlinked. Your devices stop responding right away and we ask Alexa to remove them from the app; the skill finishes disabling automatically within the hour.'
+            success: 'Alexa unlinked. Your devices stop responding right away and we ask Alexa to remove them and disable the skill. If you still see a relink prompt, disable the "Apex Oasis" skill in the Alexa app to finish.'
         }
     };
 

@@ -32,6 +32,18 @@ module.exports = function ({ dbGet, dbRun, utils, auth, core, eventGateway }) {
                 } catch (error) {
                     console.warn('ALEXA UNLINK DELETE_REPORT skipped:', error?.message);
                 }
+                // Disable + unlink the skill at Amazon using the customer's LWA token.
+                // This is what actually stops the "relink your account" nag — revoking
+                // only our own tokens (below) leaves the skill enabled, so Amazon's next
+                // failed refresh prompts a relink. Best-effort; must run before cleanup
+                // wipes the LWA token. If it can't (no ALEXA_SKILL_ID, or the token lacks
+                // the account_linking scope), the unlink copy tells the user to disable
+                // the skill in the Alexa app instead.
+                try {
+                    await eventGateway.disableSkillForUser(req.portalUser.id, 'portal_unlink');
+                } catch (error) {
+                    console.warn('ALEXA UNLINK skill-disable skipped:', error?.message);
+                }
                 await core.cleanupAlexaAuthDataForUser(req.portalUser.id);
             }
 
