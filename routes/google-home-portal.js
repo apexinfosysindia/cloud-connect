@@ -43,7 +43,9 @@ module.exports = function ({ dbGet, dbRun, utils, auth, googleCore, homegraph })
             );
 
             const updatedUser = await dbGet(`SELECT * FROM users WHERE id = ?`, [req.portalUser.id]);
-            const portalSessionToken = auth.createPortalSessionToken(updatedUser.email);
+            // Preserve the session epoch — omitting it stamps the token epoch 0, which
+            // fails requirePortalUser's epoch check and logs the user out on unlink.
+            const portalSessionToken = auth.createPortalSessionToken(updatedUser.email, updatedUser.session_epoch);
             auth.setPortalSessionCookie(res, portalSessionToken);
             if (enable) {
                 homegraph.scheduleGoogleRequestSyncForUser(req.portalUser.id, 'google_home_enabled');

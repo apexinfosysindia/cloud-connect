@@ -29,59 +29,33 @@ module.exports = function ({ dbGet, dbRun, utils, auth, core, eventGateway }) {
                 // from Alexa (DeleteReport) BEFORE disabling the skill, because Amazon
                 // rejects DeleteReports for a disabled skill ("no valid enablement") —
                 // disabling first would orphan the tiles forever with no way to retry.
-                // So: (1) DeleteReport; (2) ONLY if that succeeded, disable the skill +
-                // wipe our tokens (full clean unlink, stops the relink nag). If the
-                // DeleteReport FAILED (e.g. the link was already in a broken/disabled
-                // state at Amazon), we do NOT disable and do NOT wipe tokens — we keep
-                // the link so the tiles can still be cleared later, set enabled=0 so the
-                // dashboard reflects "paused", and tell the user.
-                let deleteOk = true; // default true so a no-endpoints unlink still disables
-                try {
-                    const rows = await core.getAlexaEndpointsForUser(req.portalUser.id, { includeDisabled: true });
-                    const endpointIds = (rows || []).map((r) => r.entity_id).filter(Boolean);
-                    if (endpointIds.length > 0) {
-                        // One immediate attempt + one short retry — transient gateway 5xx
-                        // is common and a retry often lands before we give up.
-                        let resp = await eventGateway.deleteEndpointsNow(req.portalUser.id, endpointIds, 'portal_unlink');
-                        if (!resp?.ok && !resp?.skipped) {
-                            await new Promise((r) => setTimeout(r, 750));
-                            resp = await eventGateway.deleteEndpointsNow(req.portalUser.id, endpointIds, 'portal_unlink_retry');
-                        }
-                        // A skip (no creds / no token) is NOT a delivered delete → treat as not-ok.
-                        deleteOk = Boolean(resp?.ok);
-                    }
-                } catch (error) {
-                    console.warn('ALEXA UNLINK DELETE_REPORT error:', error?.message);
-                    deleteOk = false;
-                }
+                // runGatedUnlinkOnce enforces this gate AND is single-flight: two
+                // simultaneous Unlink clicks join ONE operation instead of racing
+                // (a race let one click's token-wipe land under the other's in-flight
+                // DeleteReport → orphaned tiles). It returns tiles_cleared:false when
+                // the DeleteReport didn't land (Amazon's transient INTERNAL_SERVICE_
+                // EXCEPTION), in which case we keep the link and retry in the background.
+                const unlinkResult = await eventGateway.runGatedUnlinkOnce(req.portalUser.id, 'portal_unlink');
 
-                if (deleteOk) {
-                    // Tiles are gone from Alexa — safe to disable the skill at Amazon
-                    // (stops the relink nag) and wipe our tokens.
-                    try {
-                        await eventGateway.disableSkillForUser(req.portalUser.id, 'portal_unlink');
-                    } catch (error) {
-                        console.warn('ALEXA UNLINK skill-disable skipped:', error?.message);
-                    }
-                    await core.cleanupAlexaAuthDataForUser(req.portalUser.id);
-                } else {
-                    // DeleteReport did not land. Do NOT disable the skill or wipe tokens —
-                    // that would make the orphaned tiles permanently unrecoverable. Leave
-                    // the link intact (alexa_linked stays 1) for a future retry; just pause
-                    // it (enabled=0) so the dashboard reflects "paused". Tell the user.
+                if (!unlinkResult?.tiles_cleared) {
+                    // DeleteReport did not land. The gate held: skill NOT disabled and
+                    // tokens NOT wiped, so the orphaned tiles stay recoverable. Leave the
+                    // link intact (alexa_linked stays 1) for a future retry; just pause it
+                    // (enabled=0) so the dashboard reflects "paused". Tell the user.
                     console.warn('ALEXA UNLINK: DeleteReport failed; keeping link for retry, NOT disabling skill. user', req.portalUser.id);
                     await dbRun(`UPDATE users SET alexa_enabled = 0 WHERE id = ?`, [req.portalUser.id]);
-                    // Schedule a background retry with backoff — Amazon's enablement
-                    // state is eventually-consistent after a rapid link/unlink and the
-                    // delete usually lands within a few minutes, so the tiles clear
-                    // without the user re-clicking. On success the retry finishes the
-                    // unlink (disable skill + cleanup). In-memory; lost on restart, in
-                    // which case the manual Unlink button still works.
+                    // Schedule a background retry with backoff — Amazon's gateway flap is
+                    // transient and the delete usually lands within seconds-to-minutes, so
+                    // the tiles clear without the user re-clicking. On success the retry
+                    // finishes the unlink (disable skill + cleanup). In-memory; lost on
+                    // restart, in which case the manual Unlink button still works.
                     if (eventGateway?.scheduleAlexaUnlinkRetry) {
                         eventGateway.scheduleAlexaUnlinkRetry(req.portalUser.id, 0);
                     }
                     const pausedUser = await dbGet(`SELECT * FROM users WHERE id = ?`, [req.portalUser.id]);
-                    const pausedToken = auth.createPortalSessionToken(pausedUser.email);
+                    // Preserve the session epoch — omitting it stamps the token epoch 0,
+                    // which fails requirePortalUser's epoch check and logs the user out.
+                    const pausedToken = auth.createPortalSessionToken(pausedUser.email, pausedUser.session_epoch);
                     auth.setPortalSessionCookie(res, pausedToken);
                     return res.status(200).json({
                         message: 'alexa_unlink_tiles_pending',
@@ -89,12 +63,16 @@ module.exports = function ({ dbGet, dbRun, utils, auth, core, eventGateway }) {
                         data: auth.serializeUserWithPortalSession(pausedUser, pausedToken)
                     });
                 }
+                // tiles_cleared:true — runGatedUnlinkOnce already disabled the skill at
+                // Amazon and wiped our Alexa tokens. Fall through to set alexa_enabled=0.
             }
 
             await dbRun(`UPDATE users SET alexa_enabled = ? WHERE id = ?`, [enable ? 1 : 0, req.portalUser.id]);
 
             const updatedUser = await dbGet(`SELECT * FROM users WHERE id = ?`, [req.portalUser.id]);
-            const portalSessionToken = auth.createPortalSessionToken(updatedUser.email);
+            // Preserve the session epoch — omitting it stamps the token epoch 0, which
+            // fails requirePortalUser's epoch check and logs the user out on unlink.
+            const portalSessionToken = auth.createPortalSessionToken(updatedUser.email, updatedUser.session_epoch);
             auth.setPortalSessionCookie(res, portalSessionToken);
             if (enable) {
                 eventGateway.scheduleAlexaAddOrUpdateReportForUser(req.portalUser.id, 'alexa_enabled');
