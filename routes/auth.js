@@ -674,6 +674,20 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, w
             // Rotate access token so all devices using the old one lose access
             const newAccessToken = await device.createUniqueAccessToken();
 
+            // Before we DELETE the device rows below, drop this user's Alexa endpoints
+            // from Amazon. Those endpoint rows are FK'd to devices ON DELETE CASCADE, so
+            // the DELETE wipes them locally with no DeleteReport — Amazon would keep the
+            // tiles forever (we'd no longer have the entity_ids to delete them later).
+            // Best-effort, awaited, while rows + LWA token still exist. Only meaningful
+            // if the account is alexa-linked.
+            if (user.alexa_linked && eventGateway?.deleteAllEndpointsForUserNow) {
+                try {
+                    await eventGateway.deleteAllEndpointsForUserNow(user.id, 'logout_all_devices');
+                } catch (error) {
+                    console.warn('ALEXA logout-all DeleteReport skipped:', error?.message);
+                }
+            }
+
             await dbTransaction(async ({ dbRun: txRun }) => {
                 await txRun(`UPDATE users SET access_token = ? WHERE id = ?`, [newAccessToken, user.id]);
 
