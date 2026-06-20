@@ -1134,12 +1134,14 @@
             };
             localStorage.setItem('apex_user', JSON.stringify(merged));
             renderDashboard(merged, { scroll: false });
-            // The Alexa unlink is GATED: if the DeleteReport to Amazon didn't land
-            // (e.g. the link was already broken at Amazon), the server keeps the link
-            // and reports tiles_cleared:false so we can tell the user honestly rather
-            // than claim a clean unlink.
+            // The Alexa unlink is GATED: if the DeleteReport to Amazon didn't land in
+            // one go (Amazon's gateway intermittently 500s on large device sets), the
+            // server keeps the link and reports tiles_cleared:false — but it ALSO retries
+            // the removal in the background until it lands. So we tell the user it's
+            // finishing in the background (calm, non-error) rather than showing a failure
+            // that makes them click Unlink over and over.
             if (vendor === 'alexa' && data.tiles_cleared === false) {
-                showAlert('Couldn\'t remove your devices from Alexa right now (the Alexa link looks broken on Amazon\'s side). We\'ve paused it without disabling the skill so the tiles can still be cleared. Try Unlink again in a minute; if they persist, open the Alexa app and use "Forget all devices" / disable the "Apex Oasis" skill.', true);
+                showAlert('Unlinking Alexa — this is finishing in the background and your devices will be removed shortly. No need to click again.', false);
             } else {
                 showAlert(cfg.success, false);
             }
