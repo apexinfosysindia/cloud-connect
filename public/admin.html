@@ -141,6 +141,17 @@
                 <div id="fleetList" class="fleet-list"></div>
             </section>
 
+            <section class="section-card user-section smart-home-health-section">
+                <div class="section-header">
+                    <div>
+                        <h2 class="section-title section-title--small">Smart Home health</h2>
+                        <p class="section-text">Proactive report delivery to Amazon Alexa and Google Home, fleet-wide. Counters reset on server restart.</p>
+                    </div>
+                    <button id="refreshSmartHomeBtn" class="button button-secondary">Refresh</button>
+                </div>
+                <div id="smartHomeHealth" class="smart-home-health"></div>
+            </section>
+
             <section class="section-card user-section">
                 <div class="section-header">
                     <div>
@@ -229,6 +240,8 @@ const tokenModalSubtitle = document.getElementById('tokenModalSubtitle');
 const refreshFleetBtn = document.getElementById('refreshFleetBtn');
 const fleetList = document.getElementById('fleetList');
 const fleetWindow = document.getElementById('fleetWindow');
+const smartHomeHealth = document.getElementById('smartHomeHealth');
+const refreshSmartHomeBtn = document.getElementById('refreshSmartHomeBtn');
 const countDevicesTotal = document.getElementById('countDevicesTotal');
 const countDevicesOnline = document.getElementById('countDevicesOnline');
 const countDevicesOffline = document.getElementById('countDevicesOffline');
@@ -791,6 +804,84 @@ async function loadFleet() {
     renderFleet(fleetDevices, data.stats || deriveFleetStats(fleetDevices), data.heartbeat_window_seconds || 45);
 }
 
+async function loadSmartHomeHealth() {
+    const data = await api('/api/admin/smart-home-health');
+    renderSmartHomeHealth(data || {});
+}
+
+// Render order + human labels for each vendor's report-type metrics. Keys must match
+// state.alexaEventGatewayMetrics / state.homegraphMetrics in the backend.
+const SMART_HOME_HEALTH_GROUPS = [
+    {
+        vendor: 'Alexa',
+        source: 'alexa',
+        rows: [
+            ['add_or_update_report', 'AddOrUpdateReport'],
+            ['change_report', 'ChangeReport'],
+            ['delete_report', 'DeleteReport'],
+            ['doorbell_event', 'Doorbell']
+        ]
+    },
+    {
+        vendor: 'Google',
+        source: 'google',
+        rows: [
+            ['request_sync', 'RequestSync'],
+            ['report_state', 'ReportState']
+        ]
+    }
+];
+
+function formatHealthTimestamp(value) {
+    if (!value) return '—';
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
+}
+
+function renderSmartHomeHealth(data) {
+    if (!smartHomeHealth) return;
+    const tables = SMART_HOME_HEALTH_GROUPS.map((group) => {
+        const metrics = data[group.source] || {};
+        const rows = group.rows.map(([key, label]) => {
+            const m = metrics[key] || {};
+            const sent = Number(m.sent || 0);
+            const failed = Number(m.failed || 0);
+            const skipped = Number(m.skipped || 0);
+            const failClass = failed > 0 ? ' smart-home-health__cell--fail' : '';
+            const lastFailure = m.last_failure_reason
+                ? `${escapeHtml(String(m.last_failure_reason))}${m.last_status ? ' (' + escapeHtml(String(m.last_status)) + ')' : ''}`
+                : '—';
+            const lastActivity = formatHealthTimestamp(m.last_failure_at || m.last_success_at);
+            return `
+                <tr>
+                    <td>${escapeHtml(label)}</td>
+                    <td>${sent}</td>
+                    <td class="${failClass.trim()}">${failed}</td>
+                    <td>${skipped}</td>
+                    <td>${escapeHtml(formatHealthTimestamp(m.last_success_at))}</td>
+                    <td>${lastFailure}</td>
+                    <td>${escapeHtml(lastActivity)}</td>
+                </tr>`;
+        }).join('');
+        return `
+            <div class="smart-home-health__group">
+                <h3 class="section-title section-title--small">${escapeHtml(group.vendor)}</h3>
+                <div class="smart-home-health__table-wrap">
+                    <table class="smart-home-health__table">
+                        <thead>
+                            <tr>
+                                <th>Report</th><th>Sent</th><th>Failed</th><th>Skipped</th>
+                                <th>Last success</th><th>Last failure</th><th>Last activity</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+            </div>`;
+    }).join('');
+    smartHomeHealth.innerHTML = tables;
+}
+
 async function applyStatus(userId, status, trialDays) {
     const response = await api(`/api/admin/users/${userId}/status`, {
         method: 'POST',
@@ -956,6 +1047,7 @@ function stopUsersAutoRefresh() {
 async function loadDashboardData() {
     await loadUsers();
     await loadFleet();
+    await loadSmartHomeHealth();
 }
 
 async function restoreAdminSession() {
@@ -1050,6 +1142,24 @@ refreshFleetBtn.addEventListener('click', async () => {
         refreshFleetBtn.textContent = originalLabel;
     }
 });
+
+if (refreshSmartHomeBtn) {
+    refreshSmartHomeBtn.addEventListener('click', async () => {
+        refreshSmartHomeBtn.disabled = true;
+        const originalLabel = refreshSmartHomeBtn.textContent;
+        refreshSmartHomeBtn.textContent = 'Refreshing...';
+
+        try {
+            await loadSmartHomeHealth();
+            hideAlert();
+        } catch (error) {
+            showAlert(normalizeErrorMessage(error, 'Unable to refresh Smart Home health'));
+        } finally {
+            refreshSmartHomeBtn.disabled = false;
+            refreshSmartHomeBtn.textContent = originalLabel;
+        }
+    });
+}
 
 function doLogout() {
     localStorage.removeItem(ADMIN_TOKEN_KEY);
