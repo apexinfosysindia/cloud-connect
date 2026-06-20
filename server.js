@@ -303,6 +303,7 @@ app.use(require('./routes/alexa-oauth')(alexaDeps));
 app.use(require('./routes/alexa-portal')(alexaDeps));
 app.use(require('./routes/alexa-fulfillment')(alexaDeps));
 app.use(require('./routes/alexa-device-api')(alexaDeps));
+app.use(require('./routes/alexa-admin')(alexaDeps));
 
 // --- Global error handler for uncaught route errors (used by asyncHandler) ---
 app.use((error, _req, res, _next) => {

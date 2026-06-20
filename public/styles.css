@@ -815,6 +815,53 @@ code {
     gap: 14px;
 }
 
+.admin-page .smart-home-health {
+    display: grid;
+    gap: 18px;
+}
+
+.admin-page .smart-home-health__group {
+    display: grid;
+    gap: 8px;
+}
+
+.admin-page .smart-home-health__table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+}
+
+.admin-page .smart-home-health__table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+    min-width: 640px;
+}
+
+.admin-page .smart-home-health__table th,
+.admin-page .smart-home-health__table td {
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+}
+
+.admin-page .smart-home-health__table th {
+    background: var(--surface-subtle);
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+.admin-page .smart-home-health__table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.admin-page .smart-home-health__cell--fail {
+    color: var(--danger);
+    font-weight: 700;
+    background: var(--danger-soft);
+}
+
 .admin-page .fleet-card .user-card__summary {
     cursor: pointer;
 }
