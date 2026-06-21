@@ -4,13 +4,16 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const { recordAppEvent } = require('./lib/server-state');
 
 // Prevent unhandled errors from crashing the process (Caddy returns 502 when Node is down)
 process.on('uncaughtException', (error) => {
     console.error('UNCAUGHT EXCEPTION (process kept alive):', error);
+    recordAppEvent('error', 'process', 'uncaughtException', { message: error?.message || String(error) });
 });
 process.on('unhandledRejection', (reason) => {
     console.error('UNHANDLED REJECTION (process kept alive):', reason);
+    recordAppEvent('error', 'process', 'unhandledRejection', { message: reason?.message || String(reason) });
 });
 
 // --- Load lib modules ---
@@ -287,6 +290,7 @@ app.use(require('./routes/admin-fleet')(deps));
 app.use(require('./routes/auth')(deps));
 app.use(require('./routes/webauthn')(deps));
 app.use(require('./routes/admin-sudo')(deps));
+app.use(require('./routes/admin-server')(deps));
 app.use(require('./routes/billing')(deps));
 app.use(require('./routes/admin')(deps));
 app.use(require('./routes/internal')(deps));
@@ -306,8 +310,13 @@ app.use(require('./routes/alexa-device-api')(alexaDeps));
 app.use(require('./routes/alexa-admin')(alexaDeps));
 
 // --- Global error handler for uncaught route errors (used by asyncHandler) ---
-app.use((error, _req, res, _next) => {
+app.use((error, req, res, _next) => {
     console.error('UNHANDLED ROUTE ERROR:', error);
+    recordAppEvent('error', 'route', 'Unhandled route error', {
+        message: error?.message || String(error),
+        path: req?.originalUrl || req?.url || null,
+        method: req?.method || null
+    });
     if (!res.headersSent) {
         res.status(500).json({ error: 'Internal server error' });
     }

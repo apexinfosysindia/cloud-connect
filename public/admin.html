@@ -152,6 +152,38 @@
                 <div id="smartHomeHealth" class="smart-home-health"></div>
             </section>
 
+            <section class="section-card user-section server-health-section">
+                <div class="section-header">
+                    <div>
+                        <h2 class="section-title section-title--small">Server health &amp; controls</h2>
+                        <p class="section-text">Live process/host metrics, PM2 &amp; app logs, and privileged controls. Restart and reboot require a fresh re-authentication and are audited.</p>
+                    </div>
+                    <button id="refreshServerBtn" class="button button-secondary">Refresh</button>
+                </div>
+
+                <div id="serverHealthTiles" class="stats-grid fleet-stats-grid"></div>
+
+                <div class="server-health__logs">
+                    <div class="server-health__logbar">
+                        <label class="server-health__loglabel">Logs:
+                            <select id="serverLogSource" class="server-health__select">
+                                <option value="pm2_out">PM2 stdout</option>
+                                <option value="pm2_err">PM2 stderr</option>
+                                <option value="app_events">App events (in-memory)</option>
+                            </select>
+                        </label>
+                        <button id="serverLogRefreshBtn" class="button button-secondary button-small">Reload logs</button>
+                    </div>
+                    <div id="serverLogView" class="shh-stream server-health__logview"></div>
+                </div>
+
+                <div class="server-health__controls">
+                    <button id="serverRestartBtn" class="button button-danger button-small" type="button">Restart app</button>
+                    <button id="serverRebootBtn" class="button button-danger button-small" type="button">Reboot server</button>
+                    <span id="serverControlStatus" class="server-health__ctrlstatus"></span>
+                </div>
+            </section>
+
             <section class="section-card user-section">
                 <div class="section-header">
                     <div>
@@ -242,6 +274,14 @@ const fleetList = document.getElementById('fleetList');
 const fleetWindow = document.getElementById('fleetWindow');
 const smartHomeHealth = document.getElementById('smartHomeHealth');
 const refreshSmartHomeBtn = document.getElementById('refreshSmartHomeBtn');
+const serverHealthTiles = document.getElementById('serverHealthTiles');
+const serverLogSource = document.getElementById('serverLogSource');
+const serverLogView = document.getElementById('serverLogView');
+const serverLogRefreshBtn = document.getElementById('serverLogRefreshBtn');
+const refreshServerBtn = document.getElementById('refreshServerBtn');
+const serverRestartBtn = document.getElementById('serverRestartBtn');
+const serverRebootBtn = document.getElementById('serverRebootBtn');
+const serverControlStatus = document.getElementById('serverControlStatus');
 const countDevicesTotal = document.getElementById('countDevicesTotal');
 const countDevicesOnline = document.getElementById('countDevicesOnline');
 const countDevicesOffline = document.getElementById('countDevicesOffline');
@@ -878,8 +918,176 @@ function renderSmartHomeHealth(data) {
                 </div>
             </div>`;
     }).join('');
-    smartHomeHealth.innerHTML = tables;
+
+    // Recent-events log stream (newest first) — a lightweight, volatile event log
+    // beneath the counters so an admin can see the actual events, not just totals.
+    const recent = Array.isArray(data.recent) ? data.recent : [];
+    let stream = '';
+    if (recent.length) {
+        const lines = recent.map((e) => {
+            const cls = e.outcome === 'failed' ? 'shh-evt--failed' : e.outcome === 'skipped' ? 'shh-evt--skipped' : 'shh-evt--sent';
+            const detail = e.detail ? ` — ${escapeHtml(String(e.detail))}` : '';
+            const status = e.status ? ` (${escapeHtml(String(e.status))})` : '';
+            return `<div class="shh-evt ${cls}">`
+                + `<span class="shh-evt__time">${escapeHtml(formatHealthTimestamp(e.at))}</span> `
+                + `<span class="shh-evt__vendor">${escapeHtml(String(e.vendor || ''))}</span> `
+                + `<span class="shh-evt__type">${escapeHtml(String(e.type || ''))}</span> `
+                + `<span class="shh-evt__outcome">${escapeHtml(String(e.outcome || ''))}${status}</span>`
+                + `<span class="shh-evt__user">${e.user_id ? ' user ' + escapeHtml(String(e.user_id)) : ''}</span>`
+                + `${detail}</div>`;
+        }).join('');
+        stream = `
+            <div class="smart-home-health__group">
+                <h3 class="section-title section-title--small">Recent events <span class="shh-evt__count">(${recent.length}, newest first — in-memory, clears on restart)</span></h3>
+                <div class="shh-stream">${lines}</div>
+            </div>`;
+    }
+
+    smartHomeHealth.innerHTML = tables + stream;
 }
+
+// ── Server health & controls ───────────────────────────────────────────────
+let serverSudoToken = null; // in-memory only; never persisted
+
+function fmtBytes(n) {
+    if (!Number.isFinite(n)) return '—';
+    const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let i = 0; let v = n;
+    while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+    return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${u[i]}`;
+}
+function fmtDuration(sec) {
+    if (!Number.isFinite(sec)) return '—';
+    const d = Math.floor(sec / 86400); const h = Math.floor((sec % 86400) / 3600); const m = Math.floor((sec % 3600) / 60);
+    if (d > 0) return `${d}d ${h}h`;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+}
+function statTile(label, value, sub) {
+    return `<article class="stat-card"><span class="stat-label">${escapeHtml(label)}</span>`
+        + `<span class="stat-value">${escapeHtml(value)}</span>`
+        + (sub ? `<span class="stat-card__sub">${escapeHtml(sub)}</span>` : '')
+        + `</article>`;
+}
+
+async function loadServerHealth() {
+    if (!serverHealthTiles) return;
+    const d = await api('/api/admin/server/health');
+    const procMemRss = d.process?.memory?.rss;
+    const osTotal = d.os?.total_mem_bytes; const osFree = d.os?.free_mem_bytes;
+    const osUsed = (Number.isFinite(osTotal) && Number.isFinite(osFree)) ? osTotal - osFree : NaN;
+    const load = Array.isArray(d.os?.loadavg) ? d.os.loadavg.map((x) => x.toFixed(2)).join(' / ') : '—';
+    const disk = d.disk;
+    serverHealthTiles.innerHTML = [
+        statTile('App uptime', fmtDuration(d.process?.uptime_seconds), d.deploy_commit ? `build ${String(d.deploy_commit).slice(0, 8)}` : ''),
+        statTile('Host uptime', fmtDuration(d.os?.uptime_seconds), d.os?.hostname || ''),
+        statTile('Load avg', load, `${d.os?.cpu_count || '?'} cpu`),
+        statTile('Host memory', `${fmtBytes(osUsed)} / ${fmtBytes(osTotal)}`, `app rss ${fmtBytes(procMemRss)}`),
+        statTile('Disk /', disk ? `${fmtBytes(disk.used_bytes)} / ${fmtBytes(disk.total_bytes)}` : '—', disk?.used_percent ? `${disk.used_percent} used` : ''),
+        statTile('PM2', d.pm2?.status || '—', d.pm2 ? `${d.pm2.restarts ?? '?'} restarts` : 'unavailable')
+    ].join('');
+}
+
+async function loadServerLogs() {
+    if (!serverLogView) return;
+    const source = serverLogSource ? serverLogSource.value : 'pm2_out';
+    serverLogView.textContent = 'Loading…';
+    try {
+        let lines = [];
+        if (source === 'app_events') {
+            const d = await api('/api/admin/server/app-events');
+            lines = (d.events || []).map((e) => {
+                const meta = e.meta ? ` ${e.meta}` : '';
+                return `${formatHealthTimestamp(e.at)} [${e.level}] ${e.source}: ${e.msg}${meta}`;
+            });
+        } else {
+            const d = await api(`/api/admin/server/logs?source=${encodeURIComponent(source)}&lines=300`);
+            lines = d.available ? d.lines : ['(log file not available)'];
+        }
+        if (!lines.length) lines = ['(no entries)'];
+        serverLogView.innerHTML = lines.map((l) => `<div class="shh-evt">${escapeHtml(String(l))}</div>`).join('');
+        serverLogView.scrollTop = serverLogView.scrollHeight;
+    } catch (error) {
+        serverLogView.textContent = normalizeErrorMessage(error, 'Unable to load logs');
+    }
+}
+
+// Obtain a fresh sudo grant (password + optional passkey), reusing the same flow as the
+// security page. Returns true if a grant is now held. Sets serverSudoToken.
+async function ensureServerSudo() {
+    if (serverSudoToken) return true;
+    const password = window.prompt('Re-enter the admin password to authorize this action:');
+    if (!password) return false;
+    const optData = await api('/api/admin/sudo/options', { method: 'POST', body: { password } });
+    if (optData && optData.mfa_required) {
+        if (!window.SimpleWebAuthnBrowser) throw new Error('Passkeys are not supported in this browser.');
+        let assertion;
+        try {
+            assertion = await withTimeout(window.SimpleWebAuthnBrowser.startAuthentication(optData.options), 90000);
+        } catch (authErr) {
+            throw new Error(describePasskeyError(authErr).message);
+        }
+        const verified = await api('/api/admin/sudo/verify', { method: 'POST', body: { assertion } });
+        serverSudoToken = verified.sudo_token;
+    } else {
+        serverSudoToken = optData.sudo_token;
+    }
+    return Boolean(serverSudoToken);
+}
+
+// POST a control endpoint with the sudo header; on 401 sudo_required, drop+retry once.
+async function serverControlPost(path, body) {
+    const doPost = () => api(path, { method: 'POST', body, headers: { 'X-Sudo-Token': serverSudoToken } });
+    try {
+        return await doPost();
+    } catch (error) {
+        if (/sudo_required/.test(error.message)) {
+            serverSudoToken = null;
+            if (!(await ensureServerSudo())) throw new Error('Re-authentication cancelled.');
+            return await doPost();
+        }
+        throw error;
+    }
+}
+
+async function handleServerControl(kind) {
+    const isReboot = kind === 'reboot';
+    const confirmed = await openConfirmModal({
+        title: isReboot ? 'Reboot server' : 'Restart app',
+        message: isReboot
+            ? 'This will REBOOT the entire production server. All services go down for ~1–2 minutes. Continue?'
+            : 'This will restart the apex-portal app process. Brief downtime (~seconds). Continue?',
+        confirmLabel: isReboot ? 'Reboot server' : 'Restart app',
+        danger: true
+    });
+    if (!confirmed) return;
+    if (serverControlStatus) serverControlStatus.textContent = 'Authorizing…';
+    try {
+        if (!(await ensureServerSudo())) { if (serverControlStatus) serverControlStatus.textContent = ''; return; }
+        if (serverControlStatus) serverControlStatus.textContent = isReboot ? 'Rebooting…' : 'Restarting…';
+        await serverControlPost(isReboot ? '/api/admin/server/reboot' : '/api/admin/server/restart-app', { reason: 'admin panel' });
+        if (isReboot) {
+            if (serverControlStatus) serverControlStatus.textContent = 'Server is rebooting — it will be back shortly.';
+        } else {
+            if (serverControlStatus) serverControlStatus.textContent = 'Restart issued — reconnecting…';
+            // Poll health until the app answers again.
+            let tries = 0;
+            const poll = setInterval(async () => {
+                tries++;
+                try { await api('/api/admin/server/health'); clearInterval(poll); if (serverControlStatus) serverControlStatus.textContent = 'App is back online.'; await loadServerHealth(); }
+                catch (_e) { if (tries > 20) { clearInterval(poll); if (serverControlStatus) serverControlStatus.textContent = 'App restart taking longer than expected — refresh manually.'; } }
+            }, 2000);
+        }
+    } catch (error) {
+        if (serverControlStatus) serverControlStatus.textContent = normalizeErrorMessage(error, 'Action failed');
+    }
+}
+
+if (refreshServerBtn) refreshServerBtn.addEventListener('click', () => { loadServerHealth().catch(() => {}); loadServerLogs().catch(() => {}); });
+if (serverLogRefreshBtn) serverLogRefreshBtn.addEventListener('click', () => loadServerLogs().catch(() => {}));
+if (serverLogSource) serverLogSource.addEventListener('change', () => loadServerLogs().catch(() => {}));
+if (serverRestartBtn) serverRestartBtn.addEventListener('click', () => handleServerControl('restart'));
+if (serverRebootBtn) serverRebootBtn.addEventListener('click', () => handleServerControl('reboot'));
 
 async function applyStatus(userId, status, trialDays) {
     const response = await api(`/api/admin/users/${userId}/status`, {
@@ -1047,6 +1255,8 @@ async function loadDashboardData() {
     await loadUsers();
     await loadFleet();
     await loadSmartHomeHealth();
+    await loadServerHealth().catch(() => {});
+    await loadServerLogs().catch(() => {});
 }
 
 async function restoreAdminSession() {
