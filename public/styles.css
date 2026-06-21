@@ -862,58 +862,87 @@ code {
     background: var(--danger-soft);
 }
 
+/* Terminal-console log stream — shared by the Event Gateway "Recent events" list
+   and the Server Health log viewer. Dark panel, monospace, colour-coded severity. */
 .admin-page .shh-stream {
-    max-height: 320px;
+    max-height: 340px;
     overflow-y: auto;
-    border: 1px solid var(--line);
+    border: 1px solid #1f2937;
     border-radius: 10px;
-    background: var(--surface-subtle);
+    background: #0b1020;
+    color: #cbd5e1;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.8rem;
-    line-height: 1.5;
+    font-size: 0.78rem;
+    line-height: 1.55;
+    padding: 6px 0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.admin-page .shh-stream::-webkit-scrollbar {
+    width: 10px;
+}
+.admin-page .shh-stream::-webkit-scrollbar-thumb {
+    background: #334155;
+    border-radius: 8px;
+    border: 2px solid #0b1020;
 }
 
 .admin-page .shh-evt {
-    padding: 4px 12px;
-    border-bottom: 1px solid var(--line);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    padding: 3px 14px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    border-left: 2px solid transparent;
 }
 
-.admin-page .shh-evt:last-child {
-    border-bottom: none;
+.admin-page .shh-evt:hover {
+    background: rgba(148, 163, 184, 0.08);
 }
 
 .admin-page .shh-evt__time {
-    color: var(--text-muted);
+    color: #64748b;
+    margin-right: 8px;
 }
 
 .admin-page .shh-evt__vendor {
     text-transform: uppercase;
     font-weight: 700;
-    font-size: 0.72rem;
+    font-size: 0.68rem;
+    color: #38bdf8;
+    margin-right: 6px;
 }
 
 .admin-page .shh-evt__type {
     font-weight: 600;
+    color: #e2e8f0;
+    margin-right: 6px;
+}
+
+.admin-page .shh-evt__user {
+    color: #94a3b8;
 }
 
 .admin-page .shh-evt--failed {
-    background: var(--danger-soft);
+    border-left-color: #ef4444;
+    background: rgba(239, 68, 68, 0.08);
 }
 
 .admin-page .shh-evt--failed .shh-evt__outcome {
-    color: var(--danger);
+    color: #f87171;
     font-weight: 700;
 }
 
 .admin-page .shh-evt--skipped {
-    color: var(--text-muted);
+    color: #94a3b8;
+}
+.admin-page .shh-evt--skipped .shh-evt__outcome {
+    color: #fbbf24;
 }
 
+.admin-page .shh-evt--sent {
+    border-left-color: #22c55e;
+}
 .admin-page .shh-evt--sent .shh-evt__outcome {
-    color: var(--success, #15803d);
+    color: #4ade80;
     font-weight: 600;
 }
 
@@ -921,6 +950,80 @@ code {
     font-weight: 400;
     font-size: 0.78rem;
     color: var(--text-muted);
+}
+
+/* Collapsible log/events section: clear header bar with a count badge + chevron. */
+.admin-page .logsection {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-top: 14px;
+}
+.admin-page .logsection__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+    background: var(--surface-subtle);
+    cursor: pointer;
+    user-select: none;
+}
+.admin-page .logsection__title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+.admin-page .logsection__badge {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 1px 8px;
+}
+.admin-page .logsection__chevron {
+    transition: transform 0.18s ease;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+.admin-page .logsection.is-open .logsection__chevron {
+    transform: rotate(90deg);
+}
+.admin-page .logsection__body {
+    display: none;
+    padding: 0 12px 12px;
+}
+.admin-page .logsection.is-open .logsection__body {
+    display: block;
+}
+
+/* Show/hide password toggle inside the sudo modal. */
+.admin-page .password-field {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+.admin-page .password-field .input {
+    flex: 1;
+    padding-right: 64px;
+}
+.admin-page .password-field__toggle {
+    position: absolute;
+    right: 8px;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 4px 8px;
+}
+.admin-page .password-field__toggle:hover {
+    color: var(--text);
 }
 
 .admin-page .stat-card__sub {
