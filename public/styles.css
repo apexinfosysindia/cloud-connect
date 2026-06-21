@@ -862,6 +862,120 @@ code {
     background: var(--danger-soft);
 }
 
+.admin-page .shh-stream {
+    max-height: 320px;
+    overflow-y: auto;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface-subtle);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+
+.admin-page .shh-evt {
+    padding: 4px 12px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.admin-page .shh-evt:last-child {
+    border-bottom: none;
+}
+
+.admin-page .shh-evt__time {
+    color: var(--text-muted);
+}
+
+.admin-page .shh-evt__vendor {
+    text-transform: uppercase;
+    font-weight: 700;
+    font-size: 0.72rem;
+}
+
+.admin-page .shh-evt__type {
+    font-weight: 600;
+}
+
+.admin-page .shh-evt--failed {
+    background: var(--danger-soft);
+}
+
+.admin-page .shh-evt--failed .shh-evt__outcome {
+    color: var(--danger);
+    font-weight: 700;
+}
+
+.admin-page .shh-evt--skipped {
+    color: var(--text-muted);
+}
+
+.admin-page .shh-evt--sent .shh-evt__outcome {
+    color: var(--success, #15803d);
+    font-weight: 600;
+}
+
+.admin-page .shh-evt__count {
+    font-weight: 400;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+.admin-page .stat-card__sub {
+    font-size: 0.74rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.admin-page .server-health__logs {
+    margin-top: 16px;
+}
+
+.admin-page .server-health__logbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+}
+
+.admin-page .server-health__loglabel {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.admin-page .server-health__select {
+    padding: 6px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    font-size: 0.85rem;
+}
+
+.admin-page .server-health__logview {
+    max-height: 360px;
+}
+
+.admin-page .server-health__controls {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.admin-page .server-health__ctrlstatus {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
 .admin-page .fleet-card .user-card__summary {
     cursor: pointer;
 }
