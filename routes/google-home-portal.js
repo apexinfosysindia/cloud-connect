@@ -137,12 +137,14 @@ module.exports = function ({ dbGet, dbRun, utils, auth, googleCore, homegraph })
     // Bulk expose/hide endpoint. Dashboard fan-out operations (e.g. "expose all
     // lights in this room") previously hit the per-minute rate limit by issuing
     // one request per entity. This endpoint accepts an array of updates and
-    // processes them server-side in batches of 10 with a 150ms delay between
+    // processes them server-side in batches of 50 with a 50ms delay between
     // batches so any downstream work (DB writes, homegraph scheduling) is
-    // paced rather than bursted. The two homegraph schedule calls are issued
-    // once at the end of the request rather than per-entity.
-    const BULK_EXPOSE_BATCH_SIZE = 10;
-    const BULK_EXPOSE_BATCH_DELAY_MS = 150;
+    // paced rather than bursted. Each item is only a local SELECT + UPDATE — the
+    // homegraph schedule calls are issued once at the end of the request, not
+    // per-entity — so the batch size is bounded by DB-connection fairness, not an
+    // external rate limit.
+    const BULK_EXPOSE_BATCH_SIZE = 50;
+    const BULK_EXPOSE_BATCH_DELAY_MS = 50;
     const BULK_EXPOSE_MAX_ITEMS = 200;
 
     router.post(

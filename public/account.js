@@ -845,6 +845,13 @@
     }
 
     // Shared expose/hide for a set of entities via the batched server endpoint.
+    // The server rejects any single request carrying more than BULK_EXPOSE_MAX_ITEMS
+    // (200) entities, so when a select-all exceeds that we split into sequential
+    // sub-requests of <=200 here and aggregate the results. (The server still batches
+    // each accepted request internally in groups of 10 — this only keeps us under the
+    // per-request cap.)
+    const BULK_EXPOSE_CLIENT_CHUNK = 200;
+
     async function applyEntityBulk(vendor, targets, expose, triggerBtn) {
         const cfg = getVendorCfg(vendor);
         const userData = JSON.parse(localStorage.getItem('apex_user') || 'null');
@@ -860,13 +867,22 @@
             triggerBtn.textContent = expose ? 'Exposing...' : 'Hiding...';
         }
         try {
-            const res = await fetch(cfg.bulkUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ portal_session_token: userData.portal_session_token, updates })
-            });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(data.error || 'Unable to update entities');
+            // Split into <=200-item chunks so each request stays under the server cap.
+            const chunks = [];
+            for (let i = 0; i < updates.length; i += BULK_EXPOSE_CLIENT_CHUNK) {
+                chunks.push(updates.slice(i, i + BULK_EXPOSE_CLIENT_CHUNK));
+            }
+            let failedCount = 0;
+            for (const chunk of chunks) {
+                const res = await fetch(cfg.bulkUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ portal_session_token: userData.portal_session_token, updates: chunk })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.error || 'Unable to update entities');
+                failedCount += Array.isArray(data.results) ? data.results.filter((r) => !r.ok).length : 0;
+            }
             const ids = new Set(targets.map((t) => t.entity_id));
             cfg.cache.forEach((e) => {
                 if (ids.has(e.entity_id)) e.exposed = expose;
@@ -875,11 +891,10 @@
             // update checkboxes + chrome in place (no rebuild → no scroll jump,
             // expanded groups stay open).
             syncEntityCardInPlace(vendor);
-            const failed = Array.isArray(data.results) ? data.results.filter((r) => !r.ok).length : 0;
-            if (!failed) {
+            if (!failedCount) {
                 showAlert(expose ? 'Entities exposed.' : 'Entities hidden.', false);
             } else {
-                showAlert(`${updates.length - failed} updated, ${failed} failed. Please retry the failures.`);
+                showAlert(`${updates.length - failedCount} updated, ${failedCount} failed. Please retry the failures.`);
             }
         } catch (error) {
             showAlert(error.message);
