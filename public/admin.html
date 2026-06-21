@@ -144,8 +144,8 @@
             <section class="section-card user-section smart-home-health-section">
                 <div class="section-header">
                     <div>
-                        <h2 class="section-title section-title--small">Smart Home health</h2>
-                        <p class="section-text">Proactive report delivery to Amazon Alexa and Google Home, fleet-wide. Counters reset on server restart.</p>
+                        <h2 class="section-title section-title--small">Event Gateway health</h2>
+                        <p class="section-text">Proactive report delivery to the Alexa Event Gateway and Google HomeGraph, fleet-wide. Counters reset on server restart.</p>
                     </div>
                     <button id="refreshSmartHomeBtn" class="button button-secondary">Refresh</button>
                 </div>
@@ -818,8 +818,7 @@ const SMART_HOME_HEALTH_GROUPS = [
         rows: [
             ['add_or_update_report', 'AddOrUpdateReport'],
             ['change_report', 'ChangeReport'],
-            ['delete_report', 'DeleteReport'],
-            ['doorbell_event', 'Doorbell']
+            ['delete_report', 'DeleteReport']
         ]
     },
     {

@@ -861,7 +861,6 @@
             return;
         }
         const updates = targets.map((e) => ({ entity_id: e.entity_id, exposed: expose }));
-        const originalLabel = triggerBtn ? triggerBtn.textContent : '';
         if (triggerBtn) {
             triggerBtn.disabled = true;
             triggerBtn.textContent = expose ? 'Exposing...' : 'Hiding...';
@@ -902,8 +901,13 @@
         } finally {
             if (triggerBtn) {
                 triggerBtn.disabled = false;
-                triggerBtn.textContent = originalLabel;
             }
+            // Do NOT restore the captured label — the entities' exposed state has
+            // changed, so the button text must be recomputed (e.g. "Hide all" →
+            // "Expose all" after a hide-all). Restoring originalLabel here was the
+            // bug that left it stuck on "Hide all". updateEntityBulkLabel sets the
+            // authoritative text + dataset.nextExpose from the live toggles.
+            updateEntityBulkLabel(vendor);
         }
     }
 
