@@ -45,22 +45,35 @@ module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, co
                     const normalizedSnapshotIds = Array.from(
                         new Set(snapshotEntityIds.map((i) => utils.sanitizeEntityId(i)).filter(Boolean))
                     );
+                    // Track whether this snapshot actually changed anything. The addon
+                    // re-sends a full snapshot every few seconds as a heartbeat; if it
+                    // marks no new entity offline (the steady state), firing an
+                    // AddOrUpdateReport is a no-op that just hammers Amazon's gateway and
+                    // invites throttling. So only report when the online-set actually
+                    // changed. (ChangeReport already self-gates via no_changes.)
+                    let offlineChanged = 0;
                     if (normalizedSnapshotIds.length > 0) {
                         const placeholders = normalizedSnapshotIds.map(() => '?').join(',');
-                        await dbRun(
+                        const r = await dbRun(
                             `UPDATE alexa_endpoints SET online = 0, entity_last_seen_at = ?, updated_at = ?
-                             WHERE user_id = ? AND device_id = ? AND entity_id NOT IN (${placeholders})`,
+                             WHERE user_id = ? AND device_id = ? AND entity_id NOT IN (${placeholders}) AND online = 1`,
                             [nowIso, nowIso, device.user_id, device.id, ...normalizedSnapshotIds]
                         );
+                        offlineChanged = r?.changes || 0;
                     } else {
-                        await dbRun(
-                            `UPDATE alexa_endpoints SET online = 0, entity_last_seen_at = ?, updated_at = ? WHERE user_id = ? AND device_id = ?`,
+                        const r = await dbRun(
+                            `UPDATE alexa_endpoints SET online = 0, entity_last_seen_at = ?, updated_at = ? WHERE user_id = ? AND device_id = ? AND online = 1`,
                             [nowIso, nowIso, device.user_id, device.id]
                         );
+                        offlineChanged = r?.changes || 0;
                     }
                     await core.saveAlexaDeviceSnapshotEntityIds(device.user_id, device.id, normalizedSnapshotIds);
-                    eventGateway.scheduleAlexaAddOrUpdateReportForUser(device.user_id, 'inventory_snapshot_commit');
-                    eventGateway.scheduleAlexaChangeReportForUser(device.user_id, { force: false });
+                    // Only fire the proactive reports when the snapshot changed the
+                    // inventory's online-set — a no-op heartbeat stays silent.
+                    if (offlineChanged > 0) {
+                        eventGateway.scheduleAlexaAddOrUpdateReportForUser(device.user_id, 'inventory_snapshot_commit');
+                        eventGateway.scheduleAlexaChangeReportForUser(device.user_id, { force: false });
+                    }
                     return res.status(200).json({ message: 'Snapshot inventory committed', synced_count: 0, synced_entities: [] });
                 }
                 return res.status(200).json({ message: 'No entities received, inventory update skipped', synced_count: 0, synced_entities: [] });
