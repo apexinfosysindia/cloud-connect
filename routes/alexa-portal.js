@@ -8,8 +8,13 @@ module.exports = function ({ dbGet, dbRun, utils, auth, core, eventGateway }) {
     const router = express.Router();
     const { asyncHandler } = utils;
 
-    const BULK_EXPOSE_BATCH_SIZE = 10;
-    const BULK_EXPOSE_BATCH_DELAY_MS = 150;
+    // Bulk expose/hide is processed server-side in batches to pace LOCAL DB writes
+    // (each item is one SELECT + one UPDATE; the Alexa reports fire ONCE after the
+    // loop, not per-batch — so this is not an external rate limit). 50 with a short
+    // 50ms breather keeps a large fan-out (hundreds of entities) snappy without
+    // letting it monopolize the single SQLite connection and starve other requests.
+    const BULK_EXPOSE_BATCH_SIZE = 50;
+    const BULK_EXPOSE_BATCH_DELAY_MS = 50;
     const BULK_EXPOSE_MAX_ITEMS = 200;
 
     router.post(
