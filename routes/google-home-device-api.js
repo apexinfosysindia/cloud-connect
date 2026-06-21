@@ -51,9 +51,15 @@ module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, go
                     );
                     const placeholders = normalizedSnapshotIds.map(() => '?').join(',');
 
+                    // Track whether this snapshot actually marked any entity offline. The
+                    // addon re-sends a full snapshot every few seconds as a heartbeat; if
+                    // nothing changed (steady state), firing a RequestSync is a no-op that
+                    // just hammers Google's HomeGraph and invites throttling. The
+                    // `AND online = 1` makes `this.changes` count only real transitions.
+                    let offlineChanged = 0;
                     if (normalizedSnapshotIds.length > 0) {
                         try {
-                            await dbRun(
+                            const r = await dbRun(
                                 `
                                     UPDATE google_home_entities
                                     SET online = 0,
@@ -62,6 +68,7 @@ module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, go
                                     WHERE user_id = ?
                                       AND device_id = ?
                                       AND entity_id NOT IN (${placeholders})
+                                      AND online = 1
                                 `,
                                 [
                                     ...assignEntityLastSeenParams,
@@ -71,10 +78,11 @@ module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, go
                                     ...normalizedSnapshotIds
                                 ]
                             );
+                            offlineChanged = r?.changes || 0;
                         } catch (error) {
                             if (utils.isMissingGoogleEntityLastSeenColumnError(error)) {
                                 state.googleEntityLastSeenColumnSupported = false;
-                                await dbRun(
+                                const r = await dbRun(
                                     `
                                         UPDATE google_home_entities
                                         SET online = 0,
@@ -82,16 +90,18 @@ module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, go
                                         WHERE user_id = ?
                                           AND device_id = ?
                                           AND entity_id NOT IN (${placeholders})
+                                          AND online = 1
                                     `,
                                     [nowIso, device.user_id, device.id, ...normalizedSnapshotIds]
                                 );
+                                offlineChanged = r?.changes || 0;
                             } else {
                                 throw error;
                             }
                         }
                     } else {
                         try {
-                            await dbRun(
+                            const r = await dbRun(
                                 `
                                     UPDATE google_home_entities
                                     SET online = 0,
@@ -99,22 +109,26 @@ module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, go
                                         updated_at = ?
                                     WHERE user_id = ?
                                       AND device_id = ?
+                                      AND online = 1
                                 `,
                                 [...assignEntityLastSeenParams, nowIso, device.user_id, device.id]
                             );
+                            offlineChanged = r?.changes || 0;
                         } catch (error) {
                             if (utils.isMissingGoogleEntityLastSeenColumnError(error)) {
                                 state.googleEntityLastSeenColumnSupported = false;
-                                await dbRun(
+                                const r = await dbRun(
                                     `
                                         UPDATE google_home_entities
                                         SET online = 0,
                                             updated_at = ?
                                         WHERE user_id = ?
                                           AND device_id = ?
+                                          AND online = 1
                                     `,
                                     [nowIso, device.user_id, device.id]
                                 );
+                                offlineChanged = r?.changes || 0;
                             } else {
                                 throw error;
                             }
@@ -126,8 +140,12 @@ module.exports = function ({ dbGet, dbRun, dbAll, dbTransaction, utils, auth, go
                         device.id,
                         normalizedSnapshotIds
                     );
-                    homegraph.scheduleGoogleRequestSyncForUser(device.user_id, 'entity_inventory_snapshot_commit');
-                    homegraph.scheduleGoogleReportStateForUser(device.user_id, { force: false });
+                    // Only fire proactive sync when the snapshot changed the online-set —
+                    // a no-op heartbeat stays silent.
+                    if (offlineChanged > 0) {
+                        homegraph.scheduleGoogleRequestSyncForUser(device.user_id, 'entity_inventory_snapshot_commit');
+                        homegraph.scheduleGoogleReportStateForUser(device.user_id, { force: false });
+                    }
 
                     return res.status(200).json({
                         message: 'Snapshot inventory committed',
