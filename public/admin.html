@@ -163,18 +163,24 @@
 
                 <div id="serverHealthTiles" class="stats-grid fleet-stats-grid"></div>
 
-                <div class="server-health__logs">
-                    <div class="server-health__logbar">
-                        <label class="server-health__loglabel">Logs:
-                            <select id="serverLogSource" class="server-health__select">
-                                <option value="pm2_out">PM2 stdout</option>
-                                <option value="pm2_err">PM2 stderr</option>
-                                <option value="app_events">App events (in-memory)</option>
-                            </select>
-                        </label>
-                        <button id="serverLogRefreshBtn" class="button button-secondary button-small">Reload logs</button>
+                <div class="logsection" id="serverLogSection" data-logsection>
+                    <div class="logsection__head" data-logsection-toggle>
+                        <span class="logsection__title">Logs <span class="logsection__badge" id="serverLogBadge">PM2 stdout</span></span>
+                        <span class="logsection__chevron">▶</span>
                     </div>
-                    <div id="serverLogView" class="shh-stream server-health__logview"></div>
+                    <div class="logsection__body">
+                        <div class="server-health__logbar">
+                            <label class="server-health__loglabel">Source:
+                                <select id="serverLogSource" class="server-health__select">
+                                    <option value="pm2_out">PM2 stdout</option>
+                                    <option value="pm2_err">PM2 stderr</option>
+                                    <option value="app_events">App events (in-memory)</option>
+                                </select>
+                            </label>
+                            <button id="serverLogRefreshBtn" class="button button-secondary button-small" type="button">Reload</button>
+                        </div>
+                        <div id="serverLogView" class="shh-stream server-health__logview"></div>
+                    </div>
                 </div>
 
                 <div class="server-health__controls">
@@ -252,6 +258,32 @@
             <button id="confirmModalCancel" class="button button-secondary button-small" type="button">Cancel</button>
             <button id="confirmModalConfirm" class="button button-danger button-small" type="button">Confirm</button>
         </div>
+    </div>
+</div>
+
+<div id="sudoPasswordModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="sudoPasswordTitle">
+    <div class="modal__backdrop" data-close-sudo-modal="true"></div>
+    <div class="modal__panel">
+        <div class="modal__header">
+            <div>
+                <h2 id="sudoPasswordTitle" class="section-title section-title--small">Confirm it's you</h2>
+                <p id="sudoPasswordMessage" class="section-text">Re-enter your admin password to authorize this action. Required even though you're signed in.</p>
+            </div>
+        </div>
+        <form id="sudoPasswordForm" class="stack" autocomplete="off">
+            <div class="field">
+                <label class="field-label" for="sudoPasswordInput">Admin password</label>
+                <div class="password-field">
+                    <input id="sudoPasswordInput" class="input" type="password" autocomplete="current-password" required>
+                    <button type="button" id="sudoPasswordToggle" class="password-field__toggle" aria-label="Show password">Show</button>
+                </div>
+            </div>
+            <p id="sudoPasswordStatus" class="section-text danger-label" style="min-height:1.2em"></p>
+            <div class="modal__footer">
+                <button type="button" id="sudoPasswordCancel" class="button button-secondary button-small">Cancel</button>
+                <button type="submit" id="sudoPasswordSubmit" class="button button-primary button-small">Authorize</button>
+            </div>
+        </form>
     </div>
 </div>
 
@@ -877,6 +909,18 @@ function formatHealthTimestamp(value) {
     return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
 }
 
+// Wire collapsible log/event sections (header click toggles .is-open). Idempotent —
+// safe to call after each re-render. Preserves open state by leaving existing markup.
+function wireLogSections(root) {
+    const scope = root || document;
+    scope.querySelectorAll('[data-logsection]').forEach((section) => {
+        const head = section.querySelector('[data-logsection-toggle]');
+        if (!head || head.dataset.wired === '1') return;
+        head.dataset.wired = '1';
+        head.addEventListener('click', () => section.classList.toggle('is-open'));
+    });
+}
+
 function renderSmartHomeHealth(data) {
     if (!smartHomeHealth) return;
     const tables = SMART_HOME_HEALTH_GROUPS.map((group) => {
@@ -937,13 +981,20 @@ function renderSmartHomeHealth(data) {
                 + `${detail}</div>`;
         }).join('');
         stream = `
-            <div class="smart-home-health__group">
-                <h3 class="section-title section-title--small">Recent events <span class="shh-evt__count">(${recent.length}, newest first — in-memory, clears on restart)</span></h3>
-                <div class="shh-stream">${lines}</div>
+            <div class="logsection" data-logsection>
+                <div class="logsection__head" data-logsection-toggle>
+                    <span class="logsection__title">Recent events <span class="logsection__badge">${recent.length}</span></span>
+                    <span class="logsection__chevron">▶</span>
+                </div>
+                <div class="logsection__body">
+                    <div class="shh-stream">${lines}</div>
+                    <p class="section-text" style="margin-top:8px;font-size:0.75rem;">Newest first · in-memory · clears on restart.</p>
+                </div>
             </div>`;
     }
 
     smartHomeHealth.innerHTML = tables + stream;
+    wireLogSections(smartHomeHealth);
 }
 
 // ── Server health & controls ───────────────────────────────────────────────
@@ -991,32 +1042,94 @@ async function loadServerHealth() {
 async function loadServerLogs() {
     if (!serverLogView) return;
     const source = serverLogSource ? serverLogSource.value : 'pm2_out';
+    const badge = document.getElementById('serverLogBadge');
+    const labels = { pm2_out: 'PM2 stdout', pm2_err: 'PM2 stderr', app_events: 'App events' };
+    if (badge) badge.textContent = labels[source] || source;
     serverLogView.textContent = 'Loading…';
     try {
-        let lines = [];
+        let rows = [];
         if (source === 'app_events') {
             const d = await api('/api/admin/server/app-events');
-            lines = (d.events || []).map((e) => {
+            rows = (d.events || []).map((e) => {
                 const meta = e.meta ? ` ${e.meta}` : '';
-                return `${formatHealthTimestamp(e.at)} [${e.level}] ${e.source}: ${e.msg}${meta}`;
+                const cls = e.level === 'error' ? 'shh-evt--failed' : 'shh-evt--skipped';
+                return { cls, text: `${formatHealthTimestamp(e.at)} [${e.level}] ${e.source}: ${e.msg}${meta}` };
             });
         } else {
             const d = await api(`/api/admin/server/logs?source=${encodeURIComponent(source)}&lines=300`);
-            lines = d.available ? d.lines : ['(log file not available)'];
+            const lines = d.available ? d.lines : ['(log file not available)'];
+            rows = lines.map((l) => ({ cls: /error|fail|exception/i.test(l) ? 'shh-evt--failed' : '', text: l }));
         }
-        if (!lines.length) lines = ['(no entries)'];
-        serverLogView.innerHTML = lines.map((l) => `<div class="shh-evt">${escapeHtml(String(l))}</div>`).join('');
+        if (!rows.length) rows = [{ cls: '', text: '(no entries)' }];
+        serverLogView.innerHTML = rows.map((r) => `<div class="shh-evt ${r.cls}">${escapeHtml(String(r.text))}</div>`).join('');
         serverLogView.scrollTop = serverLogView.scrollHeight;
     } catch (error) {
         serverLogView.textContent = normalizeErrorMessage(error, 'Unable to load logs');
     }
 }
 
-// Obtain a fresh sudo grant (password + optional passkey), reusing the same flow as the
-// security page. Returns true if a grant is now held. Sets serverSudoToken.
+// ── Styled sudo-password modal (replaces window.prompt; masked input) ──────
+const sudoPasswordModal = document.getElementById('sudoPasswordModal');
+const sudoPasswordForm = document.getElementById('sudoPasswordForm');
+const sudoPasswordInput = document.getElementById('sudoPasswordInput');
+const sudoPasswordToggle = document.getElementById('sudoPasswordToggle');
+const sudoPasswordStatus = document.getElementById('sudoPasswordStatus');
+const sudoPasswordCancel = document.getElementById('sudoPasswordCancel');
+const sudoPasswordMessage = document.getElementById('sudoPasswordMessage');
+let sudoPasswordResolver = null;
+
+function closeSudoPasswordModal(result) {
+    if (!sudoPasswordModal) return;
+    sudoPasswordModal.classList.add('hidden');
+    if (sudoPasswordInput) {
+        sudoPasswordInput.value = '';
+        sudoPasswordInput.type = 'password';
+    }
+    if (sudoPasswordToggle) sudoPasswordToggle.textContent = 'Show';
+    if (sudoPasswordStatus) sudoPasswordStatus.textContent = '';
+    const resolve = sudoPasswordResolver;
+    sudoPasswordResolver = null;
+    if (resolve) resolve(result);
+}
+
+// Opens the modal, resolves with the typed password, or null if cancelled.
+function promptSudoPassword(message) {
+    return new Promise((resolve) => {
+        if (!sudoPasswordModal) { resolve(window.prompt('Admin password:')); return; }
+        sudoPasswordResolver = resolve;
+        if (sudoPasswordMessage && message) sudoPasswordMessage.textContent = message;
+        if (sudoPasswordStatus) sudoPasswordStatus.textContent = '';
+        sudoPasswordModal.classList.remove('hidden');
+        if (sudoPasswordInput) { sudoPasswordInput.value = ''; sudoPasswordInput.focus(); }
+    });
+}
+
+if (sudoPasswordToggle && sudoPasswordInput) {
+    sudoPasswordToggle.addEventListener('click', () => {
+        const show = sudoPasswordInput.type === 'password';
+        sudoPasswordInput.type = show ? 'text' : 'password';
+        sudoPasswordToggle.textContent = show ? 'Hide' : 'Show';
+        sudoPasswordInput.focus();
+    });
+}
+if (sudoPasswordForm) {
+    sudoPasswordForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const val = sudoPasswordInput ? sudoPasswordInput.value : '';
+        if (!val) { if (sudoPasswordStatus) sudoPasswordStatus.textContent = 'Password is required.'; return; }
+        closeSudoPasswordModal(val);
+    });
+}
+if (sudoPasswordCancel) sudoPasswordCancel.addEventListener('click', () => closeSudoPasswordModal(null));
+if (sudoPasswordModal) {
+    sudoPasswordModal.addEventListener('click', (event) => {
+        if (event.target.closest('[data-close-sudo-modal]')) closeSudoPasswordModal(null);
+    });
+}
+
 async function ensureServerSudo() {
     if (serverSudoToken) return true;
-    const password = window.prompt('Re-enter the admin password to authorize this action:');
+    const password = await promptSudoPassword();
     if (!password) return false;
     const optData = await api('/api/admin/sudo/options', { method: 'POST', body: { password } });
     if (optData && optData.mfa_required) {
@@ -1088,6 +1201,7 @@ if (serverLogRefreshBtn) serverLogRefreshBtn.addEventListener('click', () => loa
 if (serverLogSource) serverLogSource.addEventListener('change', () => loadServerLogs().catch(() => {}));
 if (serverRestartBtn) serverRestartBtn.addEventListener('click', () => handleServerControl('restart'));
 if (serverRebootBtn) serverRebootBtn.addEventListener('click', () => handleServerControl('reboot'));
+wireLogSections(document); // wire the static Server Health log section once at load
 
 async function applyStatus(userId, status, trialDays) {
     const response = await api(`/api/admin/users/${userId}/status`, {
