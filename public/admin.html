@@ -154,9 +154,10 @@
             <section class="section-card user-section server-health-section">
                 <div class="section-header">
                     <div>
-                        <h2 class="section-title section-title--small">Server health &amp; controls <span id="pm2Badge" class="pm2-badge pm2-badge--muted"><span class="pm2-badge__dot"></span>PM2 —</span></h2>
+                        <h2 class="section-title section-title--small">Server Health</h2>
                         <p class="section-text">Live process/host metrics, PM2 &amp; app logs, and privileged controls. Restart and reboot require a fresh re-authentication and are audited. Auto-refreshes.</p>
                     </div>
+                    <span id="pm2Badge" class="pm2-badge pm2-badge--muted"><span class="pm2-badge__dot"></span>PM2 —</span>
                 </div>
 
                 <div id="serverHealthTiles" class="metric-grid"></div>
@@ -328,13 +329,19 @@ const confirmModalCancel = document.getElementById('confirmModalCancel');
 const confirmModalConfirm = document.getElementById('confirmModalConfirm');
 let confirmModalResolver = null;
 
-function openConfirmModal({ title = 'Confirm', message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = true } = {}) {
+function openConfirmModal({ title = 'Confirm', message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = true, confirmClass = null } = {}) {
     confirmModalTitle.textContent = title;
     confirmModalMessage.textContent = message || '';
     confirmModalConfirm.textContent = confirmLabel;
     confirmModalCancel.textContent = cancelLabel;
-    confirmModalConfirm.classList.toggle('button-danger', !!danger);
-    confirmModalConfirm.classList.toggle('button-primary', !danger);
+    // Reset to the base button class, then apply either a caller-supplied variant
+    // (e.g. button-reboot, to match the outside control) or the default danger/primary.
+    confirmModalConfirm.className = 'button button-small';
+    if (confirmClass) {
+        confirmModalConfirm.classList.add(confirmClass);
+    } else {
+        confirmModalConfirm.classList.add(danger ? 'button-danger' : 'button-primary');
+    }
     confirmModal.classList.remove('hidden');
     // Give focus to cancel so a stray Enter does not auto-confirm destructive actions.
     setTimeout(() => confirmModalCancel.focus(), 0);
@@ -1089,7 +1096,8 @@ function updatePm2Badge(pm2) {
     if (pm2 && pm2.status) {
         const online = pm2.status === 'online';
         cls = online ? 'pm2-badge--ok' : 'pm2-badge--bad';
-        text = `PM2 ${pm2.status}`;
+        const label = String(pm2.status).charAt(0).toUpperCase() + String(pm2.status).slice(1);
+        text = `PM2 ${label}`;
     }
     badge.className = `pm2-badge ${cls}`;
     badge.innerHTML = `<span class="pm2-badge__dot"></span>${escapeHtml(text)}`;
@@ -1222,12 +1230,13 @@ async function serverControlPost(path, body) {
 async function handleServerControl(kind) {
     const isReboot = kind === 'reboot';
     const confirmed = await openConfirmModal({
-        title: isReboot ? 'Reboot server' : 'Restart app',
+        title: isReboot ? 'Reboot Server' : 'Restart PM2',
         message: isReboot
-            ? 'This will REBOOT the entire production server. All services go down for ~1–2 minutes. Continue?'
-            : 'This will restart the apex-portal app process. Brief downtime (~seconds). Continue?',
-        confirmLabel: isReboot ? 'Reboot server' : 'Restart app',
-        danger: true
+            ? 'This will reboot the production server. The portal and all services will be unavailable until it comes back up.'
+            : 'This will restart the PM2 app process. The portal will be briefly unavailable while it restarts.',
+        confirmLabel: isReboot ? 'Reboot Server' : 'Restart PM2',
+        cancelLabel: 'Cancel',
+        confirmClass: 'button-reboot'
     });
     if (!confirmed) return;
     if (serverControlStatus) serverControlStatus.textContent = 'Authorizing…';

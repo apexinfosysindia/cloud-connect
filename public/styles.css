@@ -1179,21 +1179,21 @@ code {
 .admin-page .pm2-badge {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    vertical-align: middle;
-    margin-left: 8px;
-    font-size: 0.72rem;
+    gap: 7px;
+    flex-shrink: 0;
+    font-size: 0.82rem;
     font-weight: 700;
     border-radius: 999px;
-    padding: 3px 10px;
-    border: none;
+    padding: 6px 14px;
+    border: 1px solid transparent;
+    white-space: nowrap;
 }
 .admin-page .pm2-badge::before { content: none; } /* defend against any inherited dot */
-.admin-page .pm2-badge__dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.admin-page .pm2-badge--ok { background: var(--success-soft); color: var(--success); }
+.admin-page .pm2-badge__dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.admin-page .pm2-badge--ok { background: var(--success-soft); color: var(--success); border-color: color-mix(in srgb, var(--success) 35%, transparent); }
 .admin-page .pm2-badge--ok .pm2-badge__dot { animation: pm2-pulse 1.6s infinite; }
-.admin-page .pm2-badge--bad { background: var(--danger-soft); color: var(--danger); }
-.admin-page .pm2-badge--muted { background: var(--surface-subtle); color: var(--text-soft); }
+.admin-page .pm2-badge--bad { background: var(--danger-soft); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+.admin-page .pm2-badge--muted { background: var(--surface-subtle); color: var(--text-soft); border-color: var(--line); }
 @keyframes pm2-pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.3; }
