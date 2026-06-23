@@ -1089,8 +1089,10 @@ code {
 @media (max-width: 900px) {
     .admin-page .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+/* Keep 2 columns on phones too (2×3) — 6 tiles stay evenly paired, never a
+   lonely single-column stack. */
 @media (max-width: 520px) {
-    .admin-page .metric-grid { grid-template-columns: 1fr; }
+    .admin-page .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 }
 
 .admin-page .metric {
@@ -1171,8 +1173,10 @@ code {
 }
 .admin-page .metric.is-plain .metric__sub { margin-top: 4px; }
 
-/* ── Status badge (PM2 in the card header) ──────────────────────────────── */
-.admin-page .status-badge {
+/* ── PM2 status badge (card header) — dedicated class, NOT the shared
+   .status-badge (which has its own ::before dot and is used for user/device
+   online/trial/active badges; reusing it gave a duplicate dead dot). ──────── */
+.admin-page .pm2-badge {
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -1182,32 +1186,37 @@ code {
     font-weight: 700;
     border-radius: 999px;
     padding: 3px 10px;
+    border: none;
 }
-.admin-page .status-badge__dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.admin-page .status-badge--ok { background: var(--success-soft); color: var(--success); }
-.admin-page .status-badge--ok .status-badge__dot { animation: badge-pulse 1.6s infinite; }
-.admin-page .status-badge--bad { background: var(--danger-soft); color: var(--danger); }
-.admin-page .status-badge--muted { background: var(--surface-subtle); color: var(--text-soft); }
-@keyframes badge-pulse {
+.admin-page .pm2-badge::before { content: none; } /* defend against any inherited dot */
+.admin-page .pm2-badge__dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.admin-page .pm2-badge--ok { background: var(--success-soft); color: var(--success); }
+.admin-page .pm2-badge--ok .pm2-badge__dot { animation: pm2-pulse 1.6s infinite; }
+.admin-page .pm2-badge--bad { background: var(--danger-soft); color: var(--danger); }
+.admin-page .pm2-badge--muted { background: var(--surface-subtle); color: var(--text-soft); }
+@keyframes pm2-pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.3; }
 }
 
-/* Reboot Server button — danger outline (distinct from secondary Restart PM2). */
-.button-outline-danger {
-    background: var(--surface);
-    border: 1px solid #f3b4b4;
+/* Reboot Server button — tinted-red fill (clearly visible on white, distinct
+   from the plain white secondary Restart PM2, lighter than a solid danger). */
+.button-reboot {
+    background: var(--danger-soft);
+    border: 1px solid #f1a8a8;
     color: #b91c1c;
 }
-.button-outline-danger:hover:not(:disabled) {
-    background: var(--danger-soft);
+.button-reboot:hover:not(:disabled) {
+    background: #fbd5d5;
+    border-color: #e88a8a;
 }
-:root[data-theme-effective="dark"] .button-outline-danger {
-    border-color: #5a2a2a;
+:root[data-theme-effective="dark"] .button-reboot {
+    background: var(--danger-soft);
+    border-color: #6b3030;
     color: var(--danger);
 }
-:root[data-theme-effective="dark"] .button-outline-danger:hover:not(:disabled) {
-    background: var(--danger-soft);
+:root[data-theme-effective="dark"] .button-reboot:hover:not(:disabled) {
+    background: #3f1d22;
 }
 
 .admin-page .fleet-card .user-card__summary {
