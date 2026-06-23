@@ -154,7 +154,7 @@
             <section class="section-card user-section server-health-section">
                 <div class="section-header">
                     <div>
-                        <h2 class="section-title section-title--small">Server health &amp; controls <span id="pm2Badge" class="status-badge status-badge--muted"><span class="status-badge__dot"></span>PM2 —</span></h2>
+                        <h2 class="section-title section-title--small">Server health &amp; controls <span id="pm2Badge" class="pm2-badge pm2-badge--muted"><span class="pm2-badge__dot"></span>PM2 —</span></h2>
                         <p class="section-text">Live process/host metrics, PM2 &amp; app logs, and privileged controls. Restart and reboot require a fresh re-authentication and are audited. Auto-refreshes.</p>
                     </div>
                 </div>
@@ -182,8 +182,8 @@
                 </div>
 
                 <div class="server-health__controls">
-                    <button id="serverRestartBtn" class="button button-secondary button-small" type="button">Restart PM2</button>
-                    <button id="serverRebootBtn" class="button button-outline-danger button-small" type="button">Reboot Server</button>
+                    <button id="serverRestartBtn" class="button button-secondary" type="button">Restart PM2</button>
+                    <button id="serverRebootBtn" class="button button-reboot" type="button">Reboot Server</button>
                     <span id="serverControlStatus" class="server-health__ctrlstatus"></span>
                 </div>
             </section>
@@ -1085,15 +1085,14 @@ function animateCount(el, target) {
 function updatePm2Badge(pm2) {
     const badge = document.getElementById('pm2Badge');
     if (!badge) return;
-    let cls = 'status-badge--muted'; let text = 'PM2 —';
+    let cls = 'pm2-badge--muted'; let text = 'PM2 —';
     if (pm2 && pm2.status) {
         const online = pm2.status === 'online';
-        cls = online ? 'status-badge--ok' : 'status-badge--bad';
-        const restarts = pm2.restarts != null ? ` · ${pm2.restarts} restarts` : '';
-        text = `PM2 ${pm2.status}${restarts}`;
+        cls = online ? 'pm2-badge--ok' : 'pm2-badge--bad';
+        text = `PM2 ${pm2.status}`;
     }
-    badge.className = `status-badge ${cls}`;
-    badge.innerHTML = `<span class="status-badge__dot"></span>${escapeHtml(text)}`;
+    badge.className = `pm2-badge ${cls}`;
+    badge.innerHTML = `<span class="pm2-badge__dot"></span>${escapeHtml(text)}`;
 }
 
 async function loadServerLogs() {
