@@ -1079,6 +1079,137 @@ code {
     color: var(--text-muted);
 }
 
+/* ── Server health metric grid — 6 tiles, always pairs evenly ────────────── */
+.admin-page .metric-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+    margin-top: 4px;
+}
+@media (max-width: 900px) {
+    .admin-page .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 520px) {
+    .admin-page .metric-grid { grid-template-columns: 1fr; }
+}
+
+.admin-page .metric {
+    padding: 15px 16px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--surface);
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
+}
+:root[data-theme-effective="dark"] .admin-page .metric {
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.4);
+}
+.admin-page .metric__head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+.admin-page .metric__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-soft);
+}
+.admin-page .metric.is-ok .metric__dot { background: var(--success); }
+.admin-page .metric.is-warn .metric__dot { background: var(--warning); }
+.admin-page .metric.is-bad .metric__dot { background: var(--danger); }
+.admin-page .metric__big {
+    font-size: 1.95rem;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    margin: 6px 0 10px;
+    line-height: 1.05;
+}
+.admin-page .metric__big--text {
+    font-size: 1.45rem;
+    margin-bottom: 8px;
+}
+.admin-page .metric.is-ok .metric__big { color: var(--success); }
+.admin-page .metric.is-warn .metric__big { color: var(--warning); }
+.admin-page .metric.is-bad .metric__big { color: var(--danger); }
+.admin-page .metric__u { font-size: 1rem; opacity: 0.5; font-weight: 700; }
+.admin-page .metric__na { color: var(--text-soft); }
+.admin-page .metric__meter {
+    height: 8px;
+    border-radius: 999px;
+    background: var(--surface-subtle);
+    overflow: hidden;
+}
+.admin-page .metric__fill {
+    height: 100%;
+    width: 0;
+    border-radius: 999px;
+    background-size: 200% 100%;
+    background-image: linear-gradient(90deg, var(--text-soft), color-mix(in srgb, var(--text-soft) 55%, #fff), var(--text-soft));
+    transition: width 1.1s cubic-bezier(0.22, 1, 0.36, 1);
+    animation: metric-sheen 2.6s linear infinite;
+}
+.admin-page .metric.is-ok .metric__fill {
+    background-image: linear-gradient(90deg, var(--success), color-mix(in srgb, var(--success) 55%, #fff), var(--success));
+}
+.admin-page .metric.is-warn .metric__fill {
+    background-image: linear-gradient(90deg, var(--warning), color-mix(in srgb, var(--warning) 55%, #fff), var(--warning));
+}
+.admin-page .metric.is-bad .metric__fill {
+    background-image: linear-gradient(90deg, var(--danger), color-mix(in srgb, var(--danger) 55%, #fff), var(--danger));
+}
+@keyframes metric-sheen {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+.admin-page .metric__sub {
+    font-size: 0.74rem;
+    color: var(--text-soft);
+    margin-top: 8px;
+}
+.admin-page .metric.is-plain .metric__sub { margin-top: 4px; }
+
+/* ── Status badge (PM2 in the card header) ──────────────────────────────── */
+.admin-page .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    vertical-align: middle;
+    margin-left: 8px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    border-radius: 999px;
+    padding: 3px 10px;
+}
+.admin-page .status-badge__dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.admin-page .status-badge--ok { background: var(--success-soft); color: var(--success); }
+.admin-page .status-badge--ok .status-badge__dot { animation: badge-pulse 1.6s infinite; }
+.admin-page .status-badge--bad { background: var(--danger-soft); color: var(--danger); }
+.admin-page .status-badge--muted { background: var(--surface-subtle); color: var(--text-soft); }
+@keyframes badge-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+/* Reboot Server button — danger outline (distinct from secondary Restart PM2). */
+.button-outline-danger {
+    background: var(--surface);
+    border: 1px solid #f3b4b4;
+    color: #b91c1c;
+}
+.button-outline-danger:hover:not(:disabled) {
+    background: var(--danger-soft);
+}
+:root[data-theme-effective="dark"] .button-outline-danger {
+    border-color: #5a2a2a;
+    color: var(--danger);
+}
+:root[data-theme-effective="dark"] .button-outline-danger:hover:not(:disabled) {
+    background: var(--danger-soft);
+}
+
 .admin-page .fleet-card .user-card__summary {
     cursor: pointer;
 }

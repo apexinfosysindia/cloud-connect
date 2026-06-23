@@ -145,9 +145,8 @@
                 <div class="section-header">
                     <div>
                         <h2 class="section-title section-title--small">Event Gateway health</h2>
-                        <p class="section-text">Proactive report delivery to the Alexa Event Gateway and Google HomeGraph, fleet-wide. Counters reset on server restart.</p>
+                        <p class="section-text">Proactive report delivery to the Alexa Event Gateway and Google HomeGraph, fleet-wide. Counters reset on server restart. Auto-refreshes.</p>
                     </div>
-                    <button id="refreshSmartHomeBtn" class="button button-secondary">Refresh</button>
                 </div>
                 <div id="smartHomeHealth" class="smart-home-health"></div>
             </section>
@@ -155,13 +154,12 @@
             <section class="section-card user-section server-health-section">
                 <div class="section-header">
                     <div>
-                        <h2 class="section-title section-title--small">Server health &amp; controls</h2>
-                        <p class="section-text">Live process/host metrics, PM2 &amp; app logs, and privileged controls. Restart and reboot require a fresh re-authentication and are audited.</p>
+                        <h2 class="section-title section-title--small">Server health &amp; controls <span id="pm2Badge" class="status-badge status-badge--muted"><span class="status-badge__dot"></span>PM2 —</span></h2>
+                        <p class="section-text">Live process/host metrics, PM2 &amp; app logs, and privileged controls. Restart and reboot require a fresh re-authentication and are audited. Auto-refreshes.</p>
                     </div>
-                    <button id="refreshServerBtn" class="button button-secondary">Refresh</button>
                 </div>
 
-                <div id="serverHealthTiles" class="stats-grid fleet-stats-grid"></div>
+                <div id="serverHealthTiles" class="metric-grid"></div>
 
                 <div class="logsection" id="serverLogSection" data-logsection>
                     <div class="logsection__head" data-logsection-toggle>
@@ -184,8 +182,8 @@
                 </div>
 
                 <div class="server-health__controls">
-                    <button id="serverRestartBtn" class="button button-danger button-small" type="button">Restart app</button>
-                    <button id="serverRebootBtn" class="button button-danger button-small" type="button">Reboot server</button>
+                    <button id="serverRestartBtn" class="button button-secondary button-small" type="button">Restart PM2</button>
+                    <button id="serverRebootBtn" class="button button-outline-danger button-small" type="button">Reboot Server</button>
                     <span id="serverControlStatus" class="server-health__ctrlstatus"></span>
                 </div>
             </section>
@@ -305,12 +303,10 @@ const refreshFleetBtn = document.getElementById('refreshFleetBtn');
 const fleetList = document.getElementById('fleetList');
 const fleetWindow = document.getElementById('fleetWindow');
 const smartHomeHealth = document.getElementById('smartHomeHealth');
-const refreshSmartHomeBtn = document.getElementById('refreshSmartHomeBtn');
 const serverHealthTiles = document.getElementById('serverHealthTiles');
 const serverLogSource = document.getElementById('serverLogSource');
 const serverLogView = document.getElementById('serverLogView');
 const serverLogRefreshBtn = document.getElementById('serverLogRefreshBtn');
-const refreshServerBtn = document.getElementById('refreshServerBtn');
 const serverRestartBtn = document.getElementById('serverRestartBtn');
 const serverRebootBtn = document.getElementById('serverRebootBtn');
 const serverControlStatus = document.getElementById('serverControlStatus');
@@ -1014,29 +1010,90 @@ function fmtDuration(sec) {
     if (h > 0) return `${h}h ${m}m`;
     return `${m}m`;
 }
-function statTile(label, value, sub) {
-    return `<article class="stat-card"><span class="stat-label">${escapeHtml(label)}</span>`
-        + `<span class="stat-value">${escapeHtml(value)}</span>`
-        + (sub ? `<span class="stat-card__sub">${escapeHtml(sub)}</span>` : '')
-        + `</article>`;
-}
-
 async function loadServerHealth() {
     if (!serverHealthTiles) return;
     const d = await api('/api/admin/server/health');
     const procMemRss = d.process?.memory?.rss;
     const osTotal = d.os?.total_mem_bytes; const osFree = d.os?.free_mem_bytes;
     const osUsed = (Number.isFinite(osTotal) && Number.isFinite(osFree)) ? osTotal - osFree : NaN;
-    const load = Array.isArray(d.os?.loadavg) ? d.os.loadavg.map((x) => x.toFixed(2)).join(' / ') : '—';
-    const disk = d.disk;
+    const memPct = (Number.isFinite(osUsed) && osTotal) ? Math.round((osUsed / osTotal) * 100) : null;
+    const load1 = Array.isArray(d.os?.loadavg) ? d.os.loadavg[0] : null;
+    const cpuCount = d.os?.cpu_count || 1;
+    const loadPct = Number.isFinite(load1) ? Math.min(100, Math.round((load1 / cpuCount) * 100)) : null;
+    const diskPct = d.disk?.used_percent ? parseInt(d.disk.used_percent, 10) : null;
+    const rssPct = (Number.isFinite(procMemRss) && osTotal) ? Math.round((procMemRss / osTotal) * 100) : null;
+
+    // Six tiles → always pairs cleanly (3×2 / 2×3 / 1×6). PM2 moves to the header badge.
     serverHealthTiles.innerHTML = [
-        statTile('App uptime', fmtDuration(d.process?.uptime_seconds), d.deploy_commit ? `build ${String(d.deploy_commit).slice(0, 8)}` : ''),
-        statTile('Host uptime', fmtDuration(d.os?.uptime_seconds), d.os?.hostname || ''),
-        statTile('Load avg', load, `${d.os?.cpu_count || '?'} cpu`),
-        statTile('Host memory', `${fmtBytes(osUsed)} / ${fmtBytes(osTotal)}`, `app rss ${fmtBytes(procMemRss)}`),
-        statTile('Disk /', disk ? `${fmtBytes(disk.used_bytes)} / ${fmtBytes(disk.total_bytes)}` : '—', disk?.used_percent ? `${disk.used_percent} used` : ''),
-        statTile('PM2', d.pm2?.status || '—', d.pm2 ? `${d.pm2.restarts ?? '?'} restarts` : 'unavailable')
+        // metered % tiles (gradient + sheen meter, variant A)
+        metricTile('Disk /', diskPct, d.disk ? `${fmtBytes(d.disk.used_bytes)} / ${fmtBytes(d.disk.total_bytes)}` : 'unavailable'),
+        metricTile('Memory', memPct, Number.isFinite(osUsed) ? `${fmtBytes(osUsed)} / ${fmtBytes(osTotal)}` : '—'),
+        metricTile('CPU load', loadPct, Number.isFinite(load1) ? `${load1.toFixed(2)} · ${cpuCount} cpu` : '—'),
+        metricTile('App memory', rssPct, `rss ${fmtBytes(procMemRss)}`),
+        // plain (non-%) tiles for uptimes — still in the grid for even pairing
+        plainTile('App uptime', fmtDuration(d.process?.uptime_seconds), d.deploy_commit ? `build ${String(d.deploy_commit).slice(0, 8)}` : ''),
+        plainTile('Host uptime', fmtDuration(d.os?.uptime_seconds), d.os?.hostname || '')
     ].join('');
+    // animate the count-up + meter fill
+    serverHealthTiles.querySelectorAll('[data-metric-val]').forEach((el) => {
+        const target = Number(el.getAttribute('data-metric-val'));
+        if (Number.isFinite(target)) animateCount(el, target);
+    });
+    requestAnimationFrame(() => {
+        serverHealthTiles.querySelectorAll('[data-metric-fill]').forEach((el) => {
+            el.style.width = `${el.getAttribute('data-metric-fill')}%`;
+        });
+    });
+
+    // PM2 status badge in the header
+    updatePm2Badge(d.pm2);
+}
+
+// Variant A metric tile — big % number that counts up over a gradient meter with a sheen.
+function metricTile(label, pct, sub) {
+    const has = Number.isFinite(pct);
+    const cls = !has ? 'is-muted' : pct >= 90 ? 'is-bad' : pct >= 70 ? 'is-warn' : 'is-ok';
+    const fill = has ? Math.max(0, Math.min(100, pct)) : 0;
+    const valHtml = has
+        ? `<span data-metric-val="${pct}">0</span><span class="metric__u">%</span>`
+        : `<span class="metric__na">—</span>`;
+    return `<article class="metric ${cls}">
+        <div class="metric__head"><span class="metric__dot"></span>${escapeHtml(label)}</div>
+        <div class="metric__big">${valHtml}</div>
+        <div class="metric__meter"><div class="metric__fill" data-metric-fill="${fill}"></div></div>
+        <div class="metric__sub">${escapeHtml(sub || '')}</div>
+    </article>`;
+}
+// Plain tile (no meter) — same chrome, for non-percentage metrics like uptime.
+function plainTile(label, value, sub) {
+    return `<article class="metric is-plain">
+        <div class="metric__head"><span class="metric__dot"></span>${escapeHtml(label)}</div>
+        <div class="metric__big metric__big--text">${escapeHtml(value)}</div>
+        <div class="metric__sub">${escapeHtml(sub || '')}</div>
+    </article>`;
+}
+function animateCount(el, target) {
+    let start = null;
+    function step(t) {
+        if (!start) start = t;
+        const k = Math.min(1, (t - start) / 1000);
+        el.textContent = Math.round(target * (1 - Math.pow(1 - k, 3)));
+        if (k < 1) requestAnimationFrame(step); else el.textContent = target;
+    }
+    requestAnimationFrame(step);
+}
+function updatePm2Badge(pm2) {
+    const badge = document.getElementById('pm2Badge');
+    if (!badge) return;
+    let cls = 'status-badge--muted'; let text = 'PM2 —';
+    if (pm2 && pm2.status) {
+        const online = pm2.status === 'online';
+        cls = online ? 'status-badge--ok' : 'status-badge--bad';
+        const restarts = pm2.restarts != null ? ` · ${pm2.restarts} restarts` : '';
+        text = `PM2 ${pm2.status}${restarts}`;
+    }
+    badge.className = `status-badge ${cls}`;
+    badge.innerHTML = `<span class="status-badge__dot"></span>${escapeHtml(text)}`;
 }
 
 async function loadServerLogs() {
@@ -1196,12 +1253,30 @@ async function handleServerControl(kind) {
     }
 }
 
-if (refreshServerBtn) refreshServerBtn.addEventListener('click', () => { loadServerHealth().catch(() => {}); loadServerLogs().catch(() => {}); });
 if (serverLogRefreshBtn) serverLogRefreshBtn.addEventListener('click', () => loadServerLogs().catch(() => {}));
 if (serverLogSource) serverLogSource.addEventListener('change', () => loadServerLogs().catch(() => {}));
 if (serverRestartBtn) serverRestartBtn.addEventListener('click', () => handleServerControl('restart'));
 if (serverRebootBtn) serverRebootBtn.addEventListener('click', () => handleServerControl('reboot'));
 wireLogSections(document); // wire the static Server Health log section once at load
+
+// Auto-refresh both health cards while the dashboard is visible (no manual Refresh
+// buttons). Health every 5s; logs every 12s. Paused when the tab is hidden to avoid
+// pointless polling. Cleared/restarted is unnecessary — guards make calls safe no-ops
+// when the elements aren't present (e.g. logged out).
+let healthRefreshTimer = null;
+function startHealthAutoRefresh() {
+    if (healthRefreshTimer) return;
+    let tick = 0;
+    healthRefreshTimer = setInterval(() => {
+        if (document.hidden) return;
+        if (!getAdminToken()) return;
+        loadServerHealth().catch(() => {});
+        loadSmartHomeHealth().catch(() => {});
+        if (tick % 2 === 0) loadServerLogs().catch(() => {}); // logs at half the rate (every ~12s)
+        tick++;
+    }, 6000);
+}
+startHealthAutoRefresh();
 
 async function applyStatus(userId, status, trialDays) {
     const response = await api(`/api/admin/users/${userId}/status`, {
@@ -1466,23 +1541,7 @@ refreshFleetBtn.addEventListener('click', async () => {
     }
 });
 
-if (refreshSmartHomeBtn) {
-    refreshSmartHomeBtn.addEventListener('click', async () => {
-        refreshSmartHomeBtn.disabled = true;
-        const originalLabel = refreshSmartHomeBtn.textContent;
-        refreshSmartHomeBtn.textContent = 'Refreshing...';
-
-        try {
-            await loadSmartHomeHealth();
-            hideAlert();
-        } catch (error) {
-            showAlert(normalizeErrorMessage(error, 'Unable to refresh Smart Home health'));
-        } finally {
-            refreshSmartHomeBtn.disabled = false;
-            refreshSmartHomeBtn.textContent = originalLabel;
-        }
-    });
-}
+// Event Gateway health auto-refreshes via startHealthAutoRefresh(); no manual button.
 
 function doLogout() {
     localStorage.removeItem(ADMIN_TOKEN_KEY);
