@@ -7,6 +7,7 @@ const device = require('../lib/device')({
     dbGet: async () => null,
     dbRun: async () => ({}),
     dbAll: async () => [],
+    dbTransaction: async (fn) => fn({ dbGet: async () => null, dbRun: async () => ({}), dbAll: async () => [] }),
     config,
     utils
 });

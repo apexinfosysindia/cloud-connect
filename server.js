@@ -23,7 +23,7 @@ const db = require('./db');
 const { dbGet, dbRun, dbAll, dbTransaction } = require('./lib/db-helpers')(db);
 
 // Factory-initialized modules (dependency order matters)
-const device = require('./lib/device')({ dbGet, dbRun, dbAll, config, utils });
+const device = require('./lib/device')({ dbGet, dbRun, dbAll, dbTransaction, config, utils });
 const billing = require('./lib/billing')({
     dbGet,
     dbRun,
