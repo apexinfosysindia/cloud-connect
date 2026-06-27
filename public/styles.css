@@ -683,7 +683,7 @@ code {
 
 .admin-page .list-search {
     position: relative;
-    flex: 1 1 240px;
+    flex: 1 1 auto;
     min-width: 0;
     display: flex;
     align-items: center;
@@ -718,9 +718,12 @@ code {
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent);
 }
 
-/* Fleet status filter chips. */
+/* Status filter chips (Accounts + Fleet). Shares the toolbar row with the
+   search box: the search grows to fill (~75%), the filter group keeps its
+   natural compact width on the right (~25%) on the same line. */
 .admin-page .list-filter {
-    display: inline-flex;
+    display: flex;
+    flex: 0 0 auto;
     gap: 4px;
     padding: 3px;
     border-radius: var(--radius-md);
@@ -748,12 +751,18 @@ code {
     color: var(--brand-dark);
 }
 
+/* Pager now sits in its own bar below the list, centered. */
+.admin-page .list-pager-bar {
+    display: flex;
+    justify-content: center;
+    margin-top: 16px;
+}
+
 /* Prev / page-label / Next. */
 .admin-page .list-pager {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    margin-left: auto;
 }
 
 .admin-page .list-pager__label {
@@ -763,8 +772,15 @@ code {
 }
 
 @media (max-width: 560px) {
+    .admin-page .list-filter {
+        flex: 1 1 100%;
+    }
+
+    .admin-page .list-filter__chip {
+        flex: 1 1 0;
+    }
+
     .admin-page .list-pager {
-        margin-left: 0;
         width: 100%;
         justify-content: space-between;
     }
@@ -918,49 +934,229 @@ code {
 
 .admin-page .smart-home-health {
     display: grid;
-    gap: 18px;
+    gap: 20px;
 }
 
-.admin-page .smart-home-health__group {
+/* Per-vendor block: summary card on top, status rows below. */
+.admin-page .shh-group {
     display: grid;
-    gap: 8px;
+    gap: 12px;
 }
 
-.admin-page .smart-home-health__table-wrap {
-    overflow-x: auto;
-    border: 1px solid var(--line);
-    border-radius: 10px;
+/* Vendor summary card — same frosted surface as the Fleet/Server cards. */
+.admin-page .shh-summary {
+    padding: 14px 16px;
+    border: 1px solid var(--vista-edge);
+    border-radius: 14px;
+    background: var(--vista-card);
 }
 
-.admin-page .smart-home-health__table {
+.admin-page .shh-summary__head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.admin-page .shh-summary__dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 999px;
+    background: var(--text-soft);
+    flex: 0 0 auto;
+}
+.admin-page .shh-summary[data-kind="ok"] .shh-summary__dot {
+    background: var(--success);
+}
+.admin-page .shh-summary[data-kind="warn"] .shh-summary__dot {
+    background: var(--warning);
+}
+.admin-page .shh-summary[data-kind="bad"] .shh-summary__dot {
+    background: var(--danger);
+}
+
+.admin-page .shh-summary__vendor {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text);
+}
+
+.admin-page .shh-summary__rate {
+    margin-left: auto;
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: var(--text);
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+}
+
+.admin-page .shh-summary__rate-lbl {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-soft);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.admin-page .shh-summary__metrics {
+    margin-top: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+.admin-page .shh-summary__metrics strong {
+    color: var(--text);
+    font-weight: 700;
+}
+.admin-page .shh-summary__metrics .is-fail strong {
+    color: var(--danger);
+}
+
+/* Elevated dense table — one row per report type, premium polish over the
+   plain table: status-dot name column, right-aligned bold numbers, computed
+   rate, inline sparkline, highlighted failure cells, hover rows. */
+.admin-page .shh-tbl-wrap {
+    border: 1px solid var(--vista-edge);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--vista-card);
+}
+
+.admin-page .shh-tbl {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.88rem;
-    min-width: 640px;
+    font-size: 0.86rem;
 }
 
-.admin-page .smart-home-health__table th,
-.admin-page .smart-home-health__table td {
-    padding: 8px 12px;
-    text-align: left;
-    border-bottom: 1px solid var(--line);
+.admin-page .shh-tbl thead th {
+    padding: 9px 14px;
+    text-align: right;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-soft);
+    background: var(--vista-card-nested);
+    border-bottom: 1px solid var(--vista-edge);
     white-space: nowrap;
 }
-
-.admin-page .smart-home-health__table th {
-    background: var(--surface-subtle);
-    color: var(--text-muted);
-    font-weight: 600;
+.admin-page .shh-tbl thead th.shh-tbl__name {
+    text-align: left;
 }
 
-.admin-page .smart-home-health__table tbody tr:last-child td {
+.admin-page .shh-tbl__row {
+    transition: background 0.12s ease;
+}
+.admin-page .shh-tbl__row:hover {
+    background: var(--vista-card-nested);
+}
+.admin-page .shh-tbl tbody td {
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--vista-edge);
+    white-space: nowrap;
+    vertical-align: middle;
+}
+.admin-page .shh-tbl tbody tr:last-child td {
     border-bottom: none;
 }
+.admin-page .shh-tbl__row[data-kind="muted"] td {
+    color: var(--text-soft);
+}
 
-.admin-page .smart-home-health__cell--fail {
+/* Name column with leading status dot. */
+.admin-page .shh-tbl__name {
+    text-align: left;
+    font-weight: 600;
+    color: var(--text);
+}
+.admin-page .shh-tbl__dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 9px;
+    border-radius: 999px;
+    background: var(--text-soft);
+    vertical-align: middle;
+}
+.admin-page .shh-tbl__row[data-kind="ok"] .shh-tbl__dot {
+    background: var(--success);
+}
+.admin-page .shh-tbl__row[data-kind="warn"] .shh-tbl__dot {
+    background: var(--warning);
+}
+.admin-page .shh-tbl__row[data-kind="bad"] .shh-tbl__dot {
+    background: var(--danger);
+}
+
+/* Numeric columns — right-aligned, tabular. */
+.admin-page .shh-tbl__num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+}
+.admin-page .shh-tbl__num--strong {
+    font-weight: 700;
+}
+.admin-page .shh-tbl__num--zero {
+    color: var(--text-soft);
+}
+.admin-page .shh-tbl__num--fail {
     color: var(--danger);
     font-weight: 700;
     background: var(--danger-soft);
+    cursor: help;
+}
+.admin-page .shh-tbl__num--skip {
+    color: var(--warning);
+    font-weight: 600;
+}
+
+/* Rate column. */
+.admin-page .shh-tbl__rate {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    color: var(--text-muted);
+}
+.admin-page .shh-tbl__rate--ok {
+    color: var(--success);
+}
+.admin-page .shh-tbl__rate--warn {
+    color: var(--warning);
+}
+.admin-page .shh-tbl__rate--bad {
+    color: var(--danger);
+}
+
+/* Trend (sparkline) column. */
+.admin-page .shh-tbl__trend {
+    text-align: right;
+    width: 84px;
+}
+.admin-page .shh-spark {
+    width: 72px;
+    height: 20px;
+    vertical-align: middle;
+    opacity: 0.9;
+}
+.admin-page .shh-tbl__dash {
+    color: var(--text-soft);
+}
+
+/* Last-activity column. */
+.admin-page .shh-tbl__when {
+    text-align: right;
+    color: var(--text-soft);
+    font-size: 0.8rem;
+}
+
+@media (max-width: 640px) {
+    .admin-page .shh-tbl__trend,
+    .admin-page .shh-tbl__when {
+        display: none;
+    }
 }
 
 /* --- Security view: account-protection banner + activity log -------- */
@@ -1057,6 +1253,12 @@ code {
     display: flex;
     flex-direction: column;
     gap: 2px;
+}
+
+/* When the activity feed follows its filter toolbar, the toolbar already
+   provides the spacing — drop the feed's own top margin to avoid a double gap. */
+.admin-page .list-toolbar--activity + .security-activity {
+    margin-top: 0;
 }
 
 .admin-page .security-activity__row {
@@ -1316,6 +1518,7 @@ code {
     display: flex;
     align-items: center;
     gap: 12px;
+    margin-top: 18px;
     margin-bottom: 8px;
     flex-wrap: wrap;
 }
@@ -1373,13 +1576,10 @@ code {
 
 .admin-page .metric {
     padding: 15px 16px;
-    border: 1px solid var(--line);
+    border: 1px solid var(--vista-edge);
     border-radius: 16px;
-    background: var(--surface);
-    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
-}
-:root[data-theme-effective="dark"] .admin-page .metric {
-    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.4);
+    background: var(--vista-card);
+    box-shadow: none;
 }
 .admin-page .metric__head {
     display: flex;

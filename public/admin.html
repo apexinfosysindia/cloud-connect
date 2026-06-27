@@ -160,14 +160,23 @@
                         <svg class="list-search__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
                         <input id="usersSearch" class="list-search__input" type="search" placeholder="Search email, domain, status…" autocomplete="off" spellcheck="false" aria-label="Search customer accounts">
                     </div>
+                    <div class="list-filter" id="usersFilter" role="group" aria-label="Filter accounts">
+                        <button type="button" class="list-filter__chip is-active" data-users-filter="all">All</button>
+                        <button type="button" class="list-filter__chip" data-users-filter="pending">Pending</button>
+                        <button type="button" class="list-filter__chip" data-users-filter="active">Active</button>
+                        <button type="button" class="list-filter__chip" data-users-filter="disabled">Disabled</button>
+                    </div>
+                </div>
+
+                <div id="usersTableBody" class="user-list"></div>
+
+                <div class="list-pager-bar">
                     <div class="list-pager" id="usersPager">
                         <button type="button" id="usersPrev" class="button button-secondary button-small" disabled>‹ Prev</button>
                         <span class="list-pager__label" id="usersPageLabel">Page 1 of 1</span>
                         <button type="button" id="usersNext" class="button button-secondary button-small" disabled>Next ›</button>
                     </div>
                 </div>
-
-                <div id="usersTableBody" class="user-list"></div>
             </section>
                     </section>
 
@@ -215,14 +224,17 @@
                         <button type="button" class="list-filter__chip" data-fleet-filter="offline">Offline</button>
                         <button type="button" class="list-filter__chip" data-fleet-filter="blocked">Blocked</button>
                     </div>
+                </div>
+
+                <div id="fleetList" class="fleet-list"></div>
+
+                <div class="list-pager-bar">
                     <div class="list-pager" id="fleetPager">
                         <button type="button" id="fleetPrev" class="button button-secondary button-small" disabled>‹ Prev</button>
                         <span class="list-pager__label" id="fleetPageLabel">Page 1 of 1</span>
                         <button type="button" id="fleetNext" class="button button-secondary button-small" disabled>Next ›</button>
                     </div>
                 </div>
-
-                <div id="fleetList" class="fleet-list"></div>
             </section>
                     </section>
 
@@ -305,7 +317,23 @@
                         <p class="section-text">Latest privileged actions across the fleet — device SSH access, app restarts, and server reboots. Audit trail, newest first.</p>
                     </div>
                 </div>
+                <div class="list-toolbar list-toolbar--activity">
+                    <div class="list-filter" id="securityFilter" role="group" aria-label="Filter admin activity">
+                        <button type="button" class="list-filter__chip is-active" data-activity-filter="all">All</button>
+                        <button type="button" class="list-filter__chip" data-activity-filter="ssh">SSH access</button>
+                        <button type="button" class="list-filter__chip" data-activity-filter="restart">Restarts</button>
+                        <button type="button" class="list-filter__chip" data-activity-filter="reboot">Reboots</button>
+                    </div>
+                </div>
                 <div id="securityActivity" class="security-activity"></div>
+
+                <div class="list-pager-bar">
+                    <div class="list-pager" id="securityPager">
+                        <button type="button" id="securityPrev" class="button button-secondary button-small" disabled>‹ Prev</button>
+                        <span class="list-pager__label" id="securityPageLabel">Page 1 of 1</span>
+                        <button type="button" id="securityNext" class="button button-secondary button-small" disabled>Next ›</button>
+                    </div>
+                </div>
             </section>
                     </section>
                 </div>
@@ -496,8 +524,8 @@ let fleetHeartbeatWindowSeconds = 45;
 // (auto-refresh) re-fetches the SAME page/search the admin is looking at rather
 // than snapping back to page 1. `inFlight` guards against overlapping fetches
 // while the admin types in the debounced search box.
-const usersState = { page: 1, pageSize: 25, q: '', totalPages: 1, loaded: false, inFlight: false };
-const fleetState = { page: 1, pageSize: 25, q: '', filter: 'all', totalPages: 1, loaded: false, inFlight: false };
+const usersState = { page: 1, pageSize: 5, q: '', filter: 'all', totalPages: 1, loaded: false, inFlight: false };
+const fleetState = { page: 1, pageSize: 5, q: '', filter: 'all', totalPages: 1, loaded: false, inFlight: false };
 
 function syncAdminMasthead() {
     // The theme toggle lives alongside logout, which is only shown once
@@ -752,7 +780,7 @@ function getActionButtons(user) {
         );
     }
 
-    buttons.push(`<button data-user-id="${user.id}" data-email="${escapeHtml(user.email)}" class="button button-danger button-small admin-delete">Delete</button>`);
+    buttons.push(`<button data-user-id="${user.id}" data-email="${escapeHtml(user.email)}" class="button button-reboot button-small admin-delete">Delete</button>`);
 
     return buttons;
 }
@@ -1089,6 +1117,7 @@ async function loadSmartHomeHealth() {
 const ADMIN_ACTION_LABELS = {
     server_restart_app: { label: 'Restarted the app (PM2)', kind: 'warn' },
     server_reboot: { label: 'Rebooted the server', kind: 'bad' },
+    connect_command_issued: { label: 'Generated device SSH access', kind: 'info' },
     ssh_command: { label: 'Generated device SSH access', kind: 'info' },
     ssh_access: { label: 'Accessed device over SSH', kind: 'info' }
 };
@@ -1146,11 +1175,31 @@ function renderSecurityOverview(data) {
     if (titleEl) titleEl.textContent = title;
     if (metaEl) metaEl.textContent = meta;
     if (badgeEl) badgeEl.textContent = badge;
+}
 
-    // Recent admin activity list.
+// Recent admin activity feed — paginated, with action-type filter chips. The
+// audit trail (admin_access_logs) grows unbounded, so unlike the protection
+// card (which rides on /security/overview) this pulls its own page from the
+// dedicated /security/activity endpoint. State lives outside the DOM so a
+// re-render keeps the page/filter the admin is looking at.
+const securityState = { page: 1, pageSize: 12, filter: 'all', totalPages: 1, loaded: false, inFlight: false };
+
+async function loadSecurityActivity() {
+    if (securityState.inFlight) return;
+    securityState.inFlight = true;
+    try {
+        const data = await api('/api/admin/security/activity?' + listQuery(securityState));
+        updatePager('security', securityState, data.page);
+        renderSecurityActivity(Array.isArray(data.recent) ? data.recent : []);
+        securityState.loaded = true;
+    } finally {
+        securityState.inFlight = false;
+    }
+}
+
+function renderSecurityActivity(rows) {
     const list = document.getElementById('securityActivity');
     if (!list) return;
-    const rows = Array.isArray(data.recent) ? data.recent : [];
     if (!rows.length) {
         list.innerHTML = '<p class="security-activity__empty">No privileged actions recorded yet.</p>';
         return;
@@ -1189,7 +1238,8 @@ const SMART_HOME_HEALTH_GROUPS = [
         rows: [
             ['add_or_update_report', 'AddOrUpdateReport'],
             ['change_report', 'ChangeReport'],
-            ['delete_report', 'DeleteReport']
+            ['delete_report', 'DeleteReport'],
+            ['doorbell_event', 'DoorbellEvent']
         ]
     },
     {
@@ -1220,65 +1270,156 @@ function wireLogSections(root) {
     });
 }
 
+// Build a tiny inline-SVG sparkline of event volume over time for one report
+// type, by bucketing the in-memory recent-events buffer. This is a "recent
+// activity" shape, not real history: the buffer holds the last ~200 events
+// (both vendors combined) and clears on restart, so at low traffic it is often
+// flat or empty — we hide it entirely below a useful threshold.
+function buildSparkline(events) {
+    const BUCKETS = 16;
+    if (!Array.isArray(events) || events.length < 4) return '';
+    const times = events.map((e) => new Date(e.at).getTime()).filter((t) => Number.isFinite(t));
+    if (times.length < 4) return '';
+    const min = Math.min(...times);
+    const max = Math.max(...times);
+    const span = max - min || 1;
+    const counts = new Array(BUCKETS).fill(0);
+    const fails = new Array(BUCKETS).fill(0);
+    events.forEach((e) => {
+        const t = new Date(e.at).getTime();
+        if (!Number.isFinite(t)) return;
+        const idx = Math.min(BUCKETS - 1, Math.floor(((t - min) / span) * BUCKETS));
+        counts[idx] += 1;
+        if (e.outcome === 'failed') fails[idx] += 1;
+    });
+    const peak = Math.max(1, ...counts);
+    const W = 96;
+    const H = 24;
+    const step = W / (BUCKETS - 1);
+    const pts = counts.map((c, i) => `${(i * step).toFixed(1)},${(H - (c / peak) * (H - 2) - 1).toFixed(1)}`);
+    const anyFail = fails.some((f) => f > 0);
+    const stroke = anyFail ? 'var(--warning)' : 'var(--brand)';
+    return (
+        `<svg class="shh-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">` +
+        `<polyline points="${pts.join(' ')}" fill="none" stroke="${stroke}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>` +
+        `</svg>`
+    );
+}
+
 function renderSmartHomeHealth(data) {
     if (!smartHomeHealth) return;
-    const tables = SMART_HOME_HEALTH_GROUPS.map((group) => {
+    const recent = Array.isArray(data.recent) ? data.recent : [];
+
+    const groups = SMART_HOME_HEALTH_GROUPS.map((group) => {
         const metrics = data[group.source] || {};
-        const rows = group.rows.map(([key, label]) => {
-            const m = metrics[key] || {};
-            const sent = Number(m.sent || 0);
-            const failed = Number(m.failed || 0);
-            const skipped = Number(m.skipped || 0);
-            const failClass = failed > 0 ? ' smart-home-health__cell--fail' : '';
-            const lastFailure = m.last_failure_reason
-                ? `${escapeHtml(String(m.last_failure_reason))}${m.last_status ? ' (' + escapeHtml(String(m.last_status)) + ')' : ''}`
-                : '—';
-            const lastActivity = formatHealthTimestamp(m.last_failure_at || m.last_success_at);
-            return `
-                <tr>
-                    <td>${escapeHtml(label)}</td>
-                    <td>${sent}</td>
-                    <td class="${failClass.trim()}">${failed}</td>
-                    <td>${skipped}</td>
-                    <td>${escapeHtml(formatHealthTimestamp(m.last_success_at))}</td>
-                    <td>${lastFailure}</td>
-                    <td>${escapeHtml(lastActivity)}</td>
-                </tr>`;
-        }).join('');
+
+        // Per-vendor totals for the summary card.
+        let tSent = 0;
+        let tFailed = 0;
+        let tSkipped = 0;
+
+        const bodyRows = group.rows
+            .map(([key, label]) => {
+                const m = metrics[key] || {};
+                const sent = Number(m.sent || 0);
+                const failed = Number(m.failed || 0);
+                const skipped = Number(m.skipped || 0);
+                tSent += sent;
+                tFailed += failed;
+                tSkipped += skipped;
+
+                // Per-row health: failures are bad, all-skipped is a soft warn,
+                // active+clean is ok, no activity at all is muted.
+                const total = sent + failed + skipped;
+                const kind = failed > 0 ? 'bad' : total === 0 ? 'muted' : skipped > 0 && sent === 0 ? 'warn' : 'ok';
+
+                // Per-row success rate over attempts (sent + failed; skips don't count).
+                const attempted = sent + failed;
+                const rate = attempted > 0 ? Math.round((sent / attempted) * 100) : null;
+                const rateCls = rate === null ? '' : rate < 80 ? ' shh-tbl__rate--bad' : rate < 100 ? ' shh-tbl__rate--warn' : ' shh-tbl__rate--ok';
+
+                const lastActivity = total > 0 ? formatHealthTimestamp(m.last_failure_at || m.last_success_at) : '—';
+                const failTitle =
+                    failed > 0 && m.last_failure_reason
+                        ? ` title="${escapeHtml(String(m.last_failure_reason))}${m.last_status ? ' (' + escapeHtml(String(m.last_status)) + ')' : ''}"`
+                        : '';
+
+                const typeEvents = recent.filter((e) => e.vendor === group.source && e.type === key);
+                const spark = buildSparkline(typeEvents);
+
+                return `
+                    <tr class="shh-tbl__row" data-kind="${kind}">
+                        <td class="shh-tbl__name"><span class="shh-tbl__dot" aria-hidden="true"></span>${escapeHtml(label)}</td>
+                        <td class="shh-tbl__num shh-tbl__num--strong">${sent}</td>
+                        <td class="shh-tbl__num${failed > 0 ? ' shh-tbl__num--fail' : ' shh-tbl__num--zero'}"${failTitle}>${failed}</td>
+                        <td class="shh-tbl__num${skipped > 0 ? ' shh-tbl__num--skip' : ' shh-tbl__num--zero'}">${skipped}</td>
+                        <td class="shh-tbl__rate${rateCls}">${rate === null ? '—' : rate + '%'}</td>
+                        <td class="shh-tbl__trend">${spark || '<span class="shh-tbl__dash">—</span>'}</td>
+                        <td class="shh-tbl__when">${escapeHtml(lastActivity)}</td>
+                    </tr>`;
+            })
+            .join('');
+
+        // Vendor summary card: totals + computed success rate + health dot.
+        const attempted = tSent + tFailed;
+        const rate = attempted > 0 ? Math.round((tSent / attempted) * 100) : null;
+        const cardKind = tFailed > 0 ? (rate !== null && rate < 80 ? 'bad' : 'warn') : tSent > 0 ? 'ok' : 'muted';
+        const rateText = rate === null ? '—' : `${rate}%`;
+
+        const card = `
+            <div class="shh-summary" data-kind="${cardKind}">
+                <div class="shh-summary__head">
+                    <span class="shh-summary__dot" aria-hidden="true"></span>
+                    <span class="shh-summary__vendor">${escapeHtml(group.vendor)}</span>
+                    <span class="shh-summary__rate">${rateText}<span class="shh-summary__rate-lbl">success</span></span>
+                </div>
+                <div class="shh-summary__metrics">
+                    <span><strong>${tSent}</strong> sent</span>
+                    <span class="${tFailed > 0 ? 'is-fail' : ''}"><strong>${tFailed}</strong> failed</span>
+                    <span><strong>${tSkipped}</strong> skipped</span>
+                </div>
+            </div>`;
+
         return `
-            <div class="smart-home-health__group">
-                <h3 class="section-title section-title--small">${escapeHtml(group.vendor)}</h3>
-                <div class="smart-home-health__table-wrap">
-                    <table class="smart-home-health__table">
+            <div class="shh-group">
+                ${card}
+                <div class="shh-tbl-wrap">
+                    <table class="shh-tbl">
                         <thead>
                             <tr>
-                                <th>Report</th><th>Sent</th><th>Failed</th><th>Skipped</th>
-                                <th>Last success</th><th>Last failure</th><th>Last activity</th>
+                                <th class="shh-tbl__name">Report</th>
+                                <th class="shh-tbl__num">Sent</th>
+                                <th class="shh-tbl__num">Failed</th>
+                                <th class="shh-tbl__num">Skipped</th>
+                                <th class="shh-tbl__rate">Rate</th>
+                                <th class="shh-tbl__trend">Trend</th>
+                                <th class="shh-tbl__when">Last activity</th>
                             </tr>
                         </thead>
-                        <tbody>${rows}</tbody>
+                        <tbody>${bodyRows}</tbody>
                     </table>
                 </div>
             </div>`;
     }).join('');
 
-    // Recent-events log stream (newest first) — a lightweight, volatile event log
-    // beneath the counters so an admin can see the actual events, not just totals.
-    const recent = Array.isArray(data.recent) ? data.recent : [];
+    // Recent-events log stream (newest first) — kept beneath the redesigned
+    // cards so an admin can still inspect the raw events, not just the rollups.
     let stream = '';
     if (recent.length) {
-        const lines = recent.map((e) => {
-            const cls = e.outcome === 'failed' ? 'shh-evt--failed' : e.outcome === 'skipped' ? 'shh-evt--skipped' : 'shh-evt--sent';
-            const detail = e.detail ? ` — ${escapeHtml(String(e.detail))}` : '';
-            const status = e.status ? ` (${escapeHtml(String(e.status))})` : '';
-            return `<div class="shh-evt ${cls}">`
-                + `<span class="shh-evt__time">${escapeHtml(formatHealthTimestamp(e.at))}</span> `
-                + `<span class="shh-evt__vendor">${escapeHtml(String(e.vendor || ''))}</span> `
-                + `<span class="shh-evt__type">${escapeHtml(String(e.type || ''))}</span> `
-                + `<span class="shh-evt__outcome">${escapeHtml(String(e.outcome || ''))}${status}</span>`
-                + `<span class="shh-evt__user">${e.user_id ? ' user ' + escapeHtml(String(e.user_id)) : ''}</span>`
-                + `${detail}</div>`;
-        }).join('');
+        const lines = recent
+            .map((e) => {
+                const cls = e.outcome === 'failed' ? 'shh-evt--failed' : e.outcome === 'skipped' ? 'shh-evt--skipped' : 'shh-evt--sent';
+                const detail = e.detail ? ` — ${escapeHtml(String(e.detail))}` : '';
+                const status = e.status ? ` (${escapeHtml(String(e.status))})` : '';
+                return `<div class="shh-evt ${cls}">`
+                    + `<span class="shh-evt__time">${escapeHtml(formatHealthTimestamp(e.at))}</span> `
+                    + `<span class="shh-evt__vendor">${escapeHtml(String(e.vendor || ''))}</span> `
+                    + `<span class="shh-evt__type">${escapeHtml(String(e.type || ''))}</span> `
+                    + `<span class="shh-evt__outcome">${escapeHtml(String(e.outcome || ''))}${status}</span>`
+                    + `<span class="shh-evt__user">${e.user_id ? ' user ' + escapeHtml(String(e.user_id)) : ''}</span>`
+                    + `${detail}</div>`;
+            })
+            .join('');
         stream = `
             <div class="logsection" data-logsection>
                 <div class="logsection__head" data-logsection-toggle>
@@ -1292,7 +1433,7 @@ function renderSmartHomeHealth(data) {
             </div>`;
     }
 
-    smartHomeHealth.innerHTML = tables + stream;
+    smartHomeHealth.innerHTML = groups + stream;
     wireLogSections(smartHomeHealth);
 }
 
@@ -1790,6 +1931,7 @@ async function loadDashboardData() {
     await loadServerHealth().catch(() => {});
     await loadServerLogs().catch(() => {});
     await loadSecurityOverview().catch(() => {});
+    await loadSecurityActivity().catch(() => {});
 }
 
 async function restoreAdminSession() {
@@ -1986,6 +2128,7 @@ usersTableBody.addEventListener('click', async (event) => {
                 confirmLabel: 'Delete',
                 cancelLabel: 'Cancel',
                 danger: true,
+                confirmClass: 'button-reboot',
             });
             if (!confirmed) {
                 return;
@@ -2068,13 +2211,14 @@ fleetList.addEventListener('keydown', (event) => {
 });
 
 // --- Search + pagination controls for the Accounts and Fleet lists --------
-// Typing resets to page 1 (debounced); Prev/Next step within bounds; the fleet
+// Typing resets to page 1 (debounced); Prev/Next step within bounds; the
 // filter chips set the status filter and reset to page 1. All of them re-fetch
 // the relevant list from the server (state lives in usersState / fleetState).
 (function wireListControls() {
     const usersSearch = document.getElementById('usersSearch');
     const usersPrev = document.getElementById('usersPrev');
     const usersNext = document.getElementById('usersNext');
+    const usersFilter = document.getElementById('usersFilter');
     if (usersSearch) {
         usersSearch.addEventListener(
             'input',
@@ -2099,6 +2243,18 @@ fleetList.addEventListener('keydown', (event) => {
                 usersState.page += 1;
                 loadUsers().catch(() => {});
             }
+        });
+    }
+    if (usersFilter) {
+        usersFilter.addEventListener('click', (event) => {
+            const chip = event.target.closest('[data-users-filter]');
+            if (!chip) return;
+            usersState.filter = chip.dataset.usersFilter;
+            usersState.page = 1;
+            usersFilter.querySelectorAll('.list-filter__chip').forEach((c) => {
+                c.classList.toggle('is-active', c === chip);
+            });
+            loadUsers().catch(() => {});
         });
     }
 
@@ -2142,6 +2298,38 @@ fleetList.addEventListener('keydown', (event) => {
                 c.classList.toggle('is-active', c === chip);
             });
             loadFleet().catch(() => {});
+        });
+    }
+
+    const securityPrev = document.getElementById('securityPrev');
+    const securityNext = document.getElementById('securityNext');
+    const securityFilter = document.getElementById('securityFilter');
+    if (securityPrev) {
+        securityPrev.addEventListener('click', () => {
+            if (securityState.page > 1) {
+                securityState.page -= 1;
+                loadSecurityActivity().catch(() => {});
+            }
+        });
+    }
+    if (securityNext) {
+        securityNext.addEventListener('click', () => {
+            if (securityState.page < securityState.totalPages) {
+                securityState.page += 1;
+                loadSecurityActivity().catch(() => {});
+            }
+        });
+    }
+    if (securityFilter) {
+        securityFilter.addEventListener('click', (event) => {
+            const chip = event.target.closest('[data-activity-filter]');
+            if (!chip) return;
+            securityState.filter = chip.dataset.activityFilter;
+            securityState.page = 1;
+            securityFilter.querySelectorAll('.list-filter__chip').forEach((c) => {
+                c.classList.toggle('is-active', c === chip);
+            });
+            loadSecurityActivity().catch(() => {});
         });
     }
 })();

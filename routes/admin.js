@@ -139,17 +139,84 @@ module.exports = function ({ dbAll, dbGet, utils, auth, webauthn, billing }) {
         })
     );
 
+    // Paginated privileged-action audit trail for the Security view's "Recent
+    // admin activity" feed. Same audit table as /overview, but with page /
+    // page_size / filter so the whole history is reachable (the overview's
+    // `recent` is just the latest slice for first paint). requireAdmin only —
+    // exposes already-recorded audit rows, never secrets or passkey material.
+    //
+    // Filter maps the chip values to the action strings actually written by
+    // device.insertAdminAccessLog: ssh -> connect_command_issued, restart ->
+    // server_restart_app, reboot -> server_reboot.
+    const ACTIVITY_FILTERS = {
+        ssh: ['connect_command_issued'],
+        restart: ['server_restart_app'],
+        reboot: ['server_reboot']
+    };
+
+    router.get(
+        '/api/admin/security/activity',
+        auth.requireAdmin,
+        asyncHandler(async (req, res) => {
+            const pageSize = utils.clampInt(req.query.page_size, 1, 100, 12);
+            const requestedPage = utils.clampInt(req.query.page, 1, 1e9, 1);
+            const filter = Object.prototype.hasOwnProperty.call(ACTIVITY_FILTERS, req.query.filter)
+                ? req.query.filter
+                : 'all';
+
+            const whereParams = [];
+            let whereSql = '';
+            if (filter !== 'all') {
+                const actions = ACTIVITY_FILTERS[filter];
+                whereSql = `WHERE action IN (${actions.map(() => '?').join(', ')})`;
+                whereParams.push(...actions);
+            }
+
+            const totalRow = await dbGet(`SELECT COUNT(*) AS total FROM admin_access_logs ${whereSql}`, whereParams);
+            const total = Number(totalRow ? totalRow.total : 0);
+            const totalPages = Math.max(1, Math.ceil(total / pageSize));
+            const page = Math.min(requestedPage, totalPages);
+            const offset = (page - 1) * pageSize;
+
+            const rows = await dbAll(
+                `
+                SELECT id, admin_email, action, details, created_at
+                FROM admin_access_logs
+                ${whereSql}
+                ORDER BY id DESC
+                LIMIT ? OFFSET ?
+            `,
+                [...whereParams, pageSize, offset]
+            );
+
+            res.setHeader('Cache-Control', 'no-store');
+            res.status(200).json({
+                page: { page, page_size: pageSize, total, total_pages: totalPages },
+                recent: rows.map((entry) => ({
+                    id: entry.id,
+                    admin_email: entry.admin_email,
+                    action: entry.action,
+                    details: utils.parseJsonSafe(entry.details, entry.details),
+                    created_at: entry.created_at
+                }))
+            });
+        })
+    );
+
     router.get(
         '/api/admin/users',
         auth.requireAdmin,
         asyncHandler(async (req, res) => {
-            const pageSize = utils.clampInt(req.query.page_size, 1, 100, 25);
+            const pageSize = utils.clampInt(req.query.page_size, 1, 100, 5);
             const requestedPage = utils.clampInt(req.query.page, 1, 1e9, 1);
             const q = utils.sanitizeString(req.query.q, 100) || '';
+            const allowedFilters = ['all', 'pending', 'active', 'disabled'];
+            const filter = allowedFilters.includes(req.query.filter) ? req.query.filter : 'all';
 
             // Whole-table status tallies for the four overview stat cards. These
-            // are independent of the search/page so the cards always reflect the
-            // full customer base, not just the rows currently on screen.
+            // are independent of the search/filter/page so the cards always
+            // reflect the full customer base, not just the rows currently on
+            // screen.
             const statsRow =
                 (await dbGet(`
                     SELECT
@@ -166,16 +233,29 @@ module.exports = function ({ dbAll, dbGet, utils, auth, webauthn, billing }) {
                 disabled: Number(statsRow.disabled || 0)
             };
 
-            // Optional server-side search across email / cloud subdomain / status.
-            // Escape LIKE wildcards so a literal % or _ in the query is matched
-            // as text, not as a wildcard.
+            // Build the filtered WHERE for the page + its COUNT: an optional
+            // status filter AND an optional search across email / cloud
+            // subdomain / status. Escape LIKE wildcards so a literal % or _ in
+            // the query is matched as text, not as a wildcard.
+            const conditions = [];
             const whereParams = [];
-            let whereSql = '';
+            if (filter === 'pending') {
+                conditions.push(`status = 'payment_pending'`);
+            } else if (filter === 'active') {
+                // "Active" groups the access-enabled statuses (active + trial),
+                // matching utils.isAccessEnabled — a trial user still has access.
+                conditions.push(`status IN ('active', 'trial')`);
+            } else if (filter === 'disabled') {
+                conditions.push(`status IN ('suspended', 'expired')`);
+            }
             if (q) {
                 const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-                whereSql = `WHERE (email LIKE ? ESCAPE '\\' OR subdomain LIKE ? ESCAPE '\\' OR status LIKE ? ESCAPE '\\')`;
+                conditions.push(
+                    `(email LIKE ? ESCAPE '\\' OR subdomain LIKE ? ESCAPE '\\' OR status LIKE ? ESCAPE '\\')`
+                );
                 whereParams.push(like, like, like);
             }
+            const whereSql = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
             const totalRow = await dbGet(`SELECT COUNT(*) AS total FROM users ${whereSql}`, whereParams);
             const total = Number(totalRow ? totalRow.total : 0);
