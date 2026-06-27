@@ -97,26 +97,115 @@ module.exports = function ({ dbAll, dbGet, utils, auth, webauthn, billing }) {
         });
     });
 
+    // Security overview for the Vista "Security" view: passkey/2FA posture plus
+    // a recent slice of the privileged-action audit trail (admin_access_logs:
+    // device SSH access, PM2 restarts, server reboots). requireAdmin only (NO
+    // sudo) so it can load automatically with the dashboard — it exposes counts
+    // and already-recorded audit rows, never secrets or passkey material.
+    const adminPrincipal = () => {
+        const email = process.env.ADMIN_EMAIL;
+        return { kind: 'admin', subject: email, adminEmail: email, displayName: email };
+    };
+
+    router.get(
+        '/api/admin/security/overview',
+        auth.requireAdmin,
+        asyncHandler(async (req, res) => {
+            const passkeyCount = await webauthn.countCredentials(adminPrincipal());
+            // 2FA is enforced unless the break-glass escape hatch is enabled.
+            const twoFactorEnforced = !webauthn.isAdminPasskeyBreakGlass();
+
+            const recentRows = await dbAll(`
+                SELECT id, admin_email, action, details, created_at
+                FROM admin_access_logs
+                ORDER BY id DESC
+                LIMIT 12
+            `);
+
+            res.setHeader('Cache-Control', 'no-store');
+            res.status(200).json({
+                passkeys: {
+                    count: passkeyCount,
+                    two_factor_enforced: twoFactorEnforced
+                },
+                recent: recentRows.map((entry) => ({
+                    id: entry.id,
+                    admin_email: entry.admin_email,
+                    action: entry.action,
+                    details: utils.parseJsonSafe(entry.details, entry.details),
+                    created_at: entry.created_at
+                }))
+            });
+        })
+    );
+
     router.get(
         '/api/admin/users',
         auth.requireAdmin,
         asyncHandler(async (req, res) => {
-            const rows = await dbAll(`
-            SELECT *
-            FROM users
-            ORDER BY
-                CASE status
-                    WHEN 'payment_pending' THEN 0
-                    WHEN 'trial' THEN 1
-                    WHEN 'active' THEN 2
-                    WHEN 'suspended' THEN 3
-                    WHEN 'expired' THEN 4
-                    ELSE 5
-                END,
-                created_at DESC
-        `);
+            const pageSize = utils.clampInt(req.query.page_size, 1, 100, 25);
+            const requestedPage = utils.clampInt(req.query.page, 1, 1e9, 1);
+            const q = utils.sanitizeString(req.query.q, 100) || '';
+
+            // Whole-table status tallies for the four overview stat cards. These
+            // are independent of the search/page so the cards always reflect the
+            // full customer base, not just the rows currently on screen.
+            const statsRow =
+                (await dbGet(`
+                    SELECT
+                        SUM(CASE WHEN status = 'payment_pending' THEN 1 ELSE 0 END) AS pending,
+                        SUM(CASE WHEN status = 'trial' THEN 1 ELSE 0 END) AS trial,
+                        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active,
+                        SUM(CASE WHEN status IN ('suspended', 'expired') THEN 1 ELSE 0 END) AS disabled
+                    FROM users
+                `)) || {};
+            const stats = {
+                pending: Number(statsRow.pending || 0),
+                trial: Number(statsRow.trial || 0),
+                active: Number(statsRow.active || 0),
+                disabled: Number(statsRow.disabled || 0)
+            };
+
+            // Optional server-side search across email / cloud subdomain / status.
+            // Escape LIKE wildcards so a literal % or _ in the query is matched
+            // as text, not as a wildcard.
+            const whereParams = [];
+            let whereSql = '';
+            if (q) {
+                const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+                whereSql = `WHERE (email LIKE ? ESCAPE '\\' OR subdomain LIKE ? ESCAPE '\\' OR status LIKE ? ESCAPE '\\')`;
+                whereParams.push(like, like, like);
+            }
+
+            const totalRow = await dbGet(`SELECT COUNT(*) AS total FROM users ${whereSql}`, whereParams);
+            const total = Number(totalRow ? totalRow.total : 0);
+            const totalPages = Math.max(1, Math.ceil(total / pageSize));
+            const page = Math.min(requestedPage, totalPages);
+            const offset = (page - 1) * pageSize;
+
+            const rows = await dbAll(
+                `
+                SELECT *
+                FROM users
+                ${whereSql}
+                ORDER BY
+                    CASE status
+                        WHEN 'payment_pending' THEN 0
+                        WHEN 'trial' THEN 1
+                        WHEN 'active' THEN 2
+                        WHEN 'suspended' THEN 3
+                        WHEN 'expired' THEN 4
+                        ELSE 5
+                    END,
+                    created_at DESC
+                LIMIT ? OFFSET ?
+            `,
+                [...whereParams, pageSize, offset]
+            );
 
             res.status(200).json({
+                stats,
+                page: { page, page_size: pageSize, total, total_pages: totalPages },
                 users: rows.map(auth.serializeAdminUser)
             });
         })
@@ -154,10 +243,7 @@ module.exports = function ({ dbAll, dbGet, utils, auth, webauthn, billing }) {
                     try {
                         cancelResult = await billing.cancelSubscription(Number(id), { atCycleEnd: true });
                     } catch (error) {
-                        console.error(
-                            `Admin suspend: Razorpay cancel failed for ${existing.email}:`,
-                            error.message
-                        );
+                        console.error(`Admin suspend: Razorpay cancel failed for ${existing.email}:`, error.message);
                         cancelError = error.message || 'Unable to cancel subscription on Razorpay.';
                     }
                 }

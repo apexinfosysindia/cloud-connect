@@ -43,6 +43,8 @@
             </div>
         </div>
 
+        <div class="vista-topbar__title" id="vistaViewTitle" aria-live="polite"></div>
+
         <div class="masthead-actions">
             <button type="button" class="theme-toggle"></button>
             <button id="logoutBtn" class="button button-secondary hidden">Log Out</button>
@@ -72,6 +74,56 @@
         </section>
 
         <section id="dashboard" class="admin-dashboard hidden">
+            <div class="vista-shell">
+                <aside class="vista-sidebar">
+                    <nav class="vista-nav" aria-label="Admin sections">
+                        <button type="button" class="vista-nav__item is-active" data-view-target="accounts" aria-current="page">
+                            <span class="vista-nav__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+                            <span>Accounts</span>
+                        </button>
+                        <button type="button" class="vista-nav__item" data-view-target="fleet">
+                            <span class="vista-nav__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg></span>
+                            <span>Fleet</span>
+                        </button>
+                        <button type="button" class="vista-nav__item" data-view-target="gateway">
+                            <span class="vista-nav__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.9 19.1A10 10 0 0 1 4.9 5"/><path d="M7.8 16.2a6 6 0 0 1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8a6 6 0 0 1 0 8.5"/><path d="M19.1 5a10 10 0 0 1 0 14.1"/></svg></span>
+                            <span>Gateway</span>
+                        </button>
+                        <button type="button" class="vista-nav__item" data-view-target="server">
+                            <span class="vista-nav__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="7" rx="1.5"/><rect x="2" y="14" width="20" height="7" rx="1.5"/><path d="M6 6.5h.01"/><path d="M6 17.5h.01"/></svg></span>
+                            <span>Server</span>
+                        </button>
+                        <button type="button" class="vista-nav__item" data-view-target="security">
+                            <span class="vista-nav__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
+                            <span>Security</span>
+                        </button>
+                    </nav>
+
+                    <div class="vista-rail-foot">
+                        <div class="vista-status" id="railStatus" data-state="muted" aria-live="polite">
+                            <span class="vista-status__dot" aria-hidden="true"></span>
+                            <div class="vista-status__text">
+                                <span class="vista-status__title" id="railStatusTitle">Checking…</span>
+                                <span class="vista-status__meta" id="railStatusMeta">System status</span>
+                            </div>
+                        </div>
+
+                        <div class="vista-rail-foot__divider"></div>
+
+                        <a href="/admin-security" class="vista-rail-link">
+                            <span class="vista-rail-link__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+                            <span>Manage passkeys</span>
+                        </a>
+
+                        <div class="vista-rail-actions">
+                            <button type="button" class="theme-toggle vista-rail-theme"></button>
+                            <button type="button" id="logoutBtnRail" class="button button-secondary vista-rail-logout">Log Out</button>
+                        </div>
+                    </div>
+                </aside>
+
+                <div class="vista-views">
+                    <section class="vista-view is-active" data-view="accounts">
             <div class="stats-grid">
                 <article class="stat-card stat-card--pending">
                     <span class="stat-label">Pending Payment</span>
@@ -103,9 +155,23 @@
                     </div>
                 </div>
 
+                <div class="list-toolbar">
+                    <div class="list-search">
+                        <svg class="list-search__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+                        <input id="usersSearch" class="list-search__input" type="search" placeholder="Search email, domain, status…" autocomplete="off" spellcheck="false" aria-label="Search customer accounts">
+                    </div>
+                    <div class="list-pager" id="usersPager">
+                        <button type="button" id="usersPrev" class="button button-secondary button-small" disabled>‹ Prev</button>
+                        <span class="list-pager__label" id="usersPageLabel">Page 1 of 1</span>
+                        <button type="button" id="usersNext" class="button button-secondary button-small" disabled>Next ›</button>
+                    </div>
+                </div>
+
                 <div id="usersTableBody" class="user-list"></div>
             </section>
+                    </section>
 
+                    <section class="vista-view" data-view="fleet">
             <section class="section-card user-section fleet-section">
                 <div class="section-header">
                     <div>
@@ -138,9 +204,29 @@
                     </article>
                 </div>
 
+                <div class="list-toolbar list-toolbar--fleet">
+                    <div class="list-search">
+                        <svg class="list-search__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+                        <input id="fleetSearch" class="list-search__input" type="search" placeholder="Search UID, owner email, endpoint…" autocomplete="off" spellcheck="false" aria-label="Search device fleet">
+                    </div>
+                    <div class="list-filter" id="fleetFilter" role="group" aria-label="Filter devices">
+                        <button type="button" class="list-filter__chip is-active" data-fleet-filter="all">All</button>
+                        <button type="button" class="list-filter__chip" data-fleet-filter="online">Online</button>
+                        <button type="button" class="list-filter__chip" data-fleet-filter="offline">Offline</button>
+                        <button type="button" class="list-filter__chip" data-fleet-filter="blocked">Blocked</button>
+                    </div>
+                    <div class="list-pager" id="fleetPager">
+                        <button type="button" id="fleetPrev" class="button button-secondary button-small" disabled>‹ Prev</button>
+                        <span class="list-pager__label" id="fleetPageLabel">Page 1 of 1</span>
+                        <button type="button" id="fleetNext" class="button button-secondary button-small" disabled>Next ›</button>
+                    </div>
+                </div>
+
                 <div id="fleetList" class="fleet-list"></div>
             </section>
+                    </section>
 
+                    <section class="vista-view" data-view="gateway">
             <section class="section-card user-section smart-home-health-section">
                 <div class="section-header">
                     <div>
@@ -150,7 +236,9 @@
                 </div>
                 <div id="smartHomeHealth" class="smart-home-health"></div>
             </section>
+                    </section>
 
+                    <section class="vista-view" data-view="server">
             <section class="section-card user-section server-health-section">
                 <div class="section-header">
                     <div>
@@ -188,16 +276,40 @@
                     <span id="serverControlStatus" class="server-health__ctrlstatus"></span>
                 </div>
             </section>
+                    </section>
 
+                    <section class="vista-view" data-view="security">
             <section class="section-card user-section">
                 <div class="section-header">
                     <div>
                         <h2 class="section-title section-title--small">Security settings</h2>
-                        <p class="section-text">Manage admin passkeys (two-factor sign-in) and account protection. Re-authentication is required.</p>
+                        <p class="section-text">Admin passkeys (two-factor sign-in), account protection, and a record of privileged actions. Managing passkeys requires re-authentication.</p>
                     </div>
                     <a href="/admin-security" class="button button-secondary">Manage Passkeys</a>
                 </div>
+
+                <div class="security-protection" id="securityProtection" data-state="muted">
+                    <span class="security-protection__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
+                    <div class="security-protection__text">
+                        <span class="security-protection__title" id="securityProtectionTitle">Checking protection…</span>
+                        <span class="security-protection__meta" id="securityProtectionMeta">Passkey two-factor status for the admin login.</span>
+                    </div>
+                    <span class="security-protection__badge" id="securityProtectionBadge">—</span>
+                </div>
             </section>
+
+            <section class="section-card user-section">
+                <div class="section-header">
+                    <div>
+                        <h2 class="section-title section-title--small">Recent admin activity</h2>
+                        <p class="section-text">Latest privileged actions across the fleet — device SSH access, app restarts, and server reboots. Audit trail, newest first.</p>
+                    </div>
+                </div>
+                <div id="securityActivity" class="security-activity"></div>
+            </section>
+                    </section>
+                </div>
+            </div>
 
             <button id="logoutBtnMobile" type="button" class="button button-secondary mobile-only-nav">Log Out</button>
         </section>
@@ -379,6 +491,13 @@ let fleetDevices = [];
 let fleetRefreshTimer = null;
 let usersRefreshTimer = null;
 let fleetHeartbeatWindowSeconds = 45;
+
+// Pagination/search state lives OUTSIDE the DOM so a background list re-render
+// (auto-refresh) re-fetches the SAME page/search the admin is looking at rather
+// than snapping back to page 1. `inFlight` guards against overlapping fetches
+// while the admin types in the debounced search box.
+const usersState = { page: 1, pageSize: 25, q: '', totalPages: 1, loaded: false, inFlight: false };
+const fleetState = { page: 1, pageSize: 25, q: '', filter: 'all', totalPages: 1, loaded: false, inFlight: false };
 
 function syncAdminMasthead() {
     // The theme toggle lives alongside logout, which is only shown once
@@ -563,11 +682,13 @@ function setStatBar(id, value, total) {
     fill.style.width = pct + '%';
 }
 
-function updateCounts(users) {
-    const pending = users.filter((u) => u.status === 'payment_pending').length;
-    const trial = users.filter((u) => u.status === 'trial').length;
-    const active = users.filter((u) => u.status === 'active').length;
-    const disabled = users.filter((u) => ['suspended', 'expired'].includes(u.status)).length;
+function updateCounts(stats = {}) {
+    // Whole-table tallies from the server (independent of the current search /
+    // page), so the four overview cards always reflect the full customer base.
+    const pending = Number(stats.pending || 0);
+    const trial = Number(stats.trial || 0);
+    const active = Number(stats.active || 0);
+    const disabled = Number(stats.disabled || 0);
     const total = pending + trial + active + disabled;
 
     document.getElementById('countPending').textContent = pending;
@@ -597,15 +718,10 @@ function updateFleetCounts(stats = {}) {
     setStatBar('barDevicesOnline', online, total);
     setStatBar('barDevicesOffline', offline, total);
     setStatBar('barDevicesBlocked', blocked, total);
-}
 
-function deriveFleetStats(devices) {
-    return {
-        total: devices.length,
-        online: devices.filter((device) => device.online).length,
-        offline: devices.filter((device) => !device.online).length,
-        blocked: devices.filter((device) => !device.account_enabled).length
-    };
+    railStatusState.online = online;
+    railStatusState.totalDevices = total;
+    updateRailStatus();
 }
 
 function buildActionButton(user, label, status, extra = {}) {
@@ -642,17 +758,15 @@ function getActionButtons(user) {
 }
 
 function renderUsers(users) {
-    updateCounts(users);
-
     if (!users.length) {
         usersTableBody.innerHTML = '<div class="user-empty">No customer accounts found.</div>';
         return;
     }
 
-    usersTableBody.innerHTML = users.map((user) => {
+    const html = users.map((user) => {
         const accessSummary = getAccessSummary(user);
         return `
-        <article class="user-card" data-user-card>
+        <article class="user-card" data-user-card data-user-id="${user.id}">
             <div class="user-card__summary" data-card-toggle role="button" tabindex="0" aria-expanded="false">
                 <div class="user-card__identity">
                     <div class="user-card__name">${escapeHtml(user.email)}</div>
@@ -688,6 +802,8 @@ function renderUsers(users) {
         </article>
     `;
     }).join('');
+
+    renderListPreservingExpanded(usersTableBody, html, 'data-user-id');
 }
 
 function getFleetLastEventSummary(device) {
@@ -723,7 +839,7 @@ function getSshRouteHint(device) {
 
 function renderFleet(devices, stats, heartbeatWindowSeconds) {
     fleetHeartbeatWindowSeconds = heartbeatWindowSeconds || fleetHeartbeatWindowSeconds || 45;
-    updateFleetCounts(stats || deriveFleetStats(devices));
+    updateFleetCounts(stats || {});
     if (fleetWindow) {
         fleetWindow.textContent = fleetHeartbeatWindowSeconds;
     }
@@ -733,7 +849,7 @@ function renderFleet(devices, stats, heartbeatWindowSeconds) {
         return;
     }
 
-    fleetList.innerHTML = devices.map((device) => {
+    const html = devices.map((device) => {
         const cloudUrl = getFleetCloudUrl(device);
         const localIps = (device.local_ips && device.local_ips.length > 0) ? device.local_ips.join(', ') : 'Not reported';
         const endpoint = (device.tunnel_host && device.tunnel_port) ? `${device.tunnel_host}:${device.tunnel_port}` : 'Waiting for tunnel endpoint';
@@ -753,7 +869,7 @@ function renderFleet(devices, stats, heartbeatWindowSeconds) {
             : `<div class="user-card__name user-card__name--placeholder">No cloud address set</div>`;
 
         return `
-        <article class="user-card fleet-card" data-fleet-card>
+        <article class="user-card fleet-card" data-fleet-card data-fleet-id="${device.id}">
             <div class="user-card__summary" data-fleet-card-toggle role="button" tabindex="0" aria-expanded="false">
                 <div class="user-card__identity">
                     ${titleRow}
@@ -792,6 +908,8 @@ function renderFleet(devices, stats, heartbeatWindowSeconds) {
         </article>
     `;
     }).join('');
+
+    renderListPreservingExpanded(fleetList, html, 'data-fleet-id');
 }
 
 function renderLogItems(targetElement, items, mode) {
@@ -868,20 +986,198 @@ function applyRealtimeUserUpdate(user) {
     }
 }
 
+// Debounce so typing in a search box fires one fetch after the admin pauses,
+// not one per keystroke.
+function debounce(fn, ms) {
+    let timer = null;
+    return function debounced(...args) {
+        if (timer) window.clearTimeout(timer);
+        timer = window.setTimeout(() => fn.apply(this, args), ms);
+    };
+}
+
+// Build a querystring from a list state (page, page_size, q[, filter]).
+function listQuery(state) {
+    const params = new URLSearchParams();
+    params.set('page', String(state.page));
+    params.set('page_size', String(state.pageSize));
+    if (state.q) params.set('q', state.q);
+    if (state.filter && state.filter !== 'all') params.set('filter', state.filter);
+    return params.toString();
+}
+
+// Sync a pager's "Page X of Y · N total" label + Prev/Next disabled state from
+// the server's page info, clamping state.page if the server moved it (e.g. the
+// last page shrank under us, or the requested page was past the end).
+function updatePager(prefix, state, pageInfo) {
+    if (pageInfo) {
+        state.page = pageInfo.page;
+        state.totalPages = pageInfo.total_pages;
+    }
+    const label = document.getElementById(prefix + 'PageLabel');
+    const prev = document.getElementById(prefix + 'Prev');
+    const next = document.getElementById(prefix + 'Next');
+    const totalLabel = pageInfo && pageInfo.total != null ? ` · ${pageInfo.total} total` : '';
+    if (label) label.textContent = `Page ${state.page} of ${state.totalPages}${totalLabel}`;
+    if (prev) prev.disabled = state.page <= 1;
+    if (next) next.disabled = state.page >= state.totalPages;
+}
+
+// Capture the ids of currently-expanded cards in a container, replace its
+// markup, then re-expand the same ids — so a background auto-refresh re-render
+// does not collapse a card the admin has open. `idAttr` is the stable id
+// attribute (data-user-id / data-fleet-id).
+function renderListPreservingExpanded(container, html, idAttr) {
+    const expanded = new Set();
+    container.querySelectorAll('.is-expanded[' + idAttr + ']').forEach((el) => {
+        expanded.add(el.getAttribute(idAttr));
+    });
+    container.innerHTML = html;
+    if (!expanded.size) return;
+    container.querySelectorAll('[' + idAttr + ']').forEach((el) => {
+        if (expanded.has(el.getAttribute(idAttr))) {
+            el.classList.add('is-expanded');
+            const toggle = el.querySelector('[aria-expanded]');
+            if (toggle) toggle.setAttribute('aria-expanded', 'true');
+        }
+    });
+}
+
+// True when the named Vista view is the one currently on screen — used to skip
+// background list refreshes for a view the admin isn't looking at.
+function isViewActive(viewName) {
+    const view = document.querySelector('.vista-view[data-view="' + viewName + '"]');
+    return Boolean(view && view.classList.contains('is-active'));
+}
+
 async function loadUsers() {
-    const data = await api('/api/admin/users');
-    renderUsers(data.users);
+    if (usersState.inFlight) return;
+    usersState.inFlight = true;
+    try {
+        const data = await api('/api/admin/users?' + listQuery(usersState));
+        updateCounts(data.stats || {});
+        updatePager('users', usersState, data.page);
+        renderUsers(Array.isArray(data.users) ? data.users : []);
+        usersState.loaded = true;
+    } finally {
+        usersState.inFlight = false;
+    }
 }
 
 async function loadFleet() {
-    const data = await api('/api/admin/fleet');
-    fleetDevices = Array.isArray(data.devices) ? data.devices : [];
-    renderFleet(fleetDevices, data.stats || deriveFleetStats(fleetDevices), data.heartbeat_window_seconds || 45);
+    if (fleetState.inFlight) return;
+    fleetState.inFlight = true;
+    try {
+        const data = await api('/api/admin/fleet?' + listQuery(fleetState));
+        fleetDevices = Array.isArray(data.devices) ? data.devices : [];
+        updatePager('fleet', fleetState, data.page);
+        renderFleet(fleetDevices, data.stats || {}, data.heartbeat_window_seconds || 45);
+        fleetState.loaded = true;
+    } finally {
+        fleetState.inFlight = false;
+    }
 }
 
 async function loadSmartHomeHealth() {
     const data = await api('/api/admin/smart-home-health');
     renderSmartHomeHealth(data || {});
+}
+
+// Map raw admin_access_logs action codes to friendly labels + a category used
+// for the row's accent dot. Unknown codes fall back to a humanized version of
+// the code itself so new server-side actions still render sensibly.
+const ADMIN_ACTION_LABELS = {
+    server_restart_app: { label: 'Restarted the app (PM2)', kind: 'warn' },
+    server_reboot: { label: 'Rebooted the server', kind: 'bad' },
+    ssh_command: { label: 'Generated device SSH access', kind: 'info' },
+    ssh_access: { label: 'Accessed device over SSH', kind: 'info' }
+};
+
+function describeAdminAction(action) {
+    if (ADMIN_ACTION_LABELS[action]) return ADMIN_ACTION_LABELS[action];
+    const label = String(action || 'action')
+        .replace(/[_-]+/g, ' ')
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+    return { label, kind: 'info' };
+}
+
+async function loadSecurityOverview() {
+    const data = await api('/api/admin/security/overview');
+    renderSecurityOverview(data || {});
+}
+
+function renderSecurityOverview(data) {
+    const passkeys = data.passkeys || {};
+    const count = Number(passkeys.count || 0);
+    const enforced = passkeys.two_factor_enforced !== false;
+
+    // Account-protection status — the one indicator that answers a real
+    // question: is the admin login actually covered by a second factor, or is
+    // there a gap? 2FA is effective only when it's enforced AND a passkey is
+    // enrolled; "enforced but no passkey" and "break-glass" are both gaps.
+    const card = document.getElementById('securityProtection');
+    const titleEl = document.getElementById('securityProtectionTitle');
+    const metaEl = document.getElementById('securityProtectionMeta');
+    const badgeEl = document.getElementById('securityProtectionBadge');
+
+    let state = 'bad';
+    let title = 'Two-factor not active';
+    let meta = 'Admin sign-in is protected by password only.';
+    let badge = 'Action needed';
+
+    if (enforced && count > 0) {
+        state = 'ok';
+        title = 'Protected by passkey two-factor';
+        meta = `A passkey is required after the password${count > 1 ? ` · ${count} enrolled` : ''}.`;
+        badge = 'Secure';
+    } else if (enforced) {
+        state = 'warn';
+        title = 'Passkey not enrolled';
+        meta = 'Two-factor is enforced, but no admin passkey is registered yet.';
+        badge = 'Set up needed';
+    } else {
+        state = 'bad';
+        title = 'Two-factor bypassed (break-glass)';
+        meta = 'The passkey step is temporarily disabled by ADMIN_PASSKEY_BREAK_GLASS.';
+        badge = 'At risk';
+    }
+
+    if (card) card.setAttribute('data-state', state);
+    if (titleEl) titleEl.textContent = title;
+    if (metaEl) metaEl.textContent = meta;
+    if (badgeEl) badgeEl.textContent = badge;
+
+    // Recent admin activity list.
+    const list = document.getElementById('securityActivity');
+    if (!list) return;
+    const rows = Array.isArray(data.recent) ? data.recent : [];
+    if (!rows.length) {
+        list.innerHTML = '<p class="security-activity__empty">No privileged actions recorded yet.</p>';
+        return;
+    }
+    list.innerHTML = rows
+        .map((entry) => {
+            const meta = describeAdminAction(entry.action);
+            const who = escapeHtml(entry.admin_email || 'admin');
+            const when = escapeHtml(formatHealthTimestamp(entry.created_at));
+            let detail = '';
+            if (entry.details) {
+                const raw = typeof entry.details === 'string' ? entry.details : JSON.stringify(entry.details);
+                if (raw && raw !== '{}' && raw !== 'null') {
+                    detail = `<span class="security-activity__detail">${escapeHtml(raw).slice(0, 160)}</span>`;
+                }
+            }
+            return (
+                `<div class="security-activity__row" data-kind="${meta.kind}">` +
+                '<span class="security-activity__dot" aria-hidden="true"></span>' +
+                '<div class="security-activity__body">' +
+                `<span class="security-activity__action">${escapeHtml(meta.label)}</span>` +
+                `<span class="security-activity__meta">${who} · ${when}</span>` +
+                detail +
+                '</div></div>'
+            );
+        })
+        .join('');
 }
 
 // Render order + human labels for each vendor's report-type metrics. Keys must match
@@ -1101,6 +1397,45 @@ function updatePm2Badge(pm2) {
     }
     badge.className = `pm2-badge ${cls}`;
     badge.innerHTML = `<span class="pm2-badge__dot"></span>${escapeHtml(text)}`;
+    railStatusState.pm2 = pm2 && pm2.status ? String(pm2.status) : null;
+    updateRailStatus();
+}
+
+// Live system-status pill pinned at the bottom of the sidebar rail. It blends
+// the two signals the dashboard already polls: PM2 process state (server
+// health) and the online device count (fleet). Both call this after they
+// update; we keep the last value of each in railStatusState so a refresh of
+// one doesn't clobber the other.
+const railStatusState = { pm2: null, online: null, totalDevices: null };
+function updateRailStatus() {
+    const el = document.getElementById('railStatus');
+    if (!el) return;
+    const titleEl = document.getElementById('railStatusTitle');
+    const metaEl = document.getElementById('railStatusMeta');
+    const { pm2, online, totalDevices } = railStatusState;
+
+    let state = 'muted';
+    let title = 'Status unknown';
+    if (pm2 === 'online') {
+        state = 'ok';
+        title = 'Operational';
+    } else if (pm2) {
+        // Any non-online PM2 status (stopped, errored, launching…) is degraded.
+        state = 'bad';
+        title = 'PM2 ' + pm2.charAt(0).toUpperCase() + pm2.slice(1);
+    }
+
+    let meta = 'System status';
+    if (online !== null) {
+        const total = totalDevices !== null ? totalDevices : null;
+        meta = total !== null ? `${online} / ${total} devices online` : `${online} online`;
+    } else if (pm2 === 'online') {
+        meta = 'All systems normal';
+    }
+
+    el.setAttribute('data-state', state);
+    if (titleEl) titleEl.textContent = title;
+    if (metaEl) metaEl.textContent = meta;
 }
 
 async function loadServerLogs() {
@@ -1406,7 +1741,7 @@ async function issueFleetConnect(deviceId, triggerButton = null) {
 function startFleetAutoRefresh() {
     stopFleetAutoRefresh();
     fleetRefreshTimer = window.setInterval(async () => {
-        if (dashboard.classList.contains('hidden')) {
+        if (dashboard.classList.contains('hidden') || !isViewActive('fleet')) {
             return;
         }
 
@@ -1430,7 +1765,7 @@ function stopFleetAutoRefresh() {
 function startUsersAutoRefresh() {
     stopUsersAutoRefresh();
     usersRefreshTimer = window.setInterval(async () => {
-        if (dashboard.classList.contains('hidden')) {
+        if (dashboard.classList.contains('hidden') || !isViewActive('accounts')) {
             return;
         }
         try {
@@ -1454,6 +1789,7 @@ async function loadDashboardData() {
     await loadSmartHomeHealth();
     await loadServerHealth().catch(() => {});
     await loadServerLogs().catch(() => {});
+    await loadSecurityOverview().catch(() => {});
 }
 
 async function restoreAdminSession() {
@@ -1467,6 +1803,7 @@ async function restoreAdminSession() {
         loginPanel.classList.add('hidden');
         dashboard.classList.remove('hidden');
         logoutBtn.classList.remove('hidden');
+        document.body.classList.add('vista-authed');
         syncAdminMasthead();
         await loadDashboardData();
         startFleetAutoRefresh();
@@ -1475,6 +1812,29 @@ async function restoreAdminSession() {
         localStorage.removeItem(ADMIN_TOKEN_KEY);
         syncAdminMasthead();
     }
+}
+
+// Play the one-shot login→dashboard entrance animation. Adds `vista-entering`
+// to <body> (CSS drives the staggered rise/fade of the masthead, rail and
+// view), then removes it once the choreography is done so it never interferes
+// with later interactions (sticky bar, view switching). Called only on an
+// interactive login success — not on session-restore — so a reload doesn't
+// replay it. Skipped when the user prefers reduced motion.
+function playVistaEntrance() {
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) {
+        return;
+    }
+    const body = document.body;
+    body.classList.remove('vista-entering');
+    // Force a reflow so re-adding the class restarts the animation even if a
+    // previous entrance was still mid-flight (e.g. rapid logout → login).
+    void body.offsetWidth;
+    body.classList.add('vista-entering');
+    window.clearTimeout(playVistaEntrance.timer);
+    playVistaEntrance.timer = window.setTimeout(() => {
+        body.classList.remove('vista-entering');
+    }, 1100);
 }
 
 document.getElementById('loginForm').addEventListener('submit', async (event) => {
@@ -1520,6 +1880,8 @@ document.getElementById('loginForm').addEventListener('submit', async (event) =>
         loginPanel.classList.add('hidden');
         dashboard.classList.remove('hidden');
         logoutBtn.classList.remove('hidden');
+        document.body.classList.add('vista-authed');
+        playVistaEntrance();
         syncAdminMasthead();
         await loadDashboardData();
         startFleetAutoRefresh();
@@ -1558,6 +1920,7 @@ function doLogout() {
     dashboard.classList.add('hidden');
     logoutBtn.classList.add('hidden');
     loginPanel.classList.remove('hidden');
+    document.body.classList.remove('vista-authed');
     usersTableBody.innerHTML = '';
     fleetList.innerHTML = '';
     updateFleetCounts({ total: 0, online: 0, offline: 0, blocked: 0 });
@@ -1571,6 +1934,10 @@ logoutBtn.addEventListener('click', doLogout);
 const logoutBtnMobile = document.getElementById('logoutBtnMobile');
 if (logoutBtnMobile) {
     logoutBtnMobile.addEventListener('click', doLogout);
+}
+const logoutBtnRail = document.getElementById('logoutBtnRail');
+if (logoutBtnRail) {
+    logoutBtnRail.addEventListener('click', doLogout);
 }
 
 tokenModalClose.addEventListener('click', closeTokenModal);
@@ -1700,6 +2067,85 @@ fleetList.addEventListener('keydown', (event) => {
     toggle.setAttribute('aria-expanded', card.classList.contains('is-expanded') ? 'true' : 'false');
 });
 
+// --- Search + pagination controls for the Accounts and Fleet lists --------
+// Typing resets to page 1 (debounced); Prev/Next step within bounds; the fleet
+// filter chips set the status filter and reset to page 1. All of them re-fetch
+// the relevant list from the server (state lives in usersState / fleetState).
+(function wireListControls() {
+    const usersSearch = document.getElementById('usersSearch');
+    const usersPrev = document.getElementById('usersPrev');
+    const usersNext = document.getElementById('usersNext');
+    if (usersSearch) {
+        usersSearch.addEventListener(
+            'input',
+            debounce(() => {
+                usersState.q = usersSearch.value.trim();
+                usersState.page = 1;
+                loadUsers().catch(() => {});
+            }, 300)
+        );
+    }
+    if (usersPrev) {
+        usersPrev.addEventListener('click', () => {
+            if (usersState.page > 1) {
+                usersState.page -= 1;
+                loadUsers().catch(() => {});
+            }
+        });
+    }
+    if (usersNext) {
+        usersNext.addEventListener('click', () => {
+            if (usersState.page < usersState.totalPages) {
+                usersState.page += 1;
+                loadUsers().catch(() => {});
+            }
+        });
+    }
+
+    const fleetSearch = document.getElementById('fleetSearch');
+    const fleetPrev = document.getElementById('fleetPrev');
+    const fleetNext = document.getElementById('fleetNext');
+    const fleetFilter = document.getElementById('fleetFilter');
+    if (fleetSearch) {
+        fleetSearch.addEventListener(
+            'input',
+            debounce(() => {
+                fleetState.q = fleetSearch.value.trim();
+                fleetState.page = 1;
+                loadFleet().catch(() => {});
+            }, 300)
+        );
+    }
+    if (fleetPrev) {
+        fleetPrev.addEventListener('click', () => {
+            if (fleetState.page > 1) {
+                fleetState.page -= 1;
+                loadFleet().catch(() => {});
+            }
+        });
+    }
+    if (fleetNext) {
+        fleetNext.addEventListener('click', () => {
+            if (fleetState.page < fleetState.totalPages) {
+                fleetState.page += 1;
+                loadFleet().catch(() => {});
+            }
+        });
+    }
+    if (fleetFilter) {
+        fleetFilter.addEventListener('click', (event) => {
+            const chip = event.target.closest('[data-fleet-filter]');
+            if (!chip) return;
+            fleetState.filter = chip.dataset.fleetFilter;
+            fleetState.page = 1;
+            fleetFilter.querySelectorAll('.list-filter__chip').forEach((c) => {
+                c.classList.toggle('is-active', c === chip);
+            });
+            loadFleet().catch(() => {});
+        });
+    }
+})();
+
 window.addEventListener('beforeunload', () => {
     stopFleetAutoRefresh();
     stopUsersAutoRefresh();
@@ -1707,6 +2153,131 @@ window.addEventListener('beforeunload', () => {
 
 syncAdminMasthead();
 restoreAdminSession();
+
+// ---------------------------------------------------------------------------
+// Vista app-shell view switcher. Self-contained: only touches the new
+// .vista-* nodes and #vistaViewTitle, never the auth flow or the
+// captured-by-id section elements. Hidden views still receive their
+// background-poll updates (the pollers gate on #dashboard.hidden, not on
+// which view is active), so switching is pure show/hide.
+// ---------------------------------------------------------------------------
+(function () {
+    const VIEW_STORAGE_KEY = 'apex_admin_view';
+    const VIEWS = [
+        { id: 'accounts', label: 'Accounts' },
+        { id: 'fleet', label: 'Live device fleet' },
+        { id: 'gateway', label: 'Event Gateway health' },
+        { id: 'server', label: 'Server Health' },
+        { id: 'security', label: 'Security settings' }
+    ];
+    const DEFAULT_VIEW = 'accounts';
+
+    const sidebar = document.querySelector('.vista-sidebar');
+    const viewTitle = document.getElementById('vistaViewTitle');
+    const views = Array.from(document.querySelectorAll('.vista-view'));
+    const navItems = Array.from(document.querySelectorAll('.vista-nav__item'));
+
+    // If the shell markup is absent for any reason, do nothing rather than throw.
+    if (!sidebar || !views.length) {
+        return;
+    }
+
+    function isKnownView(id) {
+        return VIEWS.some((v) => v.id === id);
+    }
+
+    function setView(id) {
+        if (!isKnownView(id)) {
+            id = DEFAULT_VIEW;
+        }
+
+        views.forEach((view) => {
+            view.classList.toggle('is-active', view.dataset.view === id);
+        });
+
+        navItems.forEach((item) => {
+            const active = item.dataset.viewTarget === id;
+            item.classList.toggle('is-active', active);
+            if (active) {
+                item.setAttribute('aria-current', 'page');
+            } else {
+                item.removeAttribute('aria-current');
+            }
+        });
+
+        if (viewTitle) {
+            const match = VIEWS.find((v) => v.id === id);
+            viewTitle.textContent = match ? match.label : '';
+        }
+
+        try {
+            localStorage.setItem(VIEW_STORAGE_KEY, id);
+        } catch (e) {
+            // Private mode / storage disabled — view still switches, just not persisted.
+        }
+
+        // Entering a list view fetches its current page so the data is fresh on
+        // arrival (the auto-refresh poller only runs for the active view). Guard
+        // on dashboard visibility so this never fires before login. The inFlight
+        // guard in loadUsers/loadFleet absorbs any overlap with the login load.
+        if (!dashboard.classList.contains('hidden')) {
+            if (id === 'accounts') {
+                loadUsers().catch(() => {});
+            } else if (id === 'fleet') {
+                loadFleet().catch(() => {});
+            }
+        }
+    }
+
+    // Delegated click handling so the five nav buttons share one listener.
+    sidebar.addEventListener('click', (event) => {
+        const item = event.target.closest('.vista-nav__item');
+        if (item && item.dataset.viewTarget) {
+            setView(item.dataset.viewTarget);
+        }
+    });
+
+    // Restore the last-used view (defaults to Accounts). Safe to run while the
+    // dashboard is still hidden — it only sets classes on in-DOM nodes.
+    let initial = DEFAULT_VIEW;
+    try {
+        const saved = localStorage.getItem(VIEW_STORAGE_KEY);
+        if (saved && isKnownView(saved)) {
+            initial = saved;
+        }
+    } catch (e) {
+        // Ignore storage read failures and fall back to the default view.
+    }
+    setView(initial);
+})();
+
+// ---------------------------------------------------------------------------
+// Sticky masthead → full-bleed app bar. When the masthead pins to the top of
+// the viewport, add `.is-stuck` so CSS can expand it edge-to-edge.
+//
+// Detection adds NOTHING to the DOM (an earlier sentinel-div approach shifted
+// the bar down by the parent flex `gap`). Instead we observe the masthead
+// itself with a -1px top rootMargin: the observation rect is the viewport
+// inset 1px at the top, so the bar reports intersectionRatio < 1 exactly when
+// it reaches/passes the top edge — i.e. when it's stuck.
+// ---------------------------------------------------------------------------
+(function () {
+    const masthead = document.querySelector('.masthead--admin');
+    if (!masthead || !('IntersectionObserver' in window)) {
+        return;
+    }
+
+    const observer = new IntersectionObserver(
+        ([entry]) => {
+            masthead.classList.toggle('is-stuck', entry.intersectionRatio < 1);
+        },
+        { threshold: [1], rootMargin: '-1px 0px 0px 0px' }
+    );
+    observer.observe(masthead);
+})();
+</script>
+</body>
+</html>
 </script>
 </body>
 </html>
