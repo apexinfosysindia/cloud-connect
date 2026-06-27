@@ -14,7 +14,7 @@ module.exports = function ({ dbGet, dbAll, utils, auth, device }) {
         '/api/admin/fleet',
         auth.requireAdmin,
         asyncHandler(async (req, res) => {
-            const pageSize = utils.clampInt(req.query.page_size, 1, 100, 25);
+            const pageSize = utils.clampInt(req.query.page_size, 1, 100, 5);
             const requestedPage = utils.clampInt(req.query.page, 1, 1e9, 1);
             const q = utils.sanitizeString(req.query.q, 100) || '';
             const allowedFilters = ['all', 'online', 'offline', 'blocked'];
