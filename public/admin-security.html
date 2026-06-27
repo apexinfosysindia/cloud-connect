@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme-default="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,11 +9,16 @@
         // No-flash theme bootstrap: resolve light/dark/auto before CSS paints.
         (function () {
             try {
+                var r = document.documentElement;
+                // Per-page default (Vista sets data-theme-default="dark"); other
+                // portals omit it and fall back to 'auto'. Only used when the
+                // user has not yet made an explicit choice.
+                var def = r.getAttribute('data-theme-default');
+                if (def !== 'light' && def !== 'dark') def = 'auto';
                 var c = localStorage.getItem('apex_theme');
-                if (c !== 'light' && c !== 'dark' && c !== 'auto') c = 'auto';
+                if (c !== 'light' && c !== 'dark' && c !== 'auto') c = def;
                 var eff = c === 'dark' || (c === 'auto' && window.matchMedia &&
                     window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
-                var r = document.documentElement;
                 r.setAttribute('data-theme', c);
                 r.setAttribute('data-theme-effective', eff);
                 // Tint the phone status bar to match the page before CSS/theme.js

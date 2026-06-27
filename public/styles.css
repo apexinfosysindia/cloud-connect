@@ -980,22 +980,28 @@ code {
     color: var(--text);
 }
 
-.admin-page .shh-summary__rate {
+.admin-page .shh-summary__status {
     margin-left: auto;
-    font-size: 1.35rem;
+    font-size: 0.72rem;
     font-weight: 700;
-    color: var(--text);
-    display: inline-flex;
-    align-items: baseline;
-    gap: 6px;
-}
-
-.admin-page .shh-summary__rate-lbl {
-    font-size: 0.7rem;
-    font-weight: 600;
-    color: var(--text-soft);
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.05em;
+    padding: 3px 10px;
+    border-radius: 999px;
+    color: var(--text-soft);
+    background: color-mix(in srgb, var(--text-soft) 14%, transparent);
+}
+.admin-page .shh-summary[data-kind="ok"] .shh-summary__status {
+    color: var(--success);
+    background: color-mix(in srgb, var(--success) 16%, transparent);
+}
+.admin-page .shh-summary[data-kind="warn"] .shh-summary__status {
+    color: var(--warning);
+    background: color-mix(in srgb, var(--warning) 16%, transparent);
+}
+.admin-page .shh-summary[data-kind="bad"] .shh-summary__status {
+    color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 16%, transparent);
 }
 
 .admin-page .shh-summary__metrics {
@@ -1020,7 +1026,15 @@ code {
 .admin-page .shh-tbl-wrap {
     border: 1px solid var(--vista-edge);
     border-radius: 12px;
-    overflow: hidden;
+    /* Every cell is `white-space: nowrap`, so on narrow screens the row is
+       wider than the column — scroll it horizontally instead of clipping
+       (was `overflow: hidden`, which hid the right-hand columns on mobile).
+       `min-width: 0` lets this wrapper shrink below the table's intrinsic
+       width inside its grid parent so the overflow actually engages. */
+    overflow-x: auto;
+    min-width: 0;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
     background: var(--vista-card);
 }
 
@@ -4644,6 +4658,37 @@ code {
         /* More opaque than the side-rail glass: content scrolls UNDER this
            strip, so a near-solid bar keeps the labels legible. */
         background: var(--vista-bar);
+        /* Morph smoothly from inset rounded strip → full-bleed app bar when it
+           pins (mirrors the desktop masthead's stick transition). Only the
+           geometry animates; the sticky pinning itself is instant. */
+        transition:
+            margin 0.22s ease,
+            padding 0.22s ease,
+            border-radius 0.22s ease,
+            box-shadow 0.22s ease,
+            border-color 0.22s ease;
+    }
+
+    /* Stuck state — the mobile counterpart of the masthead's `.is-stuck`
+       full-bleed (toggled by the SAME IntersectionObserver pattern once the
+       strip reaches the top edge). The strip is itself an overflow-x scroll
+       container, so a `::before` extension (as the masthead uses) would be
+       clipped; instead we stretch the ELEMENT to exactly 100vw via the same
+       `calc(50% - 50vw)` negative margins (scrollbar-independent, no content
+       shift), square off the corners, and add the bar's bottom hairline +
+       shadow so it reads as a true edge-to-edge app bar. Inner left padding is
+       restored so the first pill still lines up with the content column. */
+    .admin-page .vista-sidebar.is-stuck {
+        margin-left: calc(50% - 50vw);
+        margin-right: calc(50% - 50vw);
+        padding-left: max(8px, calc(50vw - 50% + 8px));
+        padding-right: max(8px, calc(50vw - 50% + 8px));
+        border-radius: 0;
+        border-left: 0;
+        border-right: 0;
+        border-top: 0;
+        border-bottom: 1px solid var(--line-strong);
+        box-shadow: var(--vista-bar-shadow);
     }
 
     .admin-page .vista-sidebar::-webkit-scrollbar {

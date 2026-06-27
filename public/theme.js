@@ -14,6 +14,21 @@
 (function themeController() {
     const STORAGE_KEY = 'apex_theme';
     const ORDER = ['light', 'dark', 'auto'];
+
+    // Per-page default used only when the user has made no explicit choice.
+    // The Vista admin pages set <html data-theme-default="dark"> so the admin
+    // portal opens in dark; customer/marketing pages omit it and default to
+    // 'auto' (follow the OS). This must agree with each page's inline <head>
+    // bootstrap so there's no flash between the two.
+    function pageDefault() {
+        try {
+            const def = document.documentElement.getAttribute('data-theme-default');
+            if (def === 'light' || def === 'dark') return def;
+        } catch (_error) {
+            // documentElement always exists in practice — defensive only.
+        }
+        return 'auto';
+    }
     // Crisp inline SVGs (stroke = currentColor so they adopt the button color
     // and theme). Far more consistent across platforms than emoji glyphs.
     const ICONS = {
@@ -36,7 +51,7 @@
         } catch (_error) {
             // localStorage unavailable (private mode / blocked) — fall through.
         }
-        return 'auto';
+        return pageDefault();
     }
 
     function writeChoice(choice) {
