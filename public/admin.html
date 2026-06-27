@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme-default="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,11 +9,16 @@
         // No-flash theme bootstrap: resolve light/dark/auto before CSS paints.
         (function () {
             try {
+                var r = document.documentElement;
+                // Per-page default (Vista sets data-theme-default="dark"); other
+                // portals omit it and fall back to 'auto'. Only used when the
+                // user has not yet made an explicit choice.
+                var def = r.getAttribute('data-theme-default');
+                if (def !== 'light' && def !== 'dark') def = 'auto';
                 var c = localStorage.getItem('apex_theme');
-                if (c !== 'light' && c !== 'dark' && c !== 'auto') c = 'auto';
+                if (c !== 'light' && c !== 'dark' && c !== 'auto') c = def;
                 var eff = c === 'dark' || (c === 'auto' && window.matchMedia &&
                     window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
-                var r = document.documentElement;
                 r.setAttribute('data-theme', c);
                 r.setAttribute('data-theme-effective', eff);
                 // Tint the phone status bar to match the page before CSS/theme.js
@@ -316,6 +321,8 @@
                         <h2 class="section-title section-title--small">Recent admin activity</h2>
                         <p class="section-text">Latest privileged actions across the fleet — device SSH access, app restarts, and server reboots. Audit trail, newest first.</p>
                     </div>
+                    <button id="downloadActivityBtn" type="button" class="button button-secondary button-small" title="Download the full audit trail (current filter) as CSV">
+                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-2px;margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Download CSV</button>
                 </div>
                 <div class="list-toolbar list-toolbar--activity">
                     <div class="list-filter" id="securityFilter" role="group" aria-label="Filter admin activity">
@@ -1182,7 +1189,7 @@ function renderSecurityOverview(data) {
 // card (which rides on /security/overview) this pulls its own page from the
 // dedicated /security/activity endpoint. State lives outside the DOM so a
 // re-render keeps the page/filter the admin is looking at.
-const securityState = { page: 1, pageSize: 12, filter: 'all', totalPages: 1, loaded: false, inFlight: false };
+const securityState = { page: 1, pageSize: 5, filter: 'all', totalPages: 1, loaded: false, inFlight: false };
 
 async function loadSecurityActivity() {
     if (securityState.inFlight) return;
@@ -1227,6 +1234,84 @@ function renderSecurityActivity(rows) {
             );
         })
         .join('');
+}
+
+// Quote a single CSV field per RFC 4180: wrap in double quotes and double any
+// internal quote. Wrapping every field keeps commas, newlines, and quotes in
+// the audit details safe regardless of content.
+function csvCell(value) {
+    return '"' + String(value == null ? '' : value).replace(/"/g, '""') + '"';
+}
+
+// Download the full audit trail for the CURRENT activity filter as CSV. The UI
+// only pages 5 rows at a time; this walks the same endpoint at the max page
+// size and concatenates every page so the export is the complete history, not
+// just the visible slice. A hard page cap guards against a runaway loop.
+async function downloadSecurityActivity() {
+    const btn = document.getElementById('downloadActivityBtn');
+    const original = btn ? btn.innerHTML : null;
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Preparing…';
+    }
+    try {
+        const filter = securityState.filter && securityState.filter !== 'all' ? securityState.filter : '';
+        const PAGE_SIZE = 100;
+        const MAX_PAGES = 500; // 50k-row ceiling — far beyond any real trail.
+        const rows = [];
+        let page = 1;
+        let totalPages = 1;
+        do {
+            const params = new URLSearchParams();
+            params.set('page', String(page));
+            params.set('page_size', String(PAGE_SIZE));
+            if (filter) params.set('filter', filter);
+            const data = await api('/api/admin/security/activity?' + params.toString());
+            if (Array.isArray(data.recent)) rows.push(...data.recent);
+            totalPages = data.page && data.page.total_pages ? data.page.total_pages : 1;
+            page += 1;
+        } while (page <= totalPages && page <= MAX_PAGES);
+
+        const header = ['ID', 'Admin', 'Action', 'Action code', 'Details', 'Timestamp'];
+        const lines = [header.map(csvCell).join(',')];
+        rows.forEach((entry) => {
+            const label = describeAdminAction(entry.action).label;
+            const details =
+                entry.details == null
+                    ? ''
+                    : typeof entry.details === 'string'
+                      ? entry.details
+                      : JSON.stringify(entry.details);
+            lines.push(
+                [entry.id, entry.admin_email || '', label, entry.action || '', details, entry.created_at || '']
+                    .map(csvCell)
+                    .join(',')
+            );
+        });
+        // Prepend a UTF-8 BOM so Excel opens non-ASCII details correctly.
+        const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `vista-admin-activity-${filter || 'all'}-${stamp}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    } catch (error) {
+        console.error('[vista] activity CSV export failed:', error);
+        if (btn) {
+            btn.textContent = 'Download failed';
+            window.setTimeout(() => {
+                if (original != null) btn.innerHTML = original;
+            }, 2500);
+        }
+        return;
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+    if (btn && original != null) btn.innerHTML = original;
 }
 
 // Render order + human labels for each vendor's report-type metrics. Keys must match
@@ -1360,18 +1445,23 @@ function renderSmartHomeHealth(data) {
             })
             .join('');
 
-        // Vendor summary card: totals + computed success rate + health dot.
+        // Vendor summary card: totals + a qualitative health word + health dot.
+        // We deliberately do NOT show a "success %": at the low event volumes
+        // this in-memory buffer sees, a percentage is misleading (100% off two
+        // sends proves nothing). The status word tracks real failures via the
+        // same cardKind that colors the dot, so it degrades only when sends
+        // actually fail.
         const attempted = tSent + tFailed;
         const rate = attempted > 0 ? Math.round((tSent / attempted) * 100) : null;
         const cardKind = tFailed > 0 ? (rate !== null && rate < 80 ? 'bad' : 'warn') : tSent > 0 ? 'ok' : 'muted';
-        const rateText = rate === null ? '—' : `${rate}%`;
+        const STATUS_WORD = { ok: 'Healthy', warn: 'Degraded', bad: 'Failing', muted: 'Idle' };
 
         const card = `
             <div class="shh-summary" data-kind="${cardKind}">
                 <div class="shh-summary__head">
                     <span class="shh-summary__dot" aria-hidden="true"></span>
                     <span class="shh-summary__vendor">${escapeHtml(group.vendor)}</span>
-                    <span class="shh-summary__rate">${rateText}<span class="shh-summary__rate-lbl">success</span></span>
+                    <span class="shh-summary__status">${STATUS_WORD[cardKind] || '—'}</span>
                 </div>
                 <div class="shh-summary__metrics">
                     <span><strong>${tSent}</strong> sent</span>
@@ -2304,6 +2394,12 @@ fleetList.addEventListener('keydown', (event) => {
     const securityPrev = document.getElementById('securityPrev');
     const securityNext = document.getElementById('securityNext');
     const securityFilter = document.getElementById('securityFilter');
+    const downloadActivityBtn = document.getElementById('downloadActivityBtn');
+    if (downloadActivityBtn) {
+        downloadActivityBtn.addEventListener('click', () => {
+            downloadSecurityActivity().catch(() => {});
+        });
+    }
     if (securityPrev) {
         securityPrev.addEventListener('click', () => {
             if (securityState.page > 1) {
@@ -2462,6 +2558,34 @@ restoreAdminSession();
         { threshold: [1], rootMargin: '-1px 0px 0px 0px' }
     );
     observer.observe(masthead);
+})();
+
+// ---------------------------------------------------------------------------
+// Mobile nav strip → full-bleed app bar. The desktop masthead goes static on
+// phones/tablets (≤900px) and the horizontal nav strip takes over the sticky
+// role; this gives that strip the SAME stick→edge-to-edge morph the masthead
+// gets on desktop. Identical mechanism: observe the strip with a -1px top
+// rootMargin so it reports intersectionRatio < 1 exactly when it pins to the
+// top, then toggle `.is-stuck` for CSS to stretch it to 100vw.
+//
+// No width gate is needed: the `.is-stuck` full-bleed CSS lives entirely
+// inside the ≤900px media query, so toggling the class on desktop (where the
+// strip is a static column, not a bar) is a harmless no-op — mirroring how the
+// masthead's own observer is inert on mobile.
+// ---------------------------------------------------------------------------
+(function () {
+    const strip = document.querySelector('.vista-sidebar');
+    if (!strip || !('IntersectionObserver' in window)) {
+        return;
+    }
+
+    const observer = new IntersectionObserver(
+        ([entry]) => {
+            strip.classList.toggle('is-stuck', entry.intersectionRatio < 1);
+        },
+        { threshold: [1], rootMargin: '-1px 0px 0px 0px' }
+    );
+    observer.observe(strip);
 })();
 </script>
 </body>

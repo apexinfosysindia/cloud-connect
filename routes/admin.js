@@ -158,7 +158,7 @@ module.exports = function ({ dbAll, dbGet, utils, auth, webauthn, billing }) {
         '/api/admin/security/activity',
         auth.requireAdmin,
         asyncHandler(async (req, res) => {
-            const pageSize = utils.clampInt(req.query.page_size, 1, 100, 12);
+            const pageSize = utils.clampInt(req.query.page_size, 1, 100, 5);
             const requestedPage = utils.clampInt(req.query.page, 1, 1e9, 1);
             const filter = Object.prototype.hasOwnProperty.call(ACTIVITY_FILTERS, req.query.filter)
                 ? req.query.filter
