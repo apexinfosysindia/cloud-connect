@@ -3613,6 +3613,100 @@ code {
     line-height: 1.5;
 }
 
+/* Legal links in the footer + the signup terms line. */
+.footer-link {
+    color: var(--text-muted);
+    text-decoration: none;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.footer-link:hover {
+    color: var(--brand);
+    text-decoration: underline;
+}
+
+.signup-terms {
+    text-align: center;
+    margin-top: 2px;
+}
+
+/* Legal pages (/terms, /privacy): readable long-form prose inside the standard
+   section-card shell. Scoped so it doesn't affect the dashboard cards. */
+.legal-main {
+    width: min(820px, calc(100% - 32px));
+    margin: 24px auto 0;
+}
+
+.legal-card {
+    padding: 32px clamp(20px, 4vw, 40px);
+}
+
+.legal-draft-banner {
+    margin: 0 0 20px;
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--warning);
+    background: var(--warning-soft);
+    color: var(--text);
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.legal-body h2 {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--text);
+    margin: 26px 0 8px;
+}
+
+.legal-body h2:first-of-type {
+    margin-top: 8px;
+}
+
+.legal-body p,
+.legal-body li {
+    color: var(--text-muted);
+    font-size: 0.92rem;
+    line-height: 1.65;
+}
+
+.legal-body ul {
+    margin: 8px 0 8px 20px;
+    display: grid;
+    gap: 4px;
+}
+
+.legal-body a {
+    color: var(--brand);
+    text-decoration: none;
+}
+
+.legal-body a:hover {
+    text-decoration: underline;
+}
+
+.legal-meta {
+    margin-bottom: 18px;
+    color: var(--text-soft);
+    font-size: 0.82rem;
+}
+
+.legal-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 16px;
+    color: var(--text-muted);
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+.legal-back:hover {
+    color: var(--brand);
+}
+
 /* Domain filter <select> in the Google/Alexa entity cards */
 .entity-domain-filter {
     min-height: 38px;
