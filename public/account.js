@@ -314,7 +314,7 @@
         }
 
         if (googleOAuthConsentMode) {
-            showAlert('Sign in to review and approve Google Assistant access.', false);
+            showAlert('Sign in to link your account to Google.', false);
         }
     }
 
@@ -340,7 +340,7 @@
         }
 
         if (googleOAuthConsentMode) {
-            showAlert('Sign in to review and approve Google Assistant access.', false);
+            showAlert('Sign in to link your account to Google.', false);
         }
     }
 
@@ -1634,8 +1634,8 @@
 
         setHeaderState(userData || null);
         setPageTitle(dashboardTitle);
-        accountTitle.textContent = 'Confirm Google Assistant Access';
-        headerSubtitle.textContent = 'Authorize Apex Connect+ for Google Assistant account linking.';
+        accountTitle.textContent = 'Link your account to Google';
+        headerSubtitle.textContent = 'Link your Apex Connect+ account to Google.';
         hideAlert();
 
         const statusCard = document.getElementById('statusCard');
@@ -3529,7 +3529,7 @@
 
     if (isGoogleOauthLinkingIntent() && !storedUser) {
         showAlert(googleOAuthConsentMode
-            ? 'Sign in to review and approve Google Assistant access.'
+            ? 'Sign in to link your account to Google.'
             : 'Sign in to continue Google account linking.', false);
     } else if (alexaOAuthMode && !storedUser) {
         showAlert('Sign in to continue Alexa account linking.', false);
