@@ -2287,6 +2287,7 @@
     const changePasswordForm = document.getElementById('changePasswordForm');
     const currentPasswordInput = document.getElementById('currentPasswordInput');
     const newPasswordInput = document.getElementById('newPasswordInput');
+    const confirmPasswordInput = document.getElementById('confirmPasswordInput');
     const changePasswordMsg = document.getElementById('changePasswordMsg');
     const changePasswordBtn = document.getElementById('changePasswordBtn');
     const passwordSectionLabel = document.getElementById('passwordSectionLabel');
@@ -2325,6 +2326,9 @@
                 ? 'Create a password (min 8 characters)'
                 : 'New password (min 8 characters)';
         }
+        if (confirmPasswordInput) {
+            confirmPasswordInput.placeholder = passwordless ? 'Confirm your password' : 'Confirm new password';
+        }
     }
 
     function showManageView(options = {}) {
@@ -2332,6 +2336,7 @@
         if (changePasswordMsg) changePasswordMsg.textContent = '';
         if (currentPasswordInput) currentPasswordInput.value = '';
         if (newPasswordInput) newPasswordInput.value = '';
+        if (confirmPasswordInput) confirmPasswordInput.value = '';
         applyPasswordModeUi();
 
         manageViewActive = true;
@@ -2430,6 +2435,7 @@
 
             const currentPassword = (currentPasswordInput?.value || '').trim();
             const newPassword = (newPasswordInput?.value || '').trim();
+            const confirmPassword = (confirmPasswordInput?.value || '').trim();
             const passwordless = isPasswordlessAccount();
 
             if (!passwordless && !currentPassword) {
@@ -2438,6 +2444,10 @@
             }
             if (!newPassword || newPassword.length < 8) {
                 if (changePasswordMsg) changePasswordMsg.textContent = 'New password must be at least 8 characters.';
+                return;
+            }
+            if (newPassword !== confirmPassword) {
+                if (changePasswordMsg) changePasswordMsg.textContent = 'Passwords do not match.';
                 return;
             }
 
@@ -2468,6 +2478,7 @@
 
                 if (currentPasswordInput) currentPasswordInput.value = '';
                 if (newPasswordInput) newPasswordInput.value = '';
+                if (confirmPasswordInput) confirmPasswordInput.value = '';
                 if (changePasswordMsg) {
                     changePasswordMsg.textContent = data.message || 'Password changed successfully.';
                     changePasswordMsg.classList.remove('danger-label');
@@ -2504,12 +2515,26 @@
         if (!deleteAccountModal) return;
         if (deleteConfirmPassword) deleteConfirmPassword.value = '';
         if (deleteModalError) deleteModalError.textContent = '';
+        // Account deletion is confirmed with the account PASSWORD. A pure-SSO
+        // user has none, so guide them to set one first (in Manage Account)
+        // rather than letting them submit a sentinel that can never match.
+        const passwordless = isPasswordlessAccount();
+        if (deleteConfirmPassword) {
+            deleteConfirmPassword.disabled = passwordless;
+            deleteConfirmPassword.placeholder = passwordless
+                ? 'Set a password first to delete'
+                : 'Your account password';
+        }
+        if (deleteModalError && passwordless) {
+            deleteModalError.textContent =
+                'You signed up with single sign-on. Set a password first (Manage Account → Set a Password), then you can delete your account.';
+        }
         if (deleteModalConfirmBtn) {
             deleteModalConfirmBtn.textContent = 'Permanently Delete Account';
-            deleteModalConfirmBtn.disabled = false;
+            deleteModalConfirmBtn.disabled = passwordless;
         }
         deleteAccountModal.classList.remove('hidden');
-        if (deleteConfirmPassword) deleteConfirmPassword.focus();
+        if (deleteConfirmPassword && !passwordless) deleteConfirmPassword.focus();
     }
 
     function closeDeleteModal() {
@@ -3670,6 +3695,20 @@
             e.preventDefault();
             const btn = document.getElementById('signupBtn');
             const defaultText = 'Create Account';
+
+            // Validate password + confirmation BEFORE flipping the button to its
+            // loading state, so a mismatch leaves the form interactive.
+            const password = document.getElementById('signupPassword').value;
+            const confirmPassword = document.getElementById('signupConfirmPassword').value;
+            if (password.length < 8) {
+                showAlert('Password must be at least 8 characters long.');
+                return;
+            }
+            if (password !== confirmPassword) {
+                showAlert('Passwords do not match.');
+                return;
+            }
+
             btn.textContent = 'Creating Account...';
             btn.disabled = true;
             hideAlert();
@@ -3682,7 +3721,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         email: document.getElementById('signupEmail').value,
-                        password: document.getElementById('signupPassword').value
+                        password
                     })
                 });
 
@@ -3750,8 +3789,6 @@
                 }
             });
         }
-    } else if (pageMode === 'signup') {
-        showSignupView();
     } else if (ssoRedirectPending) {
         // Returned from an SSO provider: the server set the httpOnly portal
         // cookie but localStorage is empty (it can't be written server-side).
@@ -3759,7 +3796,12 @@
         // the result into localStorage exactly like the storedUser success
         // branch above so every later JS call has apex_user + its token. Strip
         // ?sso=1 afterwards so a manual refresh doesn't re-trigger this probe.
+        // NOTE: this MUST be checked before the pageMode==='signup' branch — an
+        // SSO *signup* returns to /signup?sso=1, and matching pageMode first
+        // would re-show the signup form instead of hydrating the dashboard.
         hydrateFromSsoRedirect();
+    } else if (pageMode === 'signup') {
+        showSignupView();
     } else {
         showLoginView();
     }
