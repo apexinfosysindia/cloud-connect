@@ -2798,25 +2798,33 @@
 
     function updatePasskeyPromptBanner(userData) {
         const enrolled = Boolean(userData && userData.passkey_2fa_enabled);
+        // SSO-linked accounts are NOT nagged to enrol a passkey: they already
+        // have a strong federated factor and signed up/in without a password.
+        // (If such a user DID enrol a passkey, `enrolled` already hides the
+        // prompt; and the passkey rule still applies if they ever use the
+        // email/password path — that's enforced server-side, not here.)
+        const suppressForSso = Boolean(userData && userData.has_oauth_identity);
+        const shouldOfferPasskey = !enrolled && !suppressForSso;
 
-        // Full-screen interstitial: show once per session for non-enrolled users.
+        // Full-screen interstitial: show once per session for eligible users.
         if (passkeyInterstitial) {
-            const showInterstitial = !enrolled && !passkeyInterstitialSeen && !passkeyPromptDismissed;
+            const showInterstitial = shouldOfferPasskey && !passkeyInterstitialSeen && !passkeyPromptDismissed;
             if (showInterstitial) {
                 markInterstitialSeen();
                 if (passkeyInterstitialStatus) passkeyInterstitialStatus.textContent = '';
                 passkeyInterstitial.classList.remove('hidden');
-            } else if (enrolled) {
+            } else if (enrolled || suppressForSso) {
                 passkeyInterstitial.classList.add('hidden');
             }
         }
 
         // Minimal banner: reveal ONCE per login. renderDashboard runs on every
         // 5s poll + visibilitychange, so we must not re-show it each time — the
-        // latch separates "eligible" from the one-time reveal. Once enrolled or
-        // dismissed it stays hidden; it only returns on a fresh page load/login.
+        // latch separates "eligible" from the one-time reveal. Once enrolled,
+        // dismissed, or SSO-suppressed it stays hidden; it only returns on a
+        // fresh page load/login for an eligible account.
         if (passkeyPromptBanner) {
-            if (enrolled || passkeyPromptDismissed) {
+            if (!shouldOfferPasskey || passkeyPromptDismissed) {
                 passkeyPromptBanner.classList.add('hidden');
             } else if (!passkeyBannerShownThisSession) {
                 passkeyBannerShownThisSession = true;

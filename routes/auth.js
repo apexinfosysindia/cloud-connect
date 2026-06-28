@@ -1,7 +1,19 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 
-module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, webauthn, email, billing, device, eventGateway }) {
+module.exports = function ({
+    dbGet,
+    dbRun,
+    dbTransaction,
+    config,
+    utils,
+    auth,
+    webauthn,
+    email,
+    billing,
+    device,
+    eventGateway
+}) {
     const router = express.Router();
     const { asyncHandler } = utils;
 
@@ -10,7 +22,29 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, w
     // a raw, as-typed address must normalize first — otherwise "User@x.com"
     // silently fails to match the stored "user@x.com". (This was a latent bug
     // in the legacy /login handler; normalizing here fixes it everywhere.)
-    const normEmail = (e) => String(e || '').trim().toLowerCase();
+    const normEmail = (e) =>
+        String(e || '')
+            .trim()
+            .toLowerCase();
+
+    // Enrich a user row with `has_oauth_identity` (true when the account has >=1
+    // linked SSO identity) so the serializers can pass it to the dashboard,
+    // which uses it to skip the passkey-enrolment nag for SSO users. One cheap
+    // indexed EXISTS lookup; best-effort (a failure just leaves the flag false).
+    async function attachOauthIdentityFlag(user) {
+        if (!user || !user.id) {
+            return user;
+        }
+        try {
+            const row = await dbGet(`SELECT 1 AS linked FROM user_oauth_identities WHERE user_id = ? LIMIT 1`, [
+                user.id
+            ]);
+            user.has_oauth_identity = Boolean(row);
+        } catch (error) {
+            console.error('OAUTH IDENTITY FLAG ERROR:', error.message);
+        }
+        return user;
+    }
 
     // Shared "issue the session and respond 200" tail for every successful
     // customer sign-in (passwordless passkey, password-only, OTP fallback, and
@@ -32,6 +66,8 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, w
 
         const portalSessionToken = auth.createPortalSessionToken(user.email, user.session_epoch);
         auth.setPortalSessionCookie(res, portalSessionToken);
+
+        await attachOauthIdentityFlag(user);
 
         res.setHeader('Cache-Control', 'no-store');
         return res.status(200).json({
@@ -356,7 +392,9 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, w
 
             const record = await email.verifyEmailToken(token);
             if (!record) {
-                return res.status(400).json({ error: 'Invalid or expired verification link. Please request a new one.' });
+                return res
+                    .status(400)
+                    .json({ error: 'Invalid or expired verification link. Please request a new one.' });
             }
 
             await email.markEmailVerificationTokenUsed(record.id);
@@ -566,7 +604,9 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, w
 
             // Require email verification before setting subdomain
             if (!user.email_verified) {
-                return res.status(403).json({ error: 'Please verify your email address before setting a cloud address.' });
+                return res
+                    .status(403)
+                    .json({ error: 'Please verify your email address before setting a cloud address.' });
             }
 
             if (user.subdomain === normalizedSubdomain) {
@@ -640,6 +680,8 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, w
                 eventGateway.probeAlexaLinkLivenessThrottled(user.id);
             }
 
+            await attachOauthIdentityFlag(user);
+
             return res.status(200).json({
                 data: auth.serializeUserWithPortalSession(user, portalSessionToken)
             });
@@ -700,9 +742,7 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, w
 
                 // Bump session epoch so all other portal sessions (other browsers) are invalidated.
                 // We mint a fresh token for the current browser below that carries the new epoch.
-                await txRun(`UPDATE users SET session_epoch = COALESCE(session_epoch, 0) + 1 WHERE id = ?`, [
-                    user.id
-                ]);
+                await txRun(`UPDATE users SET session_epoch = COALESCE(session_epoch, 0) + 1 WHERE id = ?`, [user.id]);
             });
 
             const updatedUser = await dbGet(`SELECT * FROM users WHERE id = ?`, [user.id]);
@@ -713,7 +753,8 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, w
             email.sendSessionsRevokedEmail(user.email).catch(() => {});
 
             return res.status(200).json({
-                message: 'All devices have been logged out. It can take up to an hour before all sessions are fully terminated.',
+                message:
+                    'All devices have been logged out. It can take up to an hour before all sessions are fully terminated.',
                 data: auth.serializeUserWithPortalSession(updatedUser, portalSessionToken)
             });
         })
