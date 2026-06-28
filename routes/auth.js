@@ -785,13 +785,21 @@ module.exports = function ({
                 return res.status(401).json({ error: 'Invalid portal session. Please log in again.' });
             }
 
-            if (!current_password || typeof current_password !== 'string') {
-                return res.status(400).json({ error: 'Current password is required.' });
-            }
+            // Pure-SSO accounts have no real password (just the '!sso:' sentinel),
+            // so this endpoint doubles as SET a password for them: skip the
+            // current-password check and let them establish one. Accounts that
+            // DO have a password must still prove it (unchanged) — otherwise a
+            // hijacked session could silently rotate the password.
+            const userHasPassword = auth.hasUsablePassword(user);
+            if (userHasPassword) {
+                if (!current_password || typeof current_password !== 'string') {
+                    return res.status(400).json({ error: 'Current password is required.' });
+                }
 
-            const isMatch = await bcrypt.compare(current_password, user.password);
-            if (!isMatch) {
-                return res.status(401).json({ error: 'Current password is incorrect.' });
+                const isMatch = await bcrypt.compare(current_password, user.password);
+                if (!isMatch) {
+                    return res.status(401).json({ error: 'Current password is incorrect.' });
+                }
             }
 
             if (!new_password || typeof new_password !== 'string' || new_password.length < 8) {
@@ -809,7 +817,7 @@ module.exports = function ({
             email.sendPasswordChangedEmail(user.email).catch(() => {});
 
             return res.status(200).json({
-                message: 'Password changed successfully.'
+                message: userHasPassword ? 'Password changed successfully.' : 'Password set successfully.'
             });
         })
     );

@@ -37,6 +37,17 @@ module.exports = function ({ webauthn, auth, utils, email }) {
         '/api/account/passkeys/register/options',
         auth.requirePortalUser,
         asyncHandler(async (req, res) => {
+            // A passkey is removed by confirming the account PASSWORD. A pure-SSO
+            // user has no real password (just the '!sso:' sentinel), so letting
+            // them enrol a passkey would create one they could never remove.
+            // Require they set a password first; the dashboard surfaces this as a
+            // "Set a Password" prompt. This is the server-side backstop.
+            if (!auth.hasUsablePassword(req.portalUser)) {
+                return res.status(409).json({
+                    error: 'Set a password first, then you can add a passkey.',
+                    code: 'set_password_first'
+                });
+            }
             const options = await webauthn.beginRegistration(customerPrincipal(req));
             res.setHeader('Cache-Control', 'no-store');
             res.status(200).json({ options });
@@ -47,6 +58,14 @@ module.exports = function ({ webauthn, auth, utils, email }) {
         '/api/account/passkeys/register/verify',
         auth.requirePortalUser,
         asyncHandler(async (req, res) => {
+            // Same guard as register/options: never let a passwordless SSO user
+            // complete enrolment (they could never remove the passkey).
+            if (!auth.hasUsablePassword(req.portalUser)) {
+                return res.status(409).json({
+                    error: 'Set a password first, then you can add a passkey.',
+                    code: 'set_password_first'
+                });
+            }
             const principal = customerPrincipal(req);
             const result = await webauthn.finishRegistration(principal, req.body?.response);
             if (!result.verified) {
@@ -56,10 +75,12 @@ module.exports = function ({ webauthn, auth, utils, email }) {
             await webauthn.insertCredential(principal, result.credential, req.body?.nickname);
             await webauthn.setCustomerPasskeyEnabled(req.portalUser.id, true);
             // Security notification (best-effort; never blocks the response).
-            email.sendPasskeyAddedEmail(req.portalUser.email, {
-                nickname: req.body?.nickname,
-                when: new Date()
-            }).catch(() => {});
+            email
+                .sendPasskeyAddedEmail(req.portalUser.email, {
+                    nickname: req.body?.nickname,
+                    when: new Date()
+                })
+                .catch(() => {});
             res.status(201).json({ message: 'Passkey registered' });
         })
     );
