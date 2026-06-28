@@ -64,6 +64,128 @@
     const alexaOAuthRedirectUri = oauthParams.get('redirect_uri') || '';
     const alexaOAuthState = oauthParams.get('state') || '';
     const alexaOAuthError = oauthParams.get('error') || '';
+
+    // Customer SSO (Google/Microsoft/Apple). `?sso=1` marks a return from a
+    // provider where the server already set the httpOnly portal cookie but
+    // localStorage is empty → hydrate from the cookie. `?sso_error=<code>` is a
+    // failed attempt bounced back to /login. Both are consumed once at load.
+    const ssoRedirectPending = oauthParams.get('sso') === '1';
+    const ssoErrorCode = oauthParams.get('sso_error') || '';
+    // Friendly copy for each stable error code emitted by routes/auth-sso.js.
+    const SSO_ERROR_MESSAGES = {
+        email_unverified:
+            'Your provider account has no verified email, so we could not sign you in. Use email and password instead.',
+        sso_denied: 'Sign-in was cancelled. You can try again or use email and password.',
+        sso_expired: 'That sign-in attempt expired. Please try again.',
+        sso_failed: 'We could not complete sign-in with that provider. Please try again.',
+        sso_unavailable: 'That sign-in option is temporarily unavailable. Please try again shortly.'
+    };
+
+    // Inline brand glyphs (no network, theme-agnostic). Kept tiny + literal so
+    // the buttons render instantly with the page rather than after a fetch.
+    const SSO_PROVIDER_ICONS = {
+        google:
+            '<svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58A9 9 0 0 0 9 0 9 9 0 0 0 .96 4.95l3 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg>',
+        microsoft:
+            '<svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill="#F25022" d="M0 0h8.5v8.5H0z"/><path fill="#7FBA00" d="M9.5 0H18v8.5H9.5z"/><path fill="#00A4EF" d="M0 9.5h8.5V18H0z"/><path fill="#FFB900" d="M9.5 9.5H18V18H9.5z"/></svg>',
+        apple:
+            '<svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill="currentColor" d="M12.94 9.6c-.02-1.86 1.52-2.75 1.59-2.8-.87-1.27-2.22-1.44-2.7-1.46-1.15-.12-2.24.67-2.83.67-.58 0-1.48-.65-2.43-.64-1.25.02-2.4.73-3.05 1.85-1.3 2.26-.33 5.6.93 7.43.62.9 1.36 1.9 2.32 1.86.93-.04 1.28-.6 2.4-.6 1.12 0 1.44.6 2.42.58 1-.02 1.63-.91 2.24-1.81.71-1.04 1-2.05 1.02-2.1-.02-.01-1.95-.75-1.97-2.97zM11.1 4.06c.51-.62.86-1.49.76-2.36-.74.03-1.64.49-2.17 1.11-.47.55-.89 1.43-.78 2.27.83.07 1.67-.42 2.19-1.02z"/></svg>'
+    };
+
+    // Build one anchor button: full-page navigation to /start (a redirect flow,
+    // not fetch). `ret` carries any active OAuth-linking deep link through SSO.
+    function buildSsoButton(p) {
+        const a = document.createElement('a');
+        const ret = window.location.pathname + window.location.search;
+        a.href = `/api/auth/sso/${encodeURIComponent(p.id)}/start?ret=${encodeURIComponent(ret)}`;
+        a.className = 'button button-secondary button-full sso-button';
+        a.setAttribute('data-sso-provider', p.id);
+        const icon = SSO_PROVIDER_ICONS[p.id] || '';
+        a.innerHTML = `<span class="sso-button__icon">${icon}</span><span>Continue with ${p.label}</span>`;
+        return a;
+    }
+
+    // Populate #ssoButtons from GET /api/auth/sso/providers and reveal the
+    // section only if at least one provider is configured. Failure is silent —
+    // SSO is strictly additive, so the password/passkey form is unaffected.
+    async function loadSsoProviders() {
+        const section = document.getElementById('ssoSection');
+        const container = document.getElementById('ssoButtons');
+        if (!section || !container) {
+            return;
+        }
+        try {
+            const res = await fetch('/api/auth/sso/providers', {
+                headers: { Accept: 'application/json' }
+            });
+            if (!res.ok) {
+                return;
+            }
+            const body = await res.json();
+            const providers = Array.isArray(body.providers) ? body.providers : [];
+            if (!providers.length) {
+                return;
+            }
+            container.textContent = '';
+            providers.forEach((p) => container.appendChild(buildSsoButton(p)));
+            section.classList.remove('hidden');
+        } catch (_error) {
+            // ignore — leave the SSO section hidden
+        }
+    }
+
+    // After an SSO redirect, exchange the cookie for the user object and render
+    // the dashboard, mirroring the storedUser success branch (localStorage +
+    // fingerprint + renderDashboard + silent refresh). On failure fall back to
+    // the normal signed-out view. Always strips ?sso=1 from the URL.
+    async function hydrateFromSsoRedirect() {
+        try {
+            const res = await fetch('/api/account/me', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: '{}'
+            });
+            if (res.ok) {
+                const body = await res.json();
+                const userData = body && body.data;
+                if (userData && isWellFormedPortalToken(userData.portal_session_token)) {
+                    localStorage.setItem('apex_user', JSON.stringify(userData));
+                    accountRenderFingerprint = buildAccountRenderFingerprint(userData);
+                    renderDashboard(userData);
+                    refreshAccountState({ silent: true });
+                    document.addEventListener('visibilitychange', () => {
+                        if (document.visibilityState === 'visible') {
+                            refreshAccountState({ silent: true });
+                        }
+                    });
+                    stripSsoQueryParams();
+                    return;
+                }
+            }
+        } catch (_error) {
+            // fall through to signed-out view
+        }
+        stripSsoQueryParams();
+        if (pageMode === 'signup') {
+            showSignupView();
+        } else {
+            showLoginView();
+        }
+        showAlert('We could not finish signing you in. Please try again.', true);
+    }
+
+    // Remove sso / sso_error params without a reload so a manual refresh doesn't
+    // re-run hydration or re-show an error.
+    function stripSsoQueryParams() {
+        try {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('sso');
+            url.searchParams.delete('sso_error');
+            window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+        } catch (_error) {
+            // ignore
+        }
+    }
     const googleOAuthCookieProbeKey = [
         'apx_google_oauth_cookie_probe',
         googleOAuthClientId,
@@ -3523,6 +3645,14 @@
         }
     } else if (pageMode === 'signup') {
         showSignupView();
+    } else if (ssoRedirectPending) {
+        // Returned from an SSO provider: the server set the httpOnly portal
+        // cookie but localStorage is empty (it can't be written server-side).
+        // Hydrate the dashboard from the cookie via /api/account/me, then mirror
+        // the result into localStorage exactly like the storedUser success
+        // branch above so every later JS call has apex_user + its token. Strip
+        // ?sso=1 afterwards so a manual refresh doesn't re-trigger this probe.
+        hydrateFromSsoRedirect();
     } else {
         showLoginView();
     }
@@ -3533,5 +3663,21 @@
             : 'Sign in to continue Google account linking.', false);
     } else if (alexaOAuthMode && !storedUser) {
         showAlert('Sign in to continue Alexa account linking.', false);
+    }
+
+    // Surface an SSO failure bounced back to /login, then drop it from the URL.
+    if (ssoErrorCode && !storedUser) {
+        showAlert(
+            SSO_ERROR_MESSAGES[ssoErrorCode] || 'We could not sign you in with that provider. Please try again.',
+            true
+        );
+        stripSsoQueryParams();
+    }
+
+    // Render the provider buttons on the login/signup screens. Skipped while a
+    // session already exists (dashboard view) or mid SSO-hydration, since the
+    // buttons only belong on the signed-out form.
+    if (!storedUser && !ssoRedirectPending) {
+        void loadSsoProviders();
     }
 })();

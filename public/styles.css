@@ -2057,6 +2057,56 @@ code {
     gap: 10px;
 }
 
+/* ── SSO / social sign-in ───────────────────────────────────────────────── */
+/* Buttons reuse .button.button-secondary.button-full, so they pick up the    */
+/* light/dark token swap and hover/disabled states for free. Only the layout, */
+/* the "or continue with" divider, and the brand glyph sizing live here. The  */
+/* whole block is unhidden by account.js only when a provider is configured.  */
+.sso-section {
+    display: grid;
+    gap: 12px;
+    margin-top: 4px;
+}
+
+.sso-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--text-soft);
+    font-size: 0.8rem;
+}
+
+.sso-divider::before,
+.sso-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--line);
+}
+
+.sso-buttons {
+    display: grid;
+    gap: 10px;
+}
+
+.sso-button {
+    gap: 10px;
+}
+
+/* Provider glyph: fixed box so labels left-align consistently across rows. */
+.sso-button__icon {
+    display: inline-flex;
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+}
+
+.sso-button__icon svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
 .manage-sections {
     display: grid;
     gap: 20px;

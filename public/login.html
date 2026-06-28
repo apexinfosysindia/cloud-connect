@@ -85,6 +85,19 @@
 
                     <button type="submit" id="loginEmailBtn" class="button button-primary button-full">Continue</button>
 
+                    <!--
+                      SSO / social sign-in. account.js populates #ssoButtons from
+                      GET /api/auth/sso/providers and unhides this block only when
+                      at least one provider is configured; with none it stays
+                      hidden so an un-provisioned deploy shows nothing. Buttons are
+                      plain full-page-navigation anchors to /api/auth/sso/<id>/start
+                      (a redirect flow, not fetch).
+                    -->
+                    <div id="ssoSection" class="sso-section hidden">
+                        <div class="sso-divider"><span>or continue with</span></div>
+                        <div id="ssoButtons" class="sso-buttons"></div>
+                    </div>
+
                     <p class="link-row">Need an account? <a href="/signup" class="link-inline">Create one</a></p>
                 </div>
 
