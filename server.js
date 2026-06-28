@@ -206,16 +206,15 @@ app.use('/api/auth/login', (req, res, next) => {
 });
 app.use('/api/admin/login', authRateLimiter);
 app.use('/api/auth/signup', signupRateLimiter);
-// SSO: the start/callback redirects are the brute-force surface → strict
-// limiter. GET /api/auth/sso/providers is polled on every login/signup page
-// load (and reveals only which buttons to show), so it must fall through to the
-// relaxed general-API bucket — mirroring the /api/auth/login carve-out above.
-app.use('/api/auth/sso', (req, res, next) => {
-    if (req.path === '/providers') {
-        return next();
-    }
-    return authRateLimiter(req, res, next);
-});
+// SSO start/callback are NOT a password brute-force surface, so they must NOT
+// sit on the strict 10-per-15-min auth limiter: a single Google sign-in spends
+// /start + /callback = 2 requests, so a handful of attempts from one IP would
+// (and did) trip a false "Too many attempts" lockout that also blocks regular
+// login (shared per-IP counter). /start only builds a redirect; /callback is
+// already gated by the HMAC-signed tx cookie + state + PKCE, with the actual
+// credential check happening at the provider. So SSO falls through to the
+// relaxed general-API bucket (500/min) — same treatment as /login/lookup and
+// /passkey/begin above. /providers likewise stays general (polled every page).
 app.use('/api/auth/forgot-password', emailRateLimiter);
 app.use('/api/auth/resend-verification', emailRateLimiter);
 app.use('/api/auth/reset-password', authRateLimiter);
