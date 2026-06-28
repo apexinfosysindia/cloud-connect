@@ -78,16 +78,9 @@
                     <input class="input" type="password" id="signupPassword" autocomplete="new-password" minlength="6" required>
                 </div>
 
-                <div class="field">
-                    <label class="field-label" for="signupSubdomain">Desired Cloud Address (Optional)</label>
-                    <div class="segment">
-                        <input class="segment-input" type="text" id="signupSubdomain" placeholder="my-home">
-                        <span class="segment-suffix">.cloud.apexinfosys.in</span>
-                    </div>
-                    <p class="field-hint">Use 3-20 lowercase letters, numbers or hyphens. You can also set this later from your dashboard.</p>
-                </div>
-
                 <button type="submit" id="signupBtn" class="button button-primary button-full">Create Account</button>
+
+                <p class="field-hint signup-terms">By creating an account, you agree to our <a href="/terms" class="link-inline">Terms of Service</a> and <a href="/privacy" class="link-inline">Privacy Policy</a>.</p>
 
                 <!--
                   SSO / social sign-up. Identical block to login.html: account.js
@@ -220,7 +213,7 @@
 
                 <div class="manage-sections">
                     <section class="manage-section">
-                        <span class="detail-label">Change Password</span>
+                        <span class="detail-label" id="passwordSectionLabel">Change Password</span>
                         <form id="changePasswordForm" class="manage-form" autocomplete="off">
                             <input class="input" type="password" id="currentPasswordInput" placeholder="Current password" required autocomplete="current-password">
                             <input class="input" type="password" id="newPasswordInput" placeholder="New password (min 8 characters)" required minlength="8" maxlength="128" autocomplete="new-password">
@@ -260,7 +253,7 @@
         </section>
     </main>
 </div>
-<footer class="site-footer">&copy; <span class="footer-year">2026</span> AII IoTech (India) Private Limited, dba APEX. All rights reserved.</footer>
+<footer class="site-footer">&copy; <span class="footer-year">2026</span> AII IoTech (India) Private Limited, dba APEX. All rights reserved. &middot; <a href="/terms" class="footer-link">Terms of Service</a> &middot; <a href="/privacy" class="footer-link">Privacy Policy</a></footer>
 
 <div id="cancelSubscriptionModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="cancelSubModalTitle">
     <div class="modal__backdrop" data-close-cancel-sub-modal="true"></div>

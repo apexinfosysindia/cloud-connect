@@ -39,6 +39,11 @@
     let manageViewActive = false;
     let googleOAuthRedirectInFlight = false;
     let alexaOAuthRedirectInFlight = false;
+    // The "set your cloud address" card stays hidden until the user explicitly
+    // asks for it by clicking the cloud-address tile. Without this flag,
+    // renderDashboard un-hid it on every 5s poll for any subdomain-less user, so
+    // it appeared permanently. Reset on logout and after a successful save.
+    let subdomainCardRequested = false;
     let googleEntitiesRefreshTimer = null;
     let googleEntitiesRefreshInFlight = false;
     let googleEntitiesRefreshKey = '';
@@ -217,10 +222,17 @@
         }
     }
 
-    function showAlert(message, isError = true) {
+    function showAlert(message, isError = true, options = {}) {
         alertBox.textContent = message;
         window.clearTimeout(showAlert.dismissTimer);
         alertBox.className = `alert is-visible ${isError ? 'is-error' : 'is-success'}`;
+
+        // Persistent alerts (e.g. "account already exists, please sign in") stay
+        // until the next showAlert/hideAlert call rather than vanishing after a
+        // few seconds, so the user actually has time to read and act on them.
+        if (options.persistent) {
+            return;
+        }
 
         showAlert.dismissTimer = window.setTimeout(() => {
             hideAlert();
@@ -394,6 +406,7 @@
         passkeyPromptDismissed = false;
         passkeyInterstitialSeen = false;
         passkeyBannerShownThisSession = false;
+        subdomainCardRequested = false;
         setHeaderState(null);
 
         try {
@@ -428,6 +441,12 @@
         accountTitle.textContent = 'Sign in to your Cloud account';
         headerSubtitle.textContent = 'Manage access, billing and your cloud address from one place.';
         hideAlert();
+        // Re-render the SSO buttons every time we show the login view. Logout
+        // does NOT reload the page, and #ssoSection is otherwise only populated
+        // once on initial load (and only when logged-out), so without this the
+        // "Continue with Google" buttons would be missing after a same-tab
+        // logout until a manual refresh. loadSsoProviders is idempotent.
+        void loadSsoProviders();
 
         if (isGoogleOauthLinkingIntent() && !googleOAuthConsentMode) {
             window.setTimeout(() => {
@@ -454,6 +473,9 @@
         accountTitle.textContent = 'Create your Cloud account';
         headerSubtitle.textContent = 'Create your account, reserve your cloud address and complete billing.';
         hideAlert();
+        // Same as showLoginView: ensure the SSO buttons are present on the
+        // signup view after a same-tab navigation/logout (no page reload).
+        void loadSsoProviders();
 
         if (isGoogleOauthLinkingIntent() && !googleOAuthConsentMode) {
             window.setTimeout(() => {
@@ -1469,8 +1491,13 @@
 
         const billingCard = document.getElementById('billingCard');
         const tokenCard = document.getElementById('tokenCard');
-        // Gate subdomain and billing behind email verification
-        subdomainCard.classList.toggle('hidden', subdomainConfigured || !emailVerified);
+        // Gate subdomain card behind email verification AND an explicit user
+        // request: it's only shown once the user clicks the cloud-address tile
+        // (sets subdomainCardRequested). Hidden once a subdomain is configured.
+        subdomainCard.classList.toggle(
+            'hidden',
+            subdomainConfigured || !emailVerified || !subdomainCardRequested
+        );
         // Show billing card for any non-active billing state so expired users
         // can re-subscribe and suspended users can restore access. Without this
         // an 'expired' user has no UI path back to the plan picker.
@@ -2262,12 +2289,50 @@
     const newPasswordInput = document.getElementById('newPasswordInput');
     const changePasswordMsg = document.getElementById('changePasswordMsg');
     const changePasswordBtn = document.getElementById('changePasswordBtn');
+    const passwordSectionLabel = document.getElementById('passwordSectionLabel');
+
+    // A pure-SSO account has no real password, so the "Change Password" section
+    // becomes "Set a Password": the current-password field is hidden/disabled and
+    // the submit sends no current_password (the server allows that for these
+    // accounts). Once set, the user is a hybrid (SSO + password) and the section
+    // reverts to the normal change flow on the next render. Reads has_password
+    // from the cached user object (server-provided).
+    function isPasswordlessAccount() {
+        const u = JSON.parse(localStorage.getItem('apex_user') || 'null');
+        // Default to the password flow when the flag is absent (older cached
+        // objects) — safer to ask for a current password than to skip it.
+        return u ? u.has_password === false : false;
+    }
+
+    function applyPasswordModeUi() {
+        const passwordless = isPasswordlessAccount();
+        if (currentPasswordInput) {
+            currentPasswordInput.classList.toggle('hidden', passwordless);
+            // A hidden `required` field blocks form submit ("not focusable"), so
+            // drop required + disable it when in set-password mode.
+            currentPasswordInput.required = !passwordless;
+            currentPasswordInput.disabled = passwordless;
+            if (passwordless) currentPasswordInput.value = '';
+        }
+        if (passwordSectionLabel) {
+            passwordSectionLabel.textContent = passwordless ? 'Set a Password' : 'Change Password';
+        }
+        if (changePasswordBtn) {
+            changePasswordBtn.textContent = passwordless ? 'Set Password' : 'Change Password';
+        }
+        if (newPasswordInput) {
+            newPasswordInput.placeholder = passwordless
+                ? 'Create a password (min 8 characters)'
+                : 'New password (min 8 characters)';
+        }
+    }
 
     function showManageView(options = {}) {
         if (!manageAccountView || !dashboardSection) return;
         if (changePasswordMsg) changePasswordMsg.textContent = '';
         if (currentPasswordInput) currentPasswordInput.value = '';
         if (newPasswordInput) newPasswordInput.value = '';
+        applyPasswordModeUi();
 
         manageViewActive = true;
         dashboardSection.classList.add('hidden');
@@ -2365,8 +2430,9 @@
 
             const currentPassword = (currentPasswordInput?.value || '').trim();
             const newPassword = (newPasswordInput?.value || '').trim();
+            const passwordless = isPasswordlessAccount();
 
-            if (!currentPassword) {
+            if (!passwordless && !currentPassword) {
                 if (changePasswordMsg) changePasswordMsg.textContent = 'Current password is required.';
                 return;
             }
@@ -2377,19 +2443,24 @@
 
             if (changePasswordBtn) {
                 changePasswordBtn.disabled = true;
-                changePasswordBtn.textContent = 'Changing...';
+                changePasswordBtn.textContent = passwordless ? 'Setting...' : 'Changing...';
             }
             if (changePasswordMsg) changePasswordMsg.textContent = '';
 
             try {
+                // In set-password mode, send no current_password — the server
+                // permits that only for accounts without a usable password.
+                const body = {
+                    portal_session_token: storedUser.portal_session_token,
+                    new_password: newPassword
+                };
+                if (!passwordless) {
+                    body.current_password = currentPassword;
+                }
                 const res = await fetch('/api/account/change-password', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        portal_session_token: storedUser.portal_session_token,
-                        current_password: currentPassword,
-                        new_password: newPassword
-                    })
+                    body: JSON.stringify(body)
                 });
 
                 const data = await res.json();
@@ -2401,6 +2472,11 @@
                     changePasswordMsg.textContent = data.message || 'Password changed successfully.';
                     changePasswordMsg.classList.remove('danger-label');
                 }
+                // The account now HAS a password — refresh cached state so the
+                // section flips to "Change Password" and passkey enrolment unlocks.
+                if (passwordless) {
+                    refreshAccountState({ silent: true }).then(() => applyPasswordModeUi());
+                }
             } catch (err) {
                 if (changePasswordMsg) {
                     changePasswordMsg.textContent = err.message;
@@ -2408,7 +2484,7 @@
                 }
             } finally {
                 if (changePasswordBtn) {
-                    changePasswordBtn.textContent = 'Change Password';
+                    changePasswordBtn.textContent = isPasswordlessAccount() ? 'Set Password' : 'Change Password';
                     changePasswordBtn.disabled = false;
                 }
             }
@@ -2661,6 +2737,19 @@
 
     if (addPasskeyBtn) {
         addPasskeyBtn.addEventListener('click', async () => {
+            // A passkey is removed by confirming the account password, so a
+            // passwordless SSO user must set a password first — otherwise they'd
+            // create a passkey they could never remove. Nudge them to the
+            // password section instead of starting a doomed enrolment (the server
+            // also rejects it with 409 set_password_first as a backstop).
+            if (isPasswordlessAccount()) {
+                setPasskeyStatus('Set a password first (in the section above), then you can add a passkey.', true);
+                if (passwordSectionLabel) {
+                    passwordSectionLabel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+                if (newPasswordInput) newPasswordInput.focus();
+                return;
+            }
             addPasskeyBtn.disabled = true;
             addPasskeyBtn.textContent = 'Waiting for passkey...';
             setPasskeyStatus('');
@@ -3111,6 +3200,9 @@
                 if (!res.ok) throw new Error(data.error);
 
                 localStorage.setItem('apex_user', JSON.stringify(data.data));
+                // Subdomain is now set; collapse the request flag so the card
+                // re-hides (renderDashboard also hides it once configured).
+                subdomainCardRequested = false;
                 renderDashboard(data.data);
                 showAlert('Cloud address saved.', false);
             } catch (err) {
@@ -3159,6 +3251,9 @@
                 return;
             }
             event.preventDefault();
+            // Mark that the user asked to set their cloud address so renderDashboard
+            // keeps the card visible across auto-refresh polls (not just this click).
+            subdomainCardRequested = true;
             if (subdomainCard) {
                 subdomainCard.classList.remove('hidden');
                 subdomainCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -3579,33 +3674,37 @@
             btn.disabled = true;
             hideAlert();
 
-            const subdomainInput = document.getElementById('signupSubdomain');
-            const subdomain = subdomainInput ? subdomainInput.value.trim().toLowerCase() : '';
-            if (subdomain && !/^[a-z0-9\-]{3,20}$/.test(subdomain)) {
-                showAlert('Subdomain can only contain lowercase letters, numbers, and hyphens (3-20 chars).');
-                restoreButton(btn, defaultText);
-                return;
-            }
-
+            // Cloud address (subdomain) is deliberately NOT collected here — it's
+            // chosen later from the dashboard. Signup only needs email + password.
             try {
                 const res = await fetch('/api/auth/signup', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         email: document.getElementById('signupEmail').value,
-                        password: document.getElementById('signupPassword').value,
-                        ...(subdomain ? { subdomain } : {})
+                        password: document.getElementById('signupPassword').value
                     })
                 });
 
                 const data = await res.json();
-                if (!res.ok) throw new Error(data.error);
+                if (!res.ok) {
+                    const err = new Error(data.error || 'Could not create your account.');
+                    err.status = res.status;
+                    throw err;
+                }
 
                 localStorage.setItem('apex_user', JSON.stringify(data.data));
                 renderDashboard(data.data);
                 showAlert(data.message, false);
             } catch (err) {
-                showAlert(err.message);
+                // 409 = the email already has an account (including one created via
+                // Google SSO). Keep that message on screen (persistent) and point
+                // the user to sign in, instead of letting it auto-dismiss in 3.5s.
+                if (err.status === 409) {
+                    showAlert(`${err.message} Use "Sign in" above to log in.`, true, { persistent: true });
+                } else {
+                    showAlert(err.message);
+                }
             } finally {
                 restoreButton(btn, defaultText);
             }
@@ -3682,10 +3781,7 @@
         stripSsoQueryParams();
     }
 
-    // Render the provider buttons on the login/signup screens. Skipped while a
-    // session already exists (dashboard view) or mid SSO-hydration, since the
-    // buttons only belong on the signed-out form.
-    if (!storedUser && !ssoRedirectPending) {
-        void loadSsoProviders();
-    }
+    // Provider buttons are loaded by showLoginView()/showSignupView(), which run
+    // on every logged-out path above (initial load AND same-tab logout), so no
+    // separate call is needed here.
 })();

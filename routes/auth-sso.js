@@ -8,7 +8,7 @@ const express = require('express');
 // Flow: GET /:provider/start → provider consent → GET|POST /:provider/callback
 // → resolve/create user → set portal session cookie → redirect to /?sso=1,
 // where public/account.js hydrates the dashboard from the cookie.
-module.exports = function ({ utils, sso }) {
+module.exports = function ({ utils, sso, email }) {
     const router = express.Router();
     const { asyncHandler } = utils;
 
@@ -106,6 +106,14 @@ module.exports = function ({ utils, sso }) {
         }
 
         sso.establishSession(res, result.user);
+
+        // Brand-new SSO account → send a welcome email (best-effort, never blocks
+        // the redirect). Only on `created`: returning sign-ins and email-matched
+        // auto-links (`linked`) already had an account, so they get nothing. SSO
+        // signups skip the verification email, so this is the only signup mail.
+        if (result.created && email && email.isEmailConfigured()) {
+            email.sendWelcomeEmail(result.user.email).catch(() => {});
+        }
 
         // Hand back to the SPA with ?sso=1 so account.js knows to hydrate from
         // the freshly-set cookie (it otherwise only reads localStorage).
