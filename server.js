@@ -68,6 +68,10 @@ const alexaEventGateway = require('./lib/alexa/event-gateway')({ dbGet, dbRun, d
 // Auth depends on device, googleCore, and alexaCore, so it must be initialized after them
 const auth = require('./lib/auth')({ dbGet, config, utils, device, googleCore, alexaCore });
 
+// Customer SSO / social sign-in (OIDC client for Google/Microsoft/Apple).
+// Depends on auth (reuses its session minting + portal-secret HMAC).
+const sso = require('./lib/sso')({ config, utils, auth, dbTransaction });
+
 // WebAuthn / passkey 2FA helper (owns credential + challenge persistence)
 const webauthn = require('./lib/webauthn')({ dbGet, dbRun, dbAll, config, utils });
 
@@ -164,7 +168,7 @@ const signupRateLimiter = rateLimit({
 const generalApiRateLimiter = rateLimit({
     windowMs: 60 * 1000, // 1 minute
     max: 500, // 500 requests per minute per IP (bumped from 100 to accommodate
-              // bulk dashboard operations that fan out to multiple entities)
+    // bulk dashboard operations that fan out to multiple entities)
     standardHeaders: true,
     legacyHeaders: false,
     skip: (req) => req.path.startsWith('/internal/'),
@@ -202,6 +206,16 @@ app.use('/api/auth/login', (req, res, next) => {
 });
 app.use('/api/admin/login', authRateLimiter);
 app.use('/api/auth/signup', signupRateLimiter);
+// SSO: the start/callback redirects are the brute-force surface → strict
+// limiter. GET /api/auth/sso/providers is polled on every login/signup page
+// load (and reveals only which buttons to show), so it must fall through to the
+// relaxed general-API bucket — mirroring the /api/auth/login carve-out above.
+app.use('/api/auth/sso', (req, res, next) => {
+    if (req.path === '/providers') {
+        return next();
+    }
+    return authRateLimiter(req, res, next);
+});
 app.use('/api/auth/forgot-password', emailRateLimiter);
 app.use('/api/auth/resend-verification', emailRateLimiter);
 app.use('/api/auth/reset-password', authRateLimiter);
@@ -224,6 +238,7 @@ const deps = {
     config,
     utils,
     auth,
+    sso,
     webauthn,
     email,
     device,
@@ -288,6 +303,7 @@ app.use(
 app.use(require('./routes/device-api')(deps));
 app.use(require('./routes/admin-fleet')(deps));
 app.use(require('./routes/auth')(deps));
+app.use(require('./routes/auth-sso')(deps));
 app.use(require('./routes/webauthn')(deps));
 app.use(require('./routes/admin-sudo')(deps));
 app.use(require('./routes/admin-server')(deps));

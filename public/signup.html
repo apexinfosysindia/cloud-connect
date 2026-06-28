@@ -89,6 +89,18 @@
 
                 <button type="submit" id="signupBtn" class="button button-primary button-full">Create Account</button>
 
+                <!--
+                  SSO / social sign-up. Identical block to login.html: account.js
+                  fills #ssoButtons from GET /api/auth/sso/providers and unhides
+                  only when a provider is configured. "Sign up with Google" and
+                  "Sign in with Google" hit the SAME /start endpoint — the
+                  callback creates or links the account as needed.
+                -->
+                <div id="ssoSection" class="sso-section hidden">
+                    <div class="sso-divider"><span>or sign up with</span></div>
+                    <div id="ssoButtons" class="sso-buttons"></div>
+                </div>
+
                 <p class="link-row">Already have an account? <a href="/login" class="link-inline">Sign in</a></p>
             </form>
 
