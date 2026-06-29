@@ -33,6 +33,51 @@ module.exports = function ({ utils, sso, email }) {
         })
     );
 
+    // Temporary, token-gated diagnostic for SSO start failures (e.g. Apple
+    // "temporarily unavailable"). Reveals WHICH step fails + non-secret shape of
+    // the key/env, never the key itself. Disabled unless SSO_DEBUG_TOKEN is set
+    // and matches ?token=. Safe to leave deployed off; remove once resolved.
+    router.get(
+        '/api/auth/sso/:provider/diagnose',
+        asyncHandler(async (req, res) => {
+            const token = process.env.SSO_DEBUG_TOKEN || '';
+            if (!token || req.query.token !== token) {
+                return res.status(404).send('Not found');
+            }
+            const providerId = String(req.params.provider || '');
+            const out = { provider: providerId, enabled: sso.isProviderEnabled(providerId), steps: {} };
+            try {
+                const cfg = require('../lib/config').SSO.providers[providerId] || {};
+                out.shape = {
+                    clientId: cfg.clientId || null,
+                    hasSecretOrKey: providerId === 'apple' ? Boolean(cfg.privateKey) : Boolean(cfg.clientSecret),
+                    keyHasNewlines: providerId === 'apple' ? String(cfg.privateKey || '').includes('\n') : null,
+                    keyLen: providerId === 'apple' ? String(cfg.privateKey || '').length : null,
+                    teamId: cfg.teamId || null,
+                    keyId: cfg.keyId || null
+                };
+            } catch (e) {
+                out.shape = { error: e.message };
+            }
+            if (providerId === 'apple') {
+                try {
+                    sso.appleClientSecret();
+                    out.steps.clientSecret = 'ok';
+                } catch (e) {
+                    out.steps.clientSecret = 'FAIL: ' + e.message;
+                }
+            }
+            try {
+                await sso.buildAuthorizationRequest(providerId, '/');
+                out.steps.buildUrl = 'ok';
+            } catch (e) {
+                out.steps.buildUrl = 'FAIL: ' + e.message;
+            }
+            res.setHeader('Cache-Control', 'no-store');
+            res.status(200).json(out);
+        })
+    );
+
     // Kick off the flow: build PKCE + state + nonce, stash them in the signed
     // tx cookie, and redirect the browser to the provider's own consent page.
     router.get(
