@@ -291,6 +291,44 @@ module.exports = function ({
         })
     );
 
+    // ── Usernameless passkey login (the "Sign in with a passkey" button) ────
+    // No email typed: issue a challenge with no allowCredentials so the browser
+    // offers every discoverable passkey for this site; the user is identified
+    // from the credential they pick. The client must echo the challenge back on
+    // verify so the server can find the matching single-use challenge.
+    router.post(
+        '/api/auth/login/passkey/discoverable/begin',
+        asyncHandler(async (req, res) => {
+            const options = await webauthn.beginDiscoverableAuthentication('customer');
+            res.setHeader('Cache-Control', 'no-store');
+            return res.status(200).json({ options });
+        })
+    );
+
+    router.post(
+        '/api/auth/login/passkey/discoverable/verify',
+        asyncHandler(async (req, res) => {
+            const assertion = req.body?.assertion || req.body?.response;
+            const challenge = req.body?.challenge;
+            if (!assertion || !challenge) {
+                return res.status(400).json({ error: 'A passkey assertion is required' });
+            }
+
+            const result = await webauthn.finishDiscoverableAuthentication('customer', challenge, assertion);
+            if (!result.verified) {
+                console.error('[webauthn] discoverable passkey verify failed:', result.error);
+                return res.status(401).json({ error: 'Passkey sign-in failed. Please try again.' });
+            }
+
+            const user = await dbGet(`SELECT * FROM users WHERE id = ?`, [result.userId]);
+            if (!user) {
+                return res.status(404).json({ error: 'Account not found' });
+            }
+
+            return finishLogin(res, user);
+        })
+    );
+
     // Step 2b (password path): verify the password.
     //   • Account WITHOUT a passkey → password is its primary factor → sign in
     //     directly (matches today's behavior for password-only accounts).
