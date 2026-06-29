@@ -98,6 +98,19 @@
                         <div id="ssoButtons" class="sso-buttons"></div>
                     </div>
 
+                    <!--
+                      Usernameless passkey sign-in. Always offered (when the
+                      browser supports WebAuthn) regardless of SSO config; no
+                      email needed — the browser shows every discoverable passkey
+                      for this site. account.js wires #passkeyLoginBtn and reveals
+                      #passkeyLoginSection only when supported.
+                    -->
+                    <div id="passkeyLoginSection" class="sso-section hidden">
+                        <button type="button" id="passkeyLoginBtn" class="button button-secondary button-full sso-button">
+                            <span class="sso-button__icon" aria-hidden="true">&#128273;</span><span>Sign in with a passkey</span>
+                        </button>
+                    </div>
+
                     <p class="link-row">Need an account? <a href="/signup" class="link-inline">Create one</a></p>
                 </div>
 

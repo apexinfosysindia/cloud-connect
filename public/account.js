@@ -3499,6 +3499,55 @@
             }
         }
 
+        // Usernameless passkey login: no email typed. Begin a challenge with no
+        // allowCredentials, let the browser offer every discoverable passkey,
+        // and echo the challenge back so the server can resolve the user from the
+        // chosen credential. Runs in parallel to the email-first runPasskeyLogin.
+        const passkeyLoginBtn = document.getElementById('passkeyLoginBtn');
+        const passkeyLoginSection = document.getElementById('passkeyLoginSection');
+        if (passkeyLoginBtn && passkeyLoginSection && window.SimpleWebAuthnBrowser) {
+            passkeyLoginSection.classList.remove('hidden');
+            passkeyLoginBtn.addEventListener('click', async () => {
+                const restore = passkeyLoginBtn.textContent;
+                passkeyLoginBtn.disabled = true;
+                passkeyLoginBtn.textContent = 'Waiting for passkey...';
+                hideAlert();
+                try {
+                    const beginRes = await fetch('/api/auth/login/passkey/discoverable/begin', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: '{}'
+                    });
+                    const beginData = await beginRes.json();
+                    if (!beginRes.ok) throw new Error(beginData.error || 'Could not start passkey sign-in.');
+
+                    let assertion;
+                    try {
+                        assertion = await withTimeout(
+                            window.SimpleWebAuthnBrowser.startAuthentication(beginData.options),
+                            90000
+                        );
+                    } catch (authErr) {
+                        throw new Error(describePasskeyError(authErr).message);
+                    }
+
+                    const verifyRes = await fetch('/api/auth/login/passkey/discoverable/verify', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ challenge: beginData.options.challenge, assertion })
+                    });
+                    const verifyData = await verifyRes.json();
+                    if (!verifyRes.ok) throw new Error(verifyData.error || 'Passkey sign-in failed.');
+                    finishLoginSuccess(verifyData.data);
+                } catch (err) {
+                    showAlert(err.message);
+                } finally {
+                    passkeyLoginBtn.disabled = false;
+                    passkeyLoginBtn.textContent = restore;
+                }
+            });
+        }
+
         // Step 1 → lookup the email and branch to the right next step.
         async function submitLoginEmail(btn) {
             const input = document.getElementById('loginEmail');

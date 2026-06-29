@@ -199,7 +199,7 @@ app.use('/api/', generalApiRateLimiter);
 // fall through (general-API limiter only) and apply the strict limiter to
 // everything else — including the legacy bare POST /api/auth/login (req.path '/').
 app.use('/api/auth/login', (req, res, next) => {
-    if (req.path === '/lookup' || req.path === '/passkey/begin') {
+    if (req.path === '/lookup' || req.path === '/passkey/begin' || req.path === '/passkey/discoverable/begin') {
         return next();
     }
     return authRateLimiter(req, res, next);
