@@ -638,10 +638,10 @@
 
     // ── Shared entity card: domain filter + HA-device grouping ──────────
     // Both the Google and Alexa integration cards render through this one
-    // subsystem. Each entity carries `entity_type` (its HA domain) and a
+    // subsystem. Each entity carries `entity_type` (its entity domain) and a
     // `state` object; the add-on now also stuffs `_ha_device_id` /
     // `_ha_device_name` into state (see lib/{google-home,alexa}/core.js), which
-    // lets us group entities by their Home Assistant device. State is held in
+    // lets us group entities by their ApexOS device. State is held in
     // JS (not the DOM) so it survives the 15s silent re-render: `selectedDomain`
     // is the active domain filter and `expanded` is the set of open device
     // groups (empty = all collapsed, matching "show the device first, expand on

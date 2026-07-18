@@ -95,7 +95,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 ## 6. Domain coverage
 
-The skill exposes the same Home Assistant domains as the Google Assistant
+The skill exposes the same entity domains as the Google Assistant
 bridge (minus those Alexa's custom-skill API cannot represent):
 
 | Domain(s) | Alexa interface(s) |
