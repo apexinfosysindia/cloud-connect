@@ -1054,7 +1054,7 @@ execute_google_command() {
             elif [ "$domain" = "input_button" ]; then
                 ha_api_post "/services/input_button/press" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
             elif [ "$domain" = "group" ]; then
-                ha_api_post "/services/homeassistant/turn_on" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+                ha_api_post "/services/apexos/turn_on" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
             else
                 ha_api_post "/services/${domain}/turn_on" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
             fi
@@ -1063,7 +1063,7 @@ execute_google_command() {
             if [ "$domain" = "scene" ] || [ "$domain" = "script" ] || [ "$domain" = "button" ] || [ "$domain" = "input_button" ]; then
                 success=true
             elif [ "$domain" = "group" ]; then
-                ha_api_post "/services/homeassistant/turn_off" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+                ha_api_post "/services/apexos/turn_off" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
             else
                 ha_api_post "/services/${domain}/turn_off" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
             fi
@@ -1463,14 +1463,14 @@ execute_alexa_command() {
 
     if [ "$action" = "turn_on" ]; then
         if [ "$domain" = "group" ]; then
-            ha_api_post "/services/homeassistant/turn_on" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            ha_api_post "/services/apexos/turn_on" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
         else
             ha_api_post "/services/${domain}/turn_on" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
         fi
         resulting_state='{"on":true}'
     elif [ "$action" = "turn_off" ]; then
         if [ "$domain" = "group" ]; then
-            ha_api_post "/services/homeassistant/turn_off" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
+            ha_api_post "/services/apexos/turn_off" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
         else
             ha_api_post "/services/${domain}/turn_off" "$(jq -n --arg entity_id "$entity_id" '{entity_id: $entity_id}')" >/dev/null || success=false
         fi

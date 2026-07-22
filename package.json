@@ -2,6 +2,11 @@
     "name": "cloud-portal",
     "version": "1.0.0",
     "description": "",
+    "private": true,
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/apexinfosysindia/cloud-connect.git"
+    },
     "main": "server.js",
     "scripts": {
         "test": "node --test test/",
