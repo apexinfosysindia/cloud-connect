@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.3.0
+## 1.5.0
 
 - Add Amazon Alexa Smart Home support: the add-on now syncs supported entities
   (lights, switches, outlets, fans, input booleans) to the Alexa integration and
