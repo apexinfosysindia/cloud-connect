@@ -27,6 +27,17 @@ jobs:
             - name: Capture commit
               id: meta
               run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            # The self-hosted Linux builder is a bare Ubuntu host -- it has no
+            # node, so this step died with `node: command not found` (exit 127)
+            # once CI moved off the fully-equipped hosted images. Install node
+            # per-job instead of on the builder: a host-level install is
+            # invisible state that no one can reproduce and that a rebuilt
+            # runner silently loses. 20 matches the version the VPS runs, so a
+            # syntax check here means the same parser as production.
+            - name: Set up Node
+              uses: actions/setup-node@v5
+              with:
+                  node-version: '20'
             - name: Check backend syntax
               run: |
                   node --check server.js
