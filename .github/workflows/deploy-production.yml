@@ -13,7 +13,11 @@ permissions:
     contents: read
 jobs:
     deploy:
-        runs-on: [self-hosted, apexos-builder]
+        # Linux builder ONLY. The bare [self-hosted, apexos-builder] label set
+        # also matches the ARM64 builder, which is a macOS workstation -- and
+        # this job writes SSH key material and runs a PRODUCTION deploy. It must
+        # never be scheduled there.
+        runs-on: [self-hosted, apexos-builder, linux, X64]
         environment: production
         steps:
             - name: Checkout selected ref
@@ -26,31 +30,61 @@ jobs:
             - name: Check backend syntax
               run: |
                   node --check server.js
+            # Key material goes in $RUNNER_TEMP, NOT ~/.ssh. On a GitHub-hosted
+            # runner ~ belonged to a VM that was destroyed minutes later; on a
+            # self-hosted runner ~ is the runner account's real, persistent home,
+            # shared by every job of every repo that lands on the box. Writing
+            # ~/.ssh/id_ed25519 there (a) OVERWRITES that account's own default
+            # SSH identity, and (b) leaves this production VPS private key on
+            # disk after the job ends, readable by whatever runs next.
+            #
+            # known_hosts is written fresh per job instead of appended, so the
+            # file can't grow without bound or be corrupted by two jobs
+            # appending at once.
+            #
+            # The key is passed through `env:` rather than interpolated into the
+            # script body: `RAW_KEY='${{ secrets.VPS_SSH_KEY }}'` breaks outright
+            # on a key containing a single quote, and it writes the secret into
+            # the step's temporary .sh file on the runner's disk.
             - name: Setup SSH
+              env:
+                  RAW_KEY: ${{ secrets.VPS_SSH_KEY }}
+                  VPS_PORT: ${{ secrets.VPS_PORT }}
+                  VPS_HOST: ${{ secrets.VPS_HOST }}
               run: |
-                  install -m 700 -d ~/.ssh
-                  RAW_KEY='${{ secrets.VPS_SSH_KEY }}'
+                  set -eu
+                  umask 077
+                  KEY="$RUNNER_TEMP/vps_key"
+                  KH="$RUNNER_TEMP/vps_known_hosts"
+
                   if printf "%s" "$RAW_KEY" | grep -q '\\n'; then
-                    printf "%b" "$RAW_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+                    printf "%b" "$RAW_KEY" | tr -d '\r' > "$KEY"
                   else
-                    printf "%s" "$RAW_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+                    printf "%s" "$RAW_KEY" | tr -d '\r' > "$KEY"
                   fi
 
-                  if ! grep -Eq 'BEGIN (OPENSSH|RSA|EC|DSA) PRIVATE KEY' ~/.ssh/id_ed25519; then
+                  if ! grep -Eq 'BEGIN (OPENSSH|RSA|EC|DSA) PRIVATE KEY' "$KEY"; then
                     echo "VPS_SSH_KEY is not a valid private key. Paste the private key file contents, not the .pub key."
                     exit 1
                   fi
 
-                  chmod 600 ~/.ssh/id_ed25519
-                  ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
-                  ssh-keyscan -p "${{ secrets.VPS_PORT }}" -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+                  chmod 600 "$KEY"
+                  ssh-keygen -y -f "$KEY" >/dev/null
+                  ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" > "$KH"
+
+                  # IdentitiesOnly stops ssh from also offering the runner
+                  # account's own keys from its agent/default paths.
+                  echo "SSH_OPTS=-i $KEY -o UserKnownHostsFile=$KH -o IdentitiesOnly=yes" >> "$GITHUB_ENV"
             - name: Ensure VPS app directory exists
               run: |
-                  ssh -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+                  ssh $SSH_OPTS -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
                     "mkdir -p '${{ secrets.VPS_APP_DIR }}'"
+            # Same reason as the key above: a multi-line secret interpolated into
+            # the script body as a shell literal breaks on any quote it contains.
             - name: Upload production env file
+              env:
+                  RAW_ENV: ${{ secrets.PORTAL_ENV_FILE }}
               run: |
-                  RAW_ENV='${{ secrets.PORTAL_ENV_FILE }}'
 
                   if [ -z "$RAW_ENV" ]; then
                     echo "PORTAL_ENV_FILE secret is missing"
@@ -64,8 +98,8 @@ jobs:
                     printf "%s" "$RAW_ENV" | tr -d '\r' > "$ENV_FILE"
                   fi
 
-                  scp -P "${{ secrets.VPS_PORT }}" "$ENV_FILE" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/.env"
-                  ssh -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+                  scp $SSH_OPTS -P "${{ secrets.VPS_PORT }}" "$ENV_FILE" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/.env"
+                  ssh $SSH_OPTS -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
                     "chmod 600 '${{ secrets.VPS_APP_DIR }}/.env'"
             - name: Generate frps.toml from template
               env:
@@ -79,7 +113,11 @@ jobs:
                   envsubst '$FRPS_AUTH_TOKEN $FRPS_DASHBOARD_PASSWORD' < frps.toml.example > frps.toml
             - name: Sync repo to VPS
               run: |
+                  # -e was missing entirely: rsync used plain `ssh` with no
+                  # identity and no port, so it only ever worked because the
+                  # runner account happened to have a usable default key.
                   rsync -az --delete \
+                    -e "ssh $SSH_OPTS -p ${{ secrets.VPS_PORT }}" \
                     --exclude ".git/" \
                     --exclude ".env" \
                     --exclude "database.sqlite" \
@@ -87,7 +125,7 @@ jobs:
                     ./ "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/"
             - name: Deploy on VPS
               run: |
-                  ssh -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" 'bash -s' <<'EOF'
+                  ssh $SSH_OPTS -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" 'bash -s' <<'EOF'
                   set -euo pipefail
                   APP_DIR="${{ secrets.VPS_APP_DIR }}"
                   DEPLOY_COMMIT="${{ steps.meta.outputs.commit }}"
@@ -140,3 +178,10 @@ jobs:
                   pm2 logs apex-portal --lines 50 --nostream
                   exit 1
                   EOF
+
+            # $RUNNER_TEMP is cleared when a job STARTS, not when it ends, so on
+            # a self-hosted runner the key would otherwise sit on disk until the
+            # next job on this box happens to run.
+            - name: Remove the deploy key from the runner
+              if: always()
+              run: rm -f "$RUNNER_TEMP/vps_key" "$RUNNER_TEMP/vps_known_hosts" "$RUNNER_TEMP/cloud-connect.env"
