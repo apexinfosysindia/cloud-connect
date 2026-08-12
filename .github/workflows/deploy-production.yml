@@ -57,35 +57,377 @@ jobs:
             # script body: `RAW_KEY='${{ secrets.VPS_SSH_KEY }}'` breaks outright
             # on a key containing a single quote, and it writes the secret into
             # the step's temporary .sh file on the runner's disk.
+            #
+            # EVERY failure here must name itself. The previous version of this
+            # step had exactly one human-readable message (the "not a private
+            # key" grep) and let three silent commands decide the exit code, so
+            # in practice it failed like this:
+            #
+            #   ##[error]Process completed with exit code 1
+            #
+            # with no other output at all (run 31615484965). The culprit was
+            # `ssh-keyscan`: on a host that resolves but never answers, it
+            # writes NOTHING to stderr, produces an empty known_hosts, and exits
+            # 1 after exactly its default -T 5 timeout. The only clue that it
+            # was a network problem and not a bad key was that the step took
+            # 5.0s instead of the 0.3s a healthy run takes -- i.e. the diagnosis
+            # lived in the timestamps. Each distinct cause now exits with its
+            # own ::error:: annotation and a fix hint.
+            #
+            # SECRET HYGIENE: the secret and the decoded key are never echoed,
+            # never passed as argv, and never dumped. They only ever land in
+            # files created under `umask 077` and chmod 600, and the scratch
+            # copies are removed by an EXIT trap. Diagnostics report only
+            # *facts about* the key (does it parse, how many decode rounds it
+            # needed, its PUBLIC fingerprint) -- never its bytes.
             - name: Setup SSH
               env:
                   RAW_KEY: ${{ secrets.VPS_SSH_KEY }}
                   VPS_PORT: ${{ secrets.VPS_PORT }}
                   VPS_HOST: ${{ secrets.VPS_HOST }}
+                  VPS_USER: ${{ secrets.VPS_USER }}
               run: |
                   set -eu
                   umask 077
+
                   KEY="$RUNNER_TEMP/vps_key"
                   KH="$RUNNER_TEMP/vps_known_hosts"
 
-                  if printf "%s" "$RAW_KEY" | grep -q '\\n'; then
-                    printf "%b" "$RAW_KEY" | tr -d '\r' > "$KEY"
-                  else
-                    printf "%s" "$RAW_KEY" | tr -d '\r' > "$KEY"
-                  fi
-
-                  if ! grep -Eq 'BEGIN (OPENSSH|RSA|EC|DSA) PRIVATE KEY' "$KEY"; then
-                    echo "VPS_SSH_KEY is not a valid private key. Paste the private key file contents, not the .pub key."
+                  # fail <CODE> <one-line summary> [detail lines...]
+                  fail() {
+                    _code="$1"
+                    _summary="$2"
+                    shift 2
+                    printf '::error title=Setup SSH: %s::%s\n' "$_code" "$_summary"
+                    printf '\n%s: %s\n' "$_code" "$_summary"
+                    for _line in "$@"; do
+                      printf '  %s\n' "$_line"
+                    done
                     exit 1
+                  }
+
+                  # ---------------------------------------------------------------
+                  # 1. E_TOOLING -- the runner cannot do SSH at all.
+                  #
+                  #    This runs FIRST, before any scratch file is created: the
+                  #    diagnosis must not depend on the tools it is diagnosing.
+                  #    (Checking after `mktemp -d` meant a runner missing mktemp
+                  #    or rm died on that line -- exit 127, no annotation --
+                  #    which is the exact class of bug this rewrite removes.)
+                  # ---------------------------------------------------------------
+                  for _tool in ssh ssh-keygen ssh-keyscan base64 mktemp rm tr wc awk; do
+                    if ! command -v "$_tool" >/dev/null 2>&1; then
+                      fail E_TOOLING \
+                        "'$_tool' is not on PATH on this runner, so the deploy cannot even attempt SSH." \
+                        "This job is pinned to runs-on: [self-hosted, apexos-builder, linux, X64]." \
+                        "That builder is a bare Ubuntu host; it ships only what someone installed." \
+                        "Fix the BUILDER, not this workflow:" \
+                        "    sudo apt-get update && sudo apt-get install -y openssh-client coreutils" \
+                        "Do NOT work around it by relaxing runs-on -- the other builder is an ARM64" \
+                        "macOS workstation and this job writes production key material."
+                    fi
+                  done
+
+                  # Scratch space for decode rounds and captured stderr. Removed
+                  # on every exit path, including every failing one.
+                  WORK="$(mktemp -d "$RUNNER_TEMP/ssh-setup.XXXXXX")"
+                  trap 'rm -rf "$WORK"' EXIT HUP INT TERM
+
+                  # ---------------------------------------------------------------
+                  # 2. E_SECRET_EMPTY -- a secret resolved to the empty string.
+                  #    An unset secret is NOT an error in Actions; it expands to
+                  #    "" and the failure surfaces much later as something else.
+                  # ---------------------------------------------------------------
+                  MISSING=""
+                  [ -n "${RAW_KEY:-}" ]  || MISSING="$MISSING VPS_SSH_KEY"
+                  [ -n "${VPS_HOST:-}" ] || MISSING="$MISSING VPS_HOST"
+                  [ -n "${VPS_PORT:-}" ] || MISSING="$MISSING VPS_PORT"
+                  [ -n "${VPS_USER:-}" ] || MISSING="$MISSING VPS_USER"
+                  if [ -n "$MISSING" ]; then
+                    fail E_SECRET_EMPTY \
+                      "These secrets resolved to an EMPTY value at runtime:$MISSING" \
+                      "An undefined secret is not an error in Actions -- it expands to \"\" silently." \
+                      "Check, in this order:" \
+                      "  1. This job runs in environment: production. A secret defined on a" \
+                      "     DIFFERENT environment, or only as a repo secret when an environment" \
+                      "     secret of the same name exists, will not be the one you see here." \
+                      "  2. An ORG secret set to visibility=all does NOT reach every repo on this" \
+                      "     plan. If the secret is org-level, either grant this repo explicitly" \
+                      "     (selected repositories) or define it at repo/environment level." \
+                      "  3. Spelling. Secret names are case-sensitive." \
+                      "Verify with: gh secret list -R \$GITHUB_REPOSITORY --env production" \
+                      "(Values are never printed here; only the names above.)"
                   fi
 
-                  chmod 600 "$KEY"
-                  ssh-keygen -y -f "$KEY" >/dev/null
-                  ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" > "$KH"
+                  # ---------------------------------------------------------------
+                  # 3. E_SECRET_INVALID -- VPS_PORT must be a bare integer. An
+                  #    empty or non-numeric port made ssh-keyscan die with a
+                  #    masked "Bad port '***'".
+                  # ---------------------------------------------------------------
+                  case "$VPS_PORT" in
+                    ''|*[!0-9]*)
+                      fail E_SECRET_INVALID \
+                        "VPS_PORT is not a plain integer (its value is masked in this log)." \
+                        "It must be digits only -- no 'ssh://', no spaces, no quotes, no newline." \
+                        "A trailing newline pasted into the secret box is the usual cause." ;;
+                  esac
+                  if [ "$VPS_PORT" -lt 1 ] || [ "$VPS_PORT" -gt 65535 ]; then
+                    fail E_SECRET_INVALID \
+                      "VPS_PORT is outside 1-65535 (value masked)." \
+                      "Set it to the port sshd actually listens on."
+                  fi
 
-                  # IdentitiesOnly stops ssh from also offering the runner
-                  # account's own keys from its agent/default paths.
-                  echo "SSH_OPTS=-i $KEY -o UserKnownHostsFile=$KH -o IdentitiesOnly=yes" >> "$GITHUB_ENV"
+                  # ---------------------------------------------------------------
+                  # 4. E_NOT_BASE64 / E_KEY_ENCODING -- unwrap the transport
+                  #    encoding.
+                  #
+                  #    Deploy keys in this org are handed around base64-encoded,
+                  #    and at least one of them is DOUBLE-encoded (whoever
+                  #    created it piped through base64 twice), which is why this
+                  #    is a loop and not a single `base64 -d`. A plain PEM is
+                  #    also accepted as-is. Anything else is reported instead of
+                  #    being written to disk and failing later as "invalid
+                  #    format".
+                  # ---------------------------------------------------------------
+                  RAWF="$WORK/raw"
+                  if printf "%s" "$RAW_KEY" | grep -q '\\n'; then
+                    printf "%b" "$RAW_KEY" | tr -d '\r' > "$RAWF"
+                  else
+                    printf "%s" "$RAW_KEY" | tr -d '\r' > "$RAWF"
+                  fi
+                  chmod 600 "$RAWF"
+
+                  PEM_RE='BEGIN ((OPENSSH|RSA|EC|DSA|ENCRYPTED) )?PRIVATE KEY'
+                  SRC="$RAWF"
+                  ROUNDS=0
+                  MAX_ROUNDS=2
+
+                  while ! grep -aEq "$PEM_RE" "$SRC"; do
+                    if [ "$ROUNDS" -ge "$MAX_ROUNDS" ]; then
+                      fail E_KEY_ENCODING \
+                        "VPS_SSH_KEY still is not a private key after $MAX_ROUNDS base64 decode rounds." \
+                        "It decodes cleanly but never produces a '-----BEGIN ... PRIVATE KEY-----' header," \
+                        "so it is base64 of something that is not a key (or is encoded more than twice)." \
+                        "Re-create the secret from the key file itself:" \
+                        "    base64 -w0 < deploy_key | gh secret set VPS_SSH_KEY -R \$GITHUB_REPOSITORY --env production"
+                    fi
+
+                    # Strict, platform-independent base64 test. `base64 -d`
+                    # leniency differs between GNU coreutils and BSD/macOS, so
+                    # the alphabet and length are checked here rather than
+                    # trusting its exit code.
+                    STRIP="$WORK/strip.$ROUNDS"
+                    LC_ALL=C tr -d '\n\r \t' < "$SRC" > "$STRIP"
+                    STRIP_LEN="$(wc -c < "$STRIP" | tr -d ' ')"
+
+                    if [ "$STRIP_LEN" -eq 0 ] \
+                       || ! LC_ALL=C grep -aEq '^[A-Za-z0-9+/]+={0,2}$' "$STRIP" \
+                       || [ "$(( STRIP_LEN % 4 ))" -ne 0 ]; then
+                      if [ "$ROUNDS" -eq 0 ]; then
+                        fail E_NOT_BASE64 \
+                          "VPS_SSH_KEY is neither a PEM private key nor valid base64." \
+                          "It has no '-----BEGIN ... PRIVATE KEY-----' header, and it contains" \
+                          "characters outside the base64 alphabet (or its length is not a multiple of 4)." \
+                          "Likely causes: the .pub key was pasted instead of the private key; the" \
+                          "value was truncated on paste; or it is a passphrase/hostname in the wrong secret." \
+                          "Nothing about the value is printed here -- re-derive it locally:" \
+                          "    ssh-keygen -y -f deploy_key >/dev/null && echo 'key file is good'" \
+                          "    base64 -w0 < deploy_key | gh secret set VPS_SSH_KEY -R \$GITHUB_REPOSITORY --env production"
+                      else
+                        fail E_KEY_ENCODING \
+                          "VPS_SSH_KEY decoded once, but the result is neither a PEM key nor valid base64." \
+                          "That means it was base64 of binary junk, or of a truncated key." \
+                          "Re-create the secret from the key file (single base64 round is what this expects)."
+                      fi
+                    fi
+
+                    NEXT="$WORK/decoded.$ROUNDS"
+                    if ! base64 -d < "$STRIP" > "$NEXT" 2>"$WORK/b64.err"; then
+                      fail E_NOT_BASE64 \
+                        "base64 refused to decode VPS_SSH_KEY (decode round $(( ROUNDS + 1 )))." \
+                        "The value passed a strict alphabet check but still failed to decode," \
+                        "which usually means mismatched '=' padding from a hand-edited secret." \
+                        "Re-create it with: base64 -w0 < deploy_key"
+                    fi
+                    chmod 600 "$NEXT"
+                    SRC="$NEXT"
+                    ROUNDS=$(( ROUNDS + 1 ))
+                  done
+
+                  if [ "$ROUNDS" -gt 0 ]; then
+                    echo "VPS_SSH_KEY required $ROUNDS base64 decode round(s) before a PEM header appeared."
+                  else
+                    echo "VPS_SSH_KEY was already a PEM private key (no base64 decoding needed)."
+                  fi
+
+                  cp "$SRC" "$KEY"
+                  chmod 600 "$KEY"
+
+                  # OpenSSH rejects a key whose final line has no newline with a
+                  # bare "invalid format". `wc -l` counts the newline instead of
+                  # capturing the byte, so no key byte is ever held in a shell
+                  # variable.
+                  if [ "$(tail -c 1 "$KEY" | wc -l | tr -d ' ')" -eq 0 ]; then
+                    printf '\n' >> "$KEY"
+                  fi
+
+                  # ---------------------------------------------------------------
+                  # 5. E_NOT_A_KEY / E_KEY_ENCRYPTED -- it has a PEM header, but
+                  #    can OpenSSH actually load it? ssh-keygen -y is the real
+                  #    test; the header grep is not.
+                  # ---------------------------------------------------------------
+                  if ! ssh-keygen -y -f "$KEY" > "$WORK/pub" 2>"$WORK/keygen.err"; then
+                    if grep -qi 'passphrase' "$WORK/keygen.err"; then
+                      fail E_KEY_ENCRYPTED \
+                        "The deploy key loads, but it is PASSPHRASE-PROTECTED and CI cannot type one." \
+                        "Generate a dedicated, passphrase-less deploy key for this VPS:" \
+                        "    ssh-keygen -t ed25519 -N '' -C 'cloud-connect-deploy' -f deploy_key" \
+                        "Append deploy_key.pub to the VPS user's ~/.ssh/authorized_keys, then" \
+                        "store base64 -w0 < deploy_key as VPS_SSH_KEY." \
+                        "Never strip the passphrase from a human's personal key and reuse it here."
+                    fi
+                    fail E_NOT_A_KEY \
+                      "The secret has a PEM header but OpenSSH cannot parse it as a private key." \
+                      "ssh-keygen -y -f rejected it, so the body is damaged -- almost always because" \
+                      "the newlines were lost or re-wrapped when the secret was created." \
+                      "Symptoms of that: the header is intact but the base64 body is one long line." \
+                      "Re-create the secret from the file, preserving it byte for byte:" \
+                      "    base64 -w0 < deploy_key | gh secret set VPS_SSH_KEY -R \$GITHUB_REPOSITORY --env production" \
+                      "(ssh-keygen's own message is withheld deliberately -- it is not needed to act" \
+                      "on this, and this step never copies key-derived output into the log.)"
+                  fi
+
+                  # A PUBLIC-key fingerprint is not secret, and it is the one
+                  # fact that makes an auth failure actionable: compare it with
+                  # what is in the VPS user's authorized_keys.
+                  KEY_FPR="$(ssh-keygen -lf "$WORK/pub" 2>/dev/null | awk '{ print $2 }')"
+                  echo "Deploy key parsed OK. Public fingerprint: ${KEY_FPR:-<unavailable>}"
+
+                  # ---------------------------------------------------------------
+                  # 6. E_DNS -- the hostname does not resolve on the runner.
+                  # ---------------------------------------------------------------
+                  case "$VPS_HOST" in
+                    *[!0-9.]*)
+                      if command -v getent >/dev/null 2>&1; then
+                        if ! getent hosts "$VPS_HOST" >/dev/null 2>&1; then
+                          fail E_DNS \
+                            "VPS_HOST does not resolve from this runner (hostname masked in this log)." \
+                            "getent hosts returned nothing, so this is name resolution, not SSH." \
+                            "Check: a typo in the VPS_HOST secret; an expired/deleted DNS record;" \
+                            "or a self-hosted builder pointed at an internal resolver that does not" \
+                            "know this public name." \
+                            "Reproduce on the builder with: getent hosts <the-host>"
+                        fi
+                      fi ;;
+                  esac
+
+                  # ---------------------------------------------------------------
+                  # 7. E_UNREACHABLE -- resolves, but nothing answers SSH.
+                  #    THIS is the case that used to produce a bare exit 1 with
+                  #    no output whatsoever, so it is spelled out at length.
+                  #
+                  #    known_hosts is truncated, not appended, so it cannot grow
+                  #    without bound or be interleaved by two concurrent jobs.
+                  # ---------------------------------------------------------------
+                  : > "$KH"
+                  chmod 600 "$KH"
+                  ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" > "$KH" 2>"$WORK/keyscan.err" || true
+
+                  if grep -qiE 'getaddrinfo|name or service not known|nodename nor servname|temporary failure in name resolution' "$WORK/keyscan.err"; then
+                    fail E_DNS \
+                      "ssh-keyscan could not resolve VPS_HOST (hostname masked in this log)." \
+                      "This is DNS, not SSH and not the key. Check the VPS_HOST secret and the" \
+                      "resolver configured on the self-hosted builder."
+                  fi
+
+                  if [ ! -s "$KH" ]; then
+                    fail E_UNREACHABLE \
+                      "VPS_HOST resolves, but nothing answered with an SSH host key on VPS_PORT." \
+                      "ssh-keyscan collected zero host keys. Note that on a silent host it prints" \
+                      "NOTHING and exits 1 after its timeout -- that is precisely why this step used" \
+                      "to fail with a bare 'Process completed with exit code 1'." \
+                      "The key itself is fine: it parsed above (fingerprint ${KEY_FPR:-<unavailable>})." \
+                      "Check, in this order:" \
+                      "  1. Is the VPS up?              (ping / provider console)" \
+                      "  2. Is sshd listening on that exact port, not 22 vs 2222?" \
+                      "  3. Does the firewall / cloud security group allow this builder's egress IP?" \
+                      "     The self-hosted builder's address is not in any GitHub-hosted IP range," \
+                      "     so an allowlist written for hosted runners will silently drop it." \
+                      "  4. fail2ban on the VPS -- repeated failed deploys can get the builder banned." \
+                      "Reproduce from the builder with: ssh-keyscan -v -T 10 -p <port> <host>"
+                  fi
+
+                  # ---------------------------------------------------------------
+                  # 8. E_AUTH / E_HOSTKEY / E_SSH -- the key loads and the host
+                  #    answers; does it let us in? Probing here (with a no-op
+                  #    command) means an authentication problem is reported by
+                  #    the step named "Setup SSH" instead of surfacing as a
+                  #    confusing failure inside a later rsync/scp step.
+                  #
+                  #    IdentitiesOnly stops ssh from also offering the runner
+                  #    account's own keys from its agent/default paths -- without
+                  #    it, a deploy can pass on the wrong identity and mask a
+                  #    broken VPS_SSH_KEY entirely.
+                  # ---------------------------------------------------------------
+                  SSH_OPTS="-i $KEY -o UserKnownHostsFile=$KH -o IdentitiesOnly=yes"
+
+                  if ! ssh $SSH_OPTS \
+                        -o BatchMode=yes \
+                        -o ConnectTimeout=10 \
+                        -o StrictHostKeyChecking=yes \
+                        -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" true 2>"$WORK/probe.err"; then
+
+                    if grep -qi 'host key verification failed' "$WORK/probe.err"; then
+                      fail E_HOSTKEY \
+                        "The VPS host key does not match the one ssh-keyscan just pinned." \
+                        "known_hosts is rebuilt every run, so a mismatch inside one job means the" \
+                        "host answered with two different keys seconds apart:" \
+                        "  - the VPS was rebuilt/reimaged mid-deploy, or" \
+                        "  - VPS_HOST points at a load balancer or round-robin DNS fronting several" \
+                        "    machines with different host keys, or" \
+                        "  - a man-in-the-middle." \
+                        "Do NOT paper over this with StrictHostKeyChecking=no. Confirm the host key" \
+                        "out of band first: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub on the VPS."
+                    fi
+
+                    if grep -qiE 'permission denied|too many authentication failures|no supported authentication|authentication failed' "$WORK/probe.err"; then
+                      fail E_AUTH \
+                        "The VPS is reachable and the key is valid, but the server REJECTED it." \
+                        "Nothing is wrong with the secret's encoding -- this is authorization." \
+                        "The public half of the key CI is offering is:" \
+                        "    ${KEY_FPR:-<unavailable>}" \
+                        "On the VPS, as the deploy user, confirm that exact fingerprint is present:" \
+                        "    ssh-keygen -lf ~/.ssh/authorized_keys" \
+                        "If it is missing, append the matching .pub line. If it is present, check:" \
+                        "  - VPS_USER is the account that owns that authorized_keys file;" \
+                        "  - ~/.ssh is 700 and authorized_keys is 600, owned by that user" \
+                        "    (sshd silently ignores group/world-writable paths);" \
+                        "  - sshd_config does not exclude this user (AllowUsers/DenyUsers/PermitRootLogin)." \
+                        "Server-side truth lives in the VPS's auth log, not in this one."
+                    fi
+
+                    if grep -qiE 'connection refused|connection timed out|operation timed out|no route to host|network is unreachable|connection closed by' "$WORK/probe.err"; then
+                      fail E_UNREACHABLE \
+                        "The host answered ssh-keyscan but dropped the authenticated connection." \
+                        "An intermittent network path, an sshd MaxStartups limit, or fail2ban banning" \
+                        "this builder mid-job all look like this. Retry once; if it repeats, check" \
+                        "the VPS's sshd and fail2ban logs for this builder's IP."
+                    fi
+
+                    # Unclassified: pass ssh's own stderr through. ssh never
+                    # writes private key bytes to stderr (at most a file PATH),
+                    # so this cannot leak the key -- and without it an unmatched
+                    # failure would be exactly the opaque exit 1 this step
+                    # exists to eliminate.
+                    echo "ssh reported:"
+                    sed -e 's/^/    /' "$WORK/probe.err"
+                    fail E_SSH \
+                      "SSH failed for a reason this step does not have a specific diagnosis for." \
+                      "ssh's own output is quoted above; please add a branch here for it once known."
+                  fi
+
+                  echo "Authenticated to the VPS as the deploy user. SSH is ready."
+                  echo "SSH_OPTS=$SSH_OPTS" >> "$GITHUB_ENV"
             - name: Ensure VPS app directory exists
               run: |
                   ssh $SSH_OPTS -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
@@ -202,6 +544,12 @@ jobs:
             # $RUNNER_TEMP is cleared when a job STARTS, not when it ends, so on
             # a self-hosted runner the key would otherwise sit on disk until the
             # next job on this box happens to run.
+            #
+            # The ssh-setup.* scratch dirs are already removed by an EXIT trap
+            # inside Setup SSH; they are swept again here in case that step was
+            # killed by SIGKILL (job cancellation, OOM) and the trap never ran.
             - name: Remove the deploy key from the runner
               if: always()
-              run: rm -f "$RUNNER_TEMP/vps_key" "$RUNNER_TEMP/vps_known_hosts" "$RUNNER_TEMP/cloud-connect.env"
+              run: |
+                  rm -f "$RUNNER_TEMP/vps_key" "$RUNNER_TEMP/vps_known_hosts" "$RUNNER_TEMP/cloud-connect.env"
+                  rm -rf "$RUNNER_TEMP"/ssh-setup.*
