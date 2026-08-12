@@ -127,11 +127,20 @@ jobs:
                   # -e was missing entirely: rsync used plain `ssh` with no
                   # identity and no port, so it only ever worked because the
                   # runner account happened to have a usable default key.
+                  #
+                  # The db exclude is `database.sqlite*`, NOT `database.sqlite`.
+                  # SQLite in WAL mode keeps two more files beside the database:
+                  # database.sqlite-wal (the write-ahead log -- 8MB on production
+                  # at the time this was found) and database.sqlite-shm (the
+                  # shared-memory index). Excluding only the main file meant
+                  # `--delete` deleted the WAL and SHM out from under the running
+                  # process on every deploy, discarding every transaction not yet
+                  # checkpointed back into the main database.
                   rsync -az --delete \
                     -e "ssh $SSH_OPTS -p ${{ secrets.VPS_PORT }}" \
                     --exclude ".git/" \
                     --exclude ".env" \
-                    --exclude "database.sqlite" \
+                    --exclude "database.sqlite*" \
                     --exclude "node_modules/" \
                     ./ "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/"
             - name: Deploy on VPS
