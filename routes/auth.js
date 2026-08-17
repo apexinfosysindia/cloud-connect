@@ -460,7 +460,11 @@ module.exports = function ({
         asyncHandler(async (req, res) => {
             const { portal_session_token } = req.body;
             const cookieToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
-            const sessionToken = cookieToken || portal_session_token;
+            // Prefer whichever token VERIFIES, EXPLICIT FIRST. The cookie is only
+            // whatever this browser last logged in as; a still-valid cookie for a
+            // DIFFERENT account would otherwise make this endpoint read and mutate
+            // that account instead of the one the page is acting as (see lib/auth.js).
+            const sessionToken = auth.pickValidPortalToken(cookieToken, portal_session_token).token;
 
             if (!sessionToken) {
                 return res.status(400).json({ error: 'Portal session token is required.' });
@@ -611,7 +615,11 @@ module.exports = function ({
         asyncHandler(async (req, res) => {
             const { portal_session_token, subdomain } = req.body;
             const cookieToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
-            const sessionToken = cookieToken || portal_session_token;
+            // Prefer whichever token VERIFIES, EXPLICIT FIRST. The cookie is only
+            // whatever this browser last logged in as; a still-valid cookie for a
+            // DIFFERENT account would otherwise make this endpoint read and mutate
+            // that account instead of the one the page is acting as (see lib/auth.js).
+            const sessionToken = auth.pickValidPortalToken(cookieToken, portal_session_token).token;
 
             if (!sessionToken) {
                 return res.status(400).json({ error: 'Portal session token is required' });
@@ -681,7 +689,11 @@ module.exports = function ({
         asyncHandler(async (req, res) => {
             const { portal_session_token } = req.body;
             const cookieToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
-            const sessionToken = cookieToken || portal_session_token;
+            // Prefer whichever token VERIFIES, EXPLICIT FIRST. The cookie is only
+            // whatever this browser last logged in as; a still-valid cookie for a
+            // DIFFERENT account would otherwise make this endpoint read and mutate
+            // that account instead of the one the page is acting as (see lib/auth.js).
+            const sessionToken = auth.pickValidPortalToken(cookieToken, portal_session_token).token;
 
             if (!sessionToken) {
                 return res.status(400).json({ error: 'Portal session token is required' });
@@ -731,7 +743,11 @@ module.exports = function ({
         asyncHandler(async (req, res) => {
             const { portal_session_token } = req.body;
             const cookieToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
-            const sessionToken = cookieToken || portal_session_token;
+            // Prefer whichever token VERIFIES, EXPLICIT FIRST. The cookie is only
+            // whatever this browser last logged in as; a still-valid cookie for a
+            // DIFFERENT account would otherwise make this endpoint read and mutate
+            // that account instead of the one the page is acting as (see lib/auth.js).
+            const sessionToken = auth.pickValidPortalToken(cookieToken, portal_session_token).token;
 
             if (!sessionToken) {
                 return res.status(400).json({ error: 'Portal session token is required' });
@@ -803,7 +819,11 @@ module.exports = function ({
         asyncHandler(async (req, res) => {
             const { portal_session_token, current_password, new_password } = req.body;
             const cookieToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
-            const sessionToken = cookieToken || portal_session_token;
+            // Prefer whichever token VERIFIES, EXPLICIT FIRST. The cookie is only
+            // whatever this browser last logged in as; a still-valid cookie for a
+            // DIFFERENT account would otherwise make this endpoint read and mutate
+            // that account instead of the one the page is acting as (see lib/auth.js).
+            const sessionToken = auth.pickValidPortalToken(cookieToken, portal_session_token).token;
 
             if (!sessionToken) {
                 return res.status(400).json({ error: 'Portal session token is required' });
@@ -865,7 +885,11 @@ module.exports = function ({
         asyncHandler(async (req, res) => {
             const { portal_session_token, password } = req.body;
             const cookieToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
-            const sessionToken = cookieToken || portal_session_token;
+            // Prefer whichever token VERIFIES, EXPLICIT FIRST. The cookie is only
+            // whatever this browser last logged in as; a still-valid cookie for a
+            // DIFFERENT account would otherwise make this endpoint read and mutate
+            // that account instead of the one the page is acting as (see lib/auth.js).
+            const sessionToken = auth.pickValidPortalToken(cookieToken, portal_session_token).token;
 
             if (!sessionToken) {
                 return res.status(400).json({ error: 'Portal session token is required' });
@@ -914,7 +938,11 @@ module.exports = function ({
         asyncHandler(async (req, res) => {
             const { portal_session_token, password } = req.body;
             const cookieToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
-            const sessionToken = cookieToken || portal_session_token;
+            // Prefer whichever token VERIFIES, EXPLICIT FIRST. The cookie is only
+            // whatever this browser last logged in as; a still-valid cookie for a
+            // DIFFERENT account would otherwise make this endpoint read and mutate
+            // that account instead of the one the page is acting as (see lib/auth.js).
+            const sessionToken = auth.pickValidPortalToken(cookieToken, portal_session_token).token;
 
             if (!sessionToken) {
                 return res.status(400).json({ error: 'Portal session token is required' });

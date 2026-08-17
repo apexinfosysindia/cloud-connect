@@ -68,6 +68,186 @@ describe('portal session token round-trip', () => {
     });
 });
 
+describe('pickValidPortalToken', () => {
+    const cookieUser = 'cookie-account@example.com';
+    const explicitUser = 'dashboard-account@example.com';
+
+    it('prefers the explicit token when BOTH are valid but name different accounts', () => {
+        // The hijack case. A previous login for cookieUser is still in the jar while
+        // the page is acting as explicitUser. The cookie must not win, or the request
+        // (account linking, entity reads, account mutations) lands on the wrong user.
+        const cookie = auth.createPortalSessionToken(cookieUser);
+        const explicit = auth.createPortalSessionToken(explicitUser);
+
+        const picked = auth.pickValidPortalToken(cookie, explicit);
+        assert.equal(picked.token, explicit);
+        assert.equal(picked.session.email, explicitUser);
+    });
+
+    it('falls back to a valid cookie when no explicit token is supplied', () => {
+        const cookie = auth.createPortalSessionToken(cookieUser);
+        for (const explicit of ['', null, undefined, '   ']) {
+            const picked = auth.pickValidPortalToken(cookie, explicit);
+            assert.equal(picked.token, cookie);
+            assert.equal(picked.session.email, cookieUser);
+        }
+    });
+
+    it('uses a valid explicit token even when the cookie is garbage', () => {
+        // The linking-loop case: a stale cookie must not shadow a good token.
+        const explicit = auth.createPortalSessionToken(explicitUser);
+        const picked = auth.pickValidPortalToken('stale.garbage', explicit);
+        assert.equal(picked.token, explicit);
+        assert.equal(picked.session.email, explicitUser);
+    });
+
+    it('uses a valid cookie when the explicit token is garbage', () => {
+        // Both candidates are verified, so an unusable explicit token cannot lock
+        // out a working browser session.
+        const cookie = auth.createPortalSessionToken(cookieUser);
+        const picked = auth.pickValidPortalToken(cookie, 'bad.token');
+        assert.equal(picked.token, cookie);
+        assert.equal(picked.session.email, cookieUser);
+    });
+
+    it('reports no session but keeps a non-empty token when neither verifies', () => {
+        // Callers distinguish "no token supplied" (400) from "token rejected" (401).
+        // Returning '' here would turn every rejection into the wrong error.
+        const picked = auth.pickValidPortalToken('bad.cookie', 'bad.explicit');
+        assert.equal(picked.session, null);
+        assert.equal(picked.token, 'bad.explicit');
+
+        const cookieOnly = auth.pickValidPortalToken('bad.cookie', '');
+        assert.equal(cookieOnly.session, null);
+        assert.equal(cookieOnly.token, 'bad.cookie');
+    });
+
+    it('returns an empty token only when nothing at all was supplied', () => {
+        for (const [cookie, explicit] of [
+            ['', ''],
+            [null, undefined],
+            ['  ', '\t']
+        ]) {
+            const picked = auth.pickValidPortalToken(cookie, explicit);
+            assert.equal(picked.token, '');
+            assert.equal(picked.session, null);
+        }
+    });
+
+    it('ignores non-string inputs instead of throwing', () => {
+        const picked = auth.pickValidPortalToken({ token: 'x' }, 42);
+        assert.equal(picked.token, '');
+        assert.equal(picked.session, null);
+    });
+});
+
+describe('requirePortalUser token precedence', () => {
+    const cookieUser = { id: 1, email: 'cookie-account@example.com', session_epoch: 0 };
+    const explicitUser = { id: 19, email: 'dashboard-account@example.com', session_epoch: 0 };
+
+    // A fresh auth instance whose dbGet resolves the two seeded users, so we can
+    // assert WHICH account the middleware attaches to the request.
+    const usersByEmail = new Map([
+        [cookieUser.email, cookieUser],
+        [explicitUser.email, explicitUser]
+    ]);
+    const scopedAuth = require('../lib/auth')({
+        dbGet: async (_sql, [email]) => usersByEmail.get(email) || null,
+        config,
+        utils
+    });
+
+    function req({ cookie, body, query, bearer }) {
+        return {
+            get: (name) => (name.toLowerCase() === 'authorization' && bearer ? `Bearer ${bearer}` : ''),
+            cookies: cookie ? { [config.PORTAL_SESSION_COOKIE_NAME]: cookie } : {},
+            body: body || {},
+            query: query || {}
+        };
+    }
+
+    function res() {
+        return {
+            statusCode: 0,
+            payload: null,
+            status(code) {
+                this.statusCode = code;
+                return this;
+            },
+            json(payload) {
+                this.payload = payload;
+                return this;
+            }
+        };
+    }
+
+    it('resolves to the body token, not a still-valid cookie for another account', async () => {
+        const request = req({
+            cookie: scopedAuth.createPortalSessionToken(cookieUser.email),
+            body: { portal_session_token: scopedAuth.createPortalSessionToken(explicitUser.email) }
+        });
+        let nextCalled = false;
+        await scopedAuth.requirePortalUser(request, res(), () => {
+            nextCalled = true;
+        });
+
+        assert.ok(nextCalled);
+        assert.equal(request.portalUser.id, explicitUser.id);
+        assert.equal(request.portalSession.email, explicitUser.email);
+    });
+
+    it('resolves to the query token over a cookie for another account', async () => {
+        const request = req({
+            cookie: scopedAuth.createPortalSessionToken(cookieUser.email),
+            query: { portal_session_token: scopedAuth.createPortalSessionToken(explicitUser.email) }
+        });
+        await scopedAuth.requirePortalUser(request, res(), () => {});
+        assert.equal(request.portalUser.id, explicitUser.id);
+    });
+
+    it('resolves to the bearer token over a cookie for another account', async () => {
+        const request = req({
+            cookie: scopedAuth.createPortalSessionToken(cookieUser.email),
+            bearer: scopedAuth.createPortalSessionToken(explicitUser.email)
+        });
+        await scopedAuth.requirePortalUser(request, res(), () => {});
+        assert.equal(request.portalUser.id, explicitUser.id);
+    });
+
+    it('still accepts a cookie-only session', async () => {
+        const request = req({ cookie: scopedAuth.createPortalSessionToken(cookieUser.email) });
+        await scopedAuth.requirePortalUser(request, res(), () => {});
+        assert.equal(request.portalUser.id, cookieUser.id);
+    });
+
+    it('falls back to the cookie when the explicit token is garbage', async () => {
+        const request = req({
+            cookie: scopedAuth.createPortalSessionToken(cookieUser.email),
+            body: { portal_session_token: 'bad.token' }
+        });
+        await scopedAuth.requirePortalUser(request, res(), () => {});
+        assert.equal(request.portalUser.id, cookieUser.id);
+    });
+
+    it('rejects an unverifiable token as invalid, not as missing', async () => {
+        const response = res();
+        let nextCalled = false;
+        await scopedAuth.requirePortalUser(req({ cookie: 'bad.cookie' }), response, () => {
+            nextCalled = true;
+        });
+        assert.equal(nextCalled, false);
+        assert.equal(response.statusCode, 401);
+        assert.match(response.payload.error, /Invalid portal session/);
+    });
+
+    it('reports a missing token when nothing is supplied', async () => {
+        const response = res();
+        await scopedAuth.requirePortalUser(req({}), response, () => {});
+        assert.equal(response.statusCode, 401);
+        assert.match(response.payload.error, /required/);
+    });
+});
+
 describe('admin token round-trip', () => {
     it('creates and verifies an admin token', () => {
         const token = auth.createAdminToken('admin@test.com');
