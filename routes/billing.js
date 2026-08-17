@@ -11,7 +11,11 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
     router.post('/api/billing/trial-eligibility', async (req, res) => {
         const { portal_session_token } = req.body || {};
         const cookieToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
-        const sessionToken = cookieToken || portal_session_token;
+        // Prefer whichever token VERIFIES, EXPLICIT FIRST. The cookie is only
+        // whatever this browser last logged in as; a still-valid cookie for a
+        // DIFFERENT account would otherwise make this endpoint read and mutate
+        // that account instead of the one the page is acting as (see lib/auth.js).
+        const sessionToken = auth.pickValidPortalToken(cookieToken, portal_session_token).token;
 
         if (!sessionToken) {
             return res.status(400).json({ error: 'Portal session token is required' });
@@ -46,7 +50,11 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
     router.post('/api/billing/create-checkout', async (req, res) => {
         const { access_token, portal_session_token, plan } = req.body;
         const cookieToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
-        const sessionToken = cookieToken || portal_session_token;
+        // Prefer whichever token VERIFIES, EXPLICIT FIRST. The cookie is only
+        // whatever this browser last logged in as; a still-valid cookie for a
+        // DIFFERENT account would otherwise make this endpoint read and mutate
+        // that account instead of the one the page is acting as (see lib/auth.js).
+        const sessionToken = auth.pickValidPortalToken(cookieToken, portal_session_token).token;
         const planType = plan === 'monthly' ? 'monthly' : 'annual';
 
         if (!access_token && !sessionToken) {
@@ -119,7 +127,11 @@ module.exports = function ({ dbGet, dbRun, config, auth, billing }) {
     router.post('/api/billing/verify', async (req, res) => {
         const { razorpay_payment_id, razorpay_subscription_id, razorpay_signature, portal_session_token } = req.body;
         const cookieToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
-        const sessionToken = cookieToken || portal_session_token;
+        // Prefer whichever token VERIFIES, EXPLICIT FIRST. The cookie is only
+        // whatever this browser last logged in as; a still-valid cookie for a
+        // DIFFERENT account would otherwise make this endpoint read and mutate
+        // that account instead of the one the page is acting as (see lib/auth.js).
+        const sessionToken = auth.pickValidPortalToken(cookieToken, portal_session_token).token;
 
         if (!razorpay_payment_id || !razorpay_subscription_id || !razorpay_signature) {
             return res.status(400).json({ error: 'Missing Razorpay verification fields' });

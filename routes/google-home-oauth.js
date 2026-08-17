@@ -14,7 +14,12 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, g
             const portalTokenRaw = req.query?.portal_session_token;
             const queryPortalToken = typeof portalTokenRaw === 'string' ? portalTokenRaw.trim() : '';
             const cookiePortalToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
-            const portalToken = cookiePortalToken || queryPortalToken;
+            // Prefer whichever token VERIFIES, EXPLICIT FIRST: the query token is the
+            // account the dashboard is acting as, while the cookie is only whatever
+            // this browser last logged in as. A stale cookie must not shadow it (the
+            // linking loop) and a valid cookie for another account must not replace
+            // it (the link lands on the wrong account -- see lib/auth.js).
+            const portalToken = auth.pickValidPortalToken(cookiePortalToken, queryPortalToken).token;
 
             if (!clientId || !redirectUri) {
                 return res.status(400).send('Missing OAuth parameters');
@@ -160,7 +165,10 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, g
             const portalTokenRaw = req.body?.portal_session_token;
             const bodyPortalToken = typeof portalTokenRaw === 'string' ? portalTokenRaw.trim() : '';
             const cookiePortalToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
-            const portalToken = cookiePortalToken || bodyPortalToken;
+            // Prefer whichever token VERIFIES, EXPLICIT FIRST -- the client posts the
+            // token for the account on screen, and the cookie may be stale or belong
+            // to a different account entirely (see lib/auth.js).
+            const portalToken = auth.pickValidPortalToken(cookiePortalToken, bodyPortalToken).token;
 
             if (!clientId || !redirectUri || !portalToken) {
                 return res.status(400).json({ error: 'missing_oauth_parameters' });
@@ -226,7 +234,12 @@ module.exports = function ({ dbGet, dbRun, dbTransaction, config, utils, auth, g
             const portalTokenRaw = req.query?.portal_session_token;
             const queryPortalToken = typeof portalTokenRaw === 'string' ? portalTokenRaw.trim() : '';
             const cookiePortalToken = req.cookies?.[config.PORTAL_SESSION_COOKIE_NAME] || '';
-            const portalToken = cookiePortalToken || queryPortalToken;
+            // Prefer whichever token VERIFIES, EXPLICIT FIRST: the query token is the
+            // account the dashboard is acting as, while the cookie is only whatever
+            // this browser last logged in as. A stale cookie must not shadow it (the
+            // linking loop) and a valid cookie for another account must not replace
+            // it (the link lands on the wrong account -- see lib/auth.js).
+            const portalToken = auth.pickValidPortalToken(cookiePortalToken, queryPortalToken).token;
 
             if (!clientId || !redirectUri) {
                 return res.status(400).json({ ok: false, error: 'missing_oauth_params' });
