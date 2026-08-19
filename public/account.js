@@ -1906,8 +1906,8 @@
                 entity?.entity_type || '',
                 entity?.exposed ? '1' : '0',
                 entity?.online ? '1' : '0',
-                // Include the HA device identity so a rename/regroup in Home
-                // Assistant is reflected by the next silent refresh.
+                // Include the HA device identity so a rename/regroup in ApexOS
+                // is reflected by the next silent refresh.
                 entity?.state?._ha_device_id || '',
                 entity?.state?._ha_device_name || ''
             ].join('|'))
