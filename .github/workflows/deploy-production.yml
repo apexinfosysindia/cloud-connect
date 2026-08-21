@@ -17,7 +17,7 @@ jobs:
         # also matches the ARM64 builder, which is a macOS workstation -- and
         # this job writes SSH key material and runs a PRODUCTION deploy. It must
         # never be scheduled there.
-        runs-on: [self-hosted, apexos-builder, linux, X64]
+        runs-on: ${{ fromJSON(vars.APEXOS_RUNSON_AMD64 || '["self-hosted","apexos-builder","linux","X64"]') }}
         environment: production
         steps:
             - name: Checkout selected ref
@@ -119,7 +119,7 @@ jobs:
                     if ! command -v "$_tool" >/dev/null 2>&1; then
                       fail E_TOOLING \
                         "'$_tool' is not on PATH on this runner, so the deploy cannot even attempt SSH." \
-                        "This job is pinned to runs-on: [self-hosted, apexos-builder, linux, X64]." \
+                        "This job is pinned to runs-on: ${{ fromJSON(vars.APEXOS_RUNSON_AMD64 || '["self-hosted","apexos-builder","linux","X64"]') }}." \
                         "That builder is a bare Ubuntu host; it ships only what someone installed." \
                         "Fix the BUILDER, not this workflow:" \
                         "    sudo apt-get update && sudo apt-get install -y openssh-client coreutils" \
